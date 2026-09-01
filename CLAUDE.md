@@ -94,6 +94,23 @@ isn't, that's a bug**, not a case to special-case around with local state.
   live stack.
 - No live Keboola calls anywhere in `tests/`, full stop.
 
+## Contributing changes: pull requests, not direct pushes
+
+- **Never commit to `main` directly.** Branch, push the branch, open a PR
+  with `gh pr create`, and let the PR carry the change onto `main`. This
+  holds for every change, including a one-line fix and a release bump.
+- Branch names describe the change, not the author: `fix/...`, `feat/...`,
+  `docs/...`, `chore/...`.
+- A PR body says what changed and, more importantly, **why** — the problem
+  it solves, not a restatement of the diff. Note anything a reviewer should
+  check by hand.
+- The pre-commit checks in this file are pre-*PR* checks too: `uv run pytest
+  tests/ -q` fully green and `python3.11 -m py_compile src/*.py` clean before
+  you open it.
+- A release still means bumping `[project].version`, tagging the **merge
+  commit on `main`**, cutting the GitHub release and deploying — in that
+  order, after the PR is merged. Never tag a branch.
+
 ## Deploy flow
 
 - Push to GitHub `main` (`padak/kbc_ai_artifact`), then:
