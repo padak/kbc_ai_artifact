@@ -975,12 +975,24 @@ def _record_guest_failure(
     )
 
 
-def _record_view(app_obj: FastAPI | None, artifact_id: str, kind: str) -> None:
+def _record_view(
+    app_obj: FastAPI | None,
+    artifact_id: str,
+    kind: str,
+    *,
+    request: Request | None = None,
+) -> None:
     """Count one successful read of an artifact. Never raises into serving.
 
     Analytics are strictly best effort: a broken or unstarted state sidecar
     must degrade to "no numbers", never to a failed page load.
+
+    Given the ``request``, a ``HEAD`` probe (rewritten to ``GET`` by
+    :class:`HeadAsGetMiddleware`, which leaves :data:`HEAD_SCOPE_KEY` behind)
+    is not a read and is not counted.
     """
+    if request is not None and request.scope.get(HEAD_SCOPE_KEY):
+        return
     database = _statedb(app_obj)
     if database is None:
         return
@@ -1880,6 +1892,62 @@ async def artifact_headers(request: Request, call_next):
         # keeps what it set.
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
+
+
+#: Scope key the HEAD middleware sets so a handler can tell a header-only
+#: probe from a real read (see :func:`_record_view`).
+HEAD_SCOPE_KEY = "artifact_hub.head"
+
+
+class HeadAsGetMiddleware:
+    """Answer ``HEAD`` on every route that has a ``GET``: same status and
+    headers, empty body.
+
+    FastAPI does not add ``HEAD`` to a ``GET`` route the way bare Starlette
+    does, so every header-only probe -- ``curl -I``, an assistant checking the
+    ``Link`` header of a share link before fetching it -- was refused with
+    405. That defeated the point of putting orientation into response headers
+    at all. Here the method is rewritten to ``GET`` on the way in and the body
+    is dropped on the way out, which is exactly the semantics RFC 9110 gives
+    ``HEAD``: the headers the ``GET`` would carry, ``Content-Length``
+    included, and nothing else.
+
+    Raw ASGI, and registered outermost, so the rewrite is already in place
+    when the body-size guard, the ``artifact_headers`` decoration and routing
+    see the request. The original method is left in the scope under
+    :data:`HEAD_SCOPE_KEY` so a handler with a side effect on ``GET`` --
+    counting a view -- can decline to perform it for a probe. A route with no
+    ``GET`` still answers 405, since the rewritten request finds no handler
+    either; nothing here invents a route.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or str(scope.get("method", "")).upper() != "HEAD":
+            await self.app(scope, receive, send)
+            return
+        # A copy: the server owns the original mapping.
+        rewritten = dict(scope)
+        rewritten["method"] = "GET"
+        rewritten[HEAD_SCOPE_KEY] = True
+
+        async def bodiless_send(message: dict[str, Any]) -> None:
+            if message.get("type") == "http.response.body":
+                message = {
+                    "type": "http.response.body",
+                    "body": b"",
+                    "more_body": bool(message.get("more_body", False)),
+                }
+            await send(message)
+
+        await self.app(rewritten, receive, bodiless_send)
+
+
+# Outermost of the HTTP middlewares (added last): the method rewrite has to be
+# visible to everything registered above, routing included.
+app.add_middleware(HeadAsGetMiddleware)
 
 
 @app.exception_handler(BackendError)
@@ -5903,7 +5971,7 @@ def read_artifact(
     envelope = request.app.state.store.get_head(meta.id)
     if envelope is None:
         return _not_found(public_id)
-    _record_view(request.app, meta.id, "page")
+    _record_view(request.app, meta.id, "page", request=request)
     return _framed(request, meta, envelope)
 
 
@@ -6089,7 +6157,7 @@ def read_raw(
     envelope = request.app.state.store.get_head(meta.id)
     if envelope is None:
         return _not_found(public_id)
-    _record_view(request.app, meta.id, "raw")
+    _record_view(request.app, meta.id, "raw", request=request)
     return _sandboxed_html(envelope.html)
 
 
@@ -6158,12 +6226,12 @@ def read_source(
 
     markdown = envelope.source.get("markdown")
     if isinstance(markdown, str):
-        _record_view(request.app, meta.id, "source")
+        _record_view(request.app, meta.id, "source", request=request)
         return PlainTextResponse(
             markdown, media_type="text/markdown; charset=utf-8"
         )
     if envelope.source_type in ("html", "git-html"):
-        _record_view(request.app, meta.id, "source")
+        _record_view(request.app, meta.id, "source", request=request)
         # Executable publisher HTML at top level — same opaque-origin sandbox
         # as /raw. (The Markdown branch above needs none: it is inert text.)
         return _sandboxed_html(envelope.html)
@@ -6480,7 +6548,7 @@ def read_version(
         return _version_not_found(public_id, version)
     if not may_see(meta, envelope, optional_caller(request)):
         return _proposal_hidden(public_id, version)
-    _record_view(request.app, meta.id, "version")
+    _record_view(request.app, meta.id, "version", request=request)
     return _framed(request, meta, envelope, pinned=True)
 
 

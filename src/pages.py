@@ -2262,9 +2262,10 @@ def landing_page(
             ),
             _card(
                 "built for agents",
-                f'<a href="{base}/context">/context</a> is a machine-readable '
-                f'manifest, <a href="{base}/skill">/skill</a> is a SKILL.md an '
-                f'agent reads to publish unassisted, <a href="{base}/agent">'
+                f'<a href="{base}/llms.txt">/llms.txt</a> orients an AI that was '
+                f'handed a link, <a href="{base}/context">/context</a> is a '
+                f'machine-readable manifest, <a href="{base}/skill">/skill</a> is a '
+                f'SKILL.md an agent reads to publish unassisted, <a href="{base}/agent">'
                 "/agent</a> is a drop-in Claude Code subagent, and every read "
                 "endpoint answers JSON or raw HTML.",
             ),
@@ -2402,6 +2403,7 @@ that is the only credential you need.</p>
 <a class="primary" href="{base}/admin">Admin studio</a>
 <a href="{repo}">GitHub repo</a>
 <a href="{base}/docs">/docs</a>
+<a href="{base}/llms.txt">/llms.txt</a>
 <a href="{base}/skill">/skill</a>
 <a href="{base}/agent">/agent</a>
 <a href="{base}/context">/context</a>
@@ -2471,7 +2473,11 @@ subagent definition; drop it in <code>~/.claude/agents/</code> and the agent
 knows how to publish, update and moderate artifacts on its own.
 <a href="{base}/skill">/skill</a> is the same knowledge as a SKILL.md for any
 other agent runtime, and <a href="{base}/context">/context</a> is the
-machine-readable manifest of endpoints, limits and the auth model.</p>
+machine-readable manifest of endpoints, limits and the auth model.
+Forward an artifact link to an assistant and it finds all of this on its own:
+the page carries a hidden note, <code>&lt;link rel="help"&gt;</code> relations
+and a <code>Link</code> header pointing at <a href="{base}/llms.txt">/llms.txt</a>,
+a short map of the hub written for exactly that moment.</p>
 {agents_term}
 
 <h2 class="label">moderating in the browser</h2>
@@ -2526,6 +2532,7 @@ headers as any other management call.</p>
 <span class="spacer"></span>
 <a href="{base}/admin">Admin studio</a>
 <a href="{base}/agent">/agent</a>
+<a href="{base}/llms.txt">/llms.txt</a>
 <a href="{base}/changelog">Changelog</a>
 <a href="{repo}">github.com/padak/kbc_ai_artifact</a>
 <a href="{base}/health">/health</a>
