@@ -46,7 +46,21 @@ def test_artifact_page_declares_link_relations_for_machines(api: Api) -> None:
         f'href="{BASE}/a/{artifact_id}/export/markdown">' in page
     )
     assert f'<link rel="service-desc" href="{BASE}/context">' in page
-    assert f'<link rel="help" href="{BASE}/skill">' in page
+    # Three help documents, each with a title so a machine can tell the
+    # entry point, the runtime-agnostic SKILL.md and the Claude Code-only
+    # AGENT.md apart; llms.txt comes first because it answers "what is this
+    # link" and points at the other two.
+    help_links = [
+        line for line in page.splitlines() if line.startswith('<link rel="help"')
+    ]
+    assert help_links == [
+        f'<link rel="help" href="{BASE}/llms.txt" '
+        'title="What this hub is and how to read a share link">',
+        f'<link rel="help" href="{BASE}/skill" '
+        'title="SKILL.md for any agent runtime">',
+        f'<link rel="help" href="{BASE}/agent" '
+        'title="Claude Code subagent definition">',
+    ]
     assert '<meta name="generator" content="kbc-artifact-hub' in page
 
 
@@ -92,7 +106,13 @@ def test_unlock_form_carries_the_note_for_agents(api: Api) -> None:
 
 def test_every_artifact_response_carries_a_link_header(api: Api) -> None:
     artifact_id = _publish_markdown(api, "# Title")
-    expected = f'<{BASE}/context>; rel="service-desc", <{BASE}/skill>; rel="help"'
+    expected = (
+        f'<{BASE}/context>; rel="service-desc", '
+        f'<{BASE}/llms.txt>; rel="help"; '
+        'title="What this hub is and how to read a share link", '
+        f'<{BASE}/skill>; rel="help"; title="SKILL.md for any agent runtime", '
+        f'<{BASE}/agent>; rel="help"; title="Claude Code subagent definition"'
+    )
     for path in (
         f"/a/{artifact_id}",
         f"/a/{artifact_id}/raw",

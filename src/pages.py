@@ -2798,21 +2798,41 @@ _AGENT_NOTE_CSS = (
 )
 
 
+#: The ``rel="help"`` documents, in the order a machine should read them, each
+#: with the title that tells them apart: the llms.txt entry point answers
+#: "what is this link", SKILL.md works in any agent runtime, AGENT.md is a
+#: Claude Code subagent definition. Shared by :func:`agent_head_links` and the
+#: ``Link`` response header in ``main.artifact_headers`` so the two channels
+#: cannot drift.
+HELP_DOCUMENTS: tuple[tuple[str, str], ...] = (
+    ("/llms.txt", "What this hub is and how to read a share link"),
+    ("/skill", "SKILL.md for any agent runtime"),
+    ("/agent", "Claude Code subagent definition"),
+)
+
+
 def agent_head_links(base: str, share_id: str) -> str:
     """``<link rel>`` relations that tell a machine where the real things are.
 
     Standard relation names, so a client that already understands them needs
     no hub-specific knowledge: ``alternate`` for the same document in another
     representation (the raw HTML, the Markdown export), ``service-desc`` for
-    the API manifest, ``help`` for the document that explains how to use it.
+    the API manifest, ``help`` for the documents that explain how to use it.
+    There are three of those and they differ by audience, so each carries a
+    ``title`` (see :data:`HELP_DOCUMENTS`) -- without one, three ``help``
+    links would be indistinguishable to a machine.
     """
     base = base.rstrip("/")
     art = f"{base}/a/{html.escape(share_id, quote=True)}"
+    helps = "".join(
+        f'<link rel="help" href="{base}{route}" title="{title}">\n'
+        for route, title in HELP_DOCUMENTS
+    )
     return (
         f'<link rel="alternate" type="text/html" href="{art}/raw">\n'
         f'<link rel="alternate" type="text/markdown" href="{art}/export/markdown">\n'
         f'<link rel="service-desc" href="{base}/context">\n'
-        f'<link rel="help" href="{base}/skill">\n'
+        + helps
     )
 
 
