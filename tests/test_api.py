@@ -309,6 +309,7 @@ def test_context_lists_all_endpoints_and_stack_aliases(api: Api) -> None:
         ("GET", "/health/headers"),
         ("GET", "/context"),
         ("GET", "/skill"),
+        ("GET", "/llms.txt"),
         ("GET", "/login"),
         ("POST", "/login/device"),
         ("POST", "/login/device/token"),

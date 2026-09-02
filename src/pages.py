@@ -2786,6 +2786,79 @@ _FRAME_JS = """
 """
 
 
+#: The visually-hidden note for machines (see :func:`agent_note`). The
+#: standard accessible "sr-only" recipe: off-canvas and clipped, never
+#: ``display:none`` or ``visibility:hidden``, so screen readers *and* the
+#: HTML-to-text step of an AI assistant still read it while a sighted reader
+#: sees exactly the page they saw before.
+_AGENT_NOTE_CSS = (
+    ".ah-agents{position:absolute;width:1px;height:1px;margin:-1px;padding:0;"
+    "border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);"
+    "white-space:nowrap}"
+)
+
+
+def agent_head_links(base: str, share_id: str) -> str:
+    """``<link rel>`` relations that tell a machine where the real things are.
+
+    Standard relation names, so a client that already understands them needs
+    no hub-specific knowledge: ``alternate`` for the same document in another
+    representation (the raw HTML, the Markdown export), ``service-desc`` for
+    the API manifest, ``help`` for the document that explains how to use it.
+    """
+    base = base.rstrip("/")
+    art = f"{base}/a/{html.escape(share_id, quote=True)}"
+    return (
+        f'<link rel="alternate" type="text/html" href="{art}/raw">\n'
+        f'<link rel="alternate" type="text/markdown" href="{art}/export/markdown">\n'
+        f'<link rel="service-desc" href="{base}/context">\n'
+        f'<link rel="help" href="{base}/skill">\n'
+    )
+
+
+def agent_note(base: str, share_id: str) -> str:
+    """A visually hidden ``<nav>`` telling an AI assistant where to look next.
+
+    Why it exists: a reader forwards a share link to their assistant, the
+    assistant fetches ``/a/{id}`` and its HTML-to-text step drops the
+    ``srcdoc`` attribute the document lives in. Left with a bare title, it
+    cannot tell this is an Artifact Hub, where the readable document is, or
+    where the API is described. This block is the answer, in plain sentences
+    with absolute URLs, because a text extractor keeps body text and drops
+    ``<link>`` relations, comments and response headers.
+
+    It is the hub's own text about the hub's own routes -- never anything
+    from the artifact -- and it lives in the wrapper, so ``/a/{id}/raw`` stays
+    the publisher's bytes. Hidden with :data:`_AGENT_NOTE_CSS`, the accessible
+    way, so screen readers get the same orientation.
+    """
+    base = base.rstrip("/")
+    safe_base = html.escape(base, quote=True)
+    art = f"{safe_base}/a/{html.escape(share_id, quote=True)}"
+    return (
+        '<nav class="ah-agents" aria-label="For AI agents">\n'
+        "<p>This page is an artifact served by KBC Artifact Hub, a Keboola "
+        "Data App. The document you were sent is embedded above; the "
+        f'unwrapped HTML is at <a href="{art}/raw">{art}/raw</a> and a '
+        f'Markdown rendering at <a href="{art}/export/markdown">'
+        f"{art}/export/markdown</a>. Version history: "
+        f'<a href="{art}/versions">{art}/versions</a>. The share id in the '
+        "URL is the only credential a reader needs; a password-protected "
+        "artifact additionally takes the password in the X-Artifact-Password "
+        "request header.</p>\n"
+        "<p>To understand or operate this hub as an agent, read "
+        f'<a href="{safe_base}/llms.txt">{safe_base}/llms.txt</a> first, then '
+        f'<a href="{safe_base}/context">{safe_base}/context</a> (machine-readable '
+        f'manifest of endpoints, auth and limits), <a href="{safe_base}/docs">'
+        f"{safe_base}/docs</a> and <a href=\"{safe_base}/openapi.json\">"
+        f"{safe_base}/openapi.json</a> (the REST API), "
+        f'<a href="{safe_base}/skill">{safe_base}/skill</a> (a SKILL.md teaching '
+        f'an agent to publish and contribute) and <a href="{safe_base}/agent">'
+        f"{safe_base}/agent</a> (a Claude Code subagent definition).</p>\n"
+        "</nav>\n"
+    )
+
+
 def artifact_frame_page(
     title: str,
     artifact_html: str,
@@ -2793,6 +2866,7 @@ def artifact_frame_page(
     base_url: str = "",
     share_id: str = "",
     pinned_version: int | None = None,
+    hub_version: str = "",
 ) -> str:
     """Wrap one artifact's built HTML in a zero-chrome sandboxed iframe.
 
@@ -2832,6 +2906,19 @@ def artifact_frame_page(
     safe_title = html.escape(title or "Artifact", quote=True)
     document_html = artifact_html
     live = ""
+    # Orientation for machines (see :func:`agent_note`): only when the page
+    # knows its own address, because relative URLs would be useless to an
+    # assistant that reads the extracted text rather than the page.
+    note = agent_note(base_url, share_id) if base_url and share_id else ""
+    head_links = (
+        agent_head_links(base_url, share_id) if base_url and share_id else ""
+    )
+    generator = (
+        '<meta name="generator" content="kbc-artifact-hub '
+        f'{html.escape(hub_version, quote=True)}">\n'
+        if hub_version
+        else ""
+    )
     if share_id:
         # The reporter goes into the document served right now; the same
         # source is kept in a text/plain block so the shell can re-inject it
@@ -2864,28 +2951,39 @@ def artifact_frame_page(
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{safe_title}</title>\n"
+        f"{generator}{head_links}"
         "<style>html,body{margin:0;padding:0;border:0;width:100%;height:100%;"
         "overflow:hidden}"
         "iframe{margin:0;padding:0;border:0;width:100%;height:100vh;"
         "display:block}"
         + _FRAME_LIVE_CSS
+        + _AGENT_NOTE_CSS
         + "</style>\n"
         "</head>\n<body>\n"
         f'<iframe id="ah-frame" title="{safe_title}" '
         'sandbox="allow-scripts allow-popups allow-forms allow-downloads" '
         f'srcdoc="{html.escape(document_html, quote=True)}"></iframe>\n'
-        f"{live}"
+        f"{note}{live}"
         "</body>\n</html>\n"
     )
 
 
-def unlock_page(artifact_id: str, error: str | None) -> str:
-    """Render the password form for a protected artifact."""
+def unlock_page(
+    artifact_id: str, error: str | None, *, base_url: str = ""
+) -> str:
+    """Render the password form for a protected artifact.
+
+    This is the first thing an assistant meets when it is handed a link to
+    a protected artifact, so given ``base_url`` it carries the same hidden
+    :func:`agent_note` as the artifact page -- including the header the
+    password goes in.
+    """
     safe_id = html.escape(artifact_id)
     error_html = f'<p class="error">&gt; {html.escape(error)}</p>' if error else ""
+    note = agent_note(base_url, artifact_id) if base_url else ""
     return _page(
         "Password required",
-        _UNLOCK_CSS,
+        _UNLOCK_CSS + _AGENT_NOTE_CSS,
         f"""<div class="gate">
 <div class="rule">locked artifact</div>
 <div class="card">
@@ -2901,7 +2999,8 @@ def unlock_page(artifact_id: str, error: str | None) -> str:
 <p class="hint">Machines send the password in the
 <code>X-Artifact-Password</code> header instead.</p>
 </div>
-</div>""",
+</div>
+{note}""",
     )
 
 
