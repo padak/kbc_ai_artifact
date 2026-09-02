@@ -64,6 +64,11 @@ You need a base URL for every call below (`$HUB` in the examples). To find it:
 3. Once you have a candidate, confirm it by fetching `GET $HUB/context`. It
    returns a JSON manifest (endpoints, current limits, stack aliases) — treat
    it as the up-to-date source of truth if anything below seems stale.
+4. If what you were given is an artifact link (`$HUB/a/{id}`) rather than a
+   hub URL, the base is everything before `/a/`; `GET $HUB/llms.txt` is a
+   short map of the hub written for exactly that situation, and the
+   artifact page's `Link` response header and `<link rel="help">`
+   relations point at it, `/skill` and this file.
 
 ## Authentication
 
@@ -708,6 +713,7 @@ vault you already have.
 | `GET /a/{id}/export/markdown` | Head version as Markdown — the author's own, else converted from the HTML; `X-Artifact-Markdown-Source: original\|converted` says which |
 | `GET /a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault; 413 when the history is over `HUB_EXPORT_MAX_BYTES`, 429 over `HUB_MAX_EXPORTS_PER_HOUR` builds per hour |
 | `GET /changelog` | Rendered changelog, hub's own design |
+| `GET /llms.txt` | llmstxt.org map of the hub for an assistant handed a share link (`text/markdown`) |
 
 If password-protected, send `X-Artifact-Password: <password>` on these; a
 browser gets an HTML unlock form instead. `/a/{id}` and `/a/{id}/v/{n}` serve

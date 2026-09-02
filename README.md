@@ -187,7 +187,7 @@ Public (no auth):
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/` | Landing page (docs) |
+| GET | `/` | Landing page (docs). Every `GET` route in this table also answers `HEAD` with the same status and headers and no body |
 | POST | `/` | Returns 200 (platform health check) |
 | GET | `/context` | Machine-readable manifest |
 | GET | `/skill` | SKILL.md (`text/markdown`) teaching agents how to publish |
@@ -504,8 +504,9 @@ changes what a human sees or what `/a/{id}/raw` returns:
 - **A `Link` response header** on everything under `/a/` — the page, the raw
   bytes, a JSON 404 or 401 — carrying `</context>; rel="service-desc"` and
   the same three titled `rel="help"` entries, so a client that never parses
-  a body gets them too. (Routes are GET-only, so a HEAD probe is answered
-  405 — still with this header.)
+  a body gets them too. Every public GET route answers `HEAD` with the same
+  status and headers and an empty body, so `curl -I` works and a HEAD probe
+  is never counted as a view.
 - **`/llms.txt`** at the root, in the [llmstxt.org](https://llmstxt.org)
   convention: the short Markdown map an assistant checks first on an
   unfamiliar site. It is also listed in `/context` (`endpoints` and
@@ -652,7 +653,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.13.1 \
+  --git-branch v0.14.0 \
   --git-public
 ```
 

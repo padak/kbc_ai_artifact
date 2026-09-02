@@ -16,6 +16,7 @@ a human sees or what ``/a/{id}/raw`` returns byte for byte:
 
 from __future__ import annotations
 
+import src.main as main
 from tests.test_api import (
     Api,
     _publish_markdown,
@@ -148,3 +149,57 @@ def test_context_lists_llms_txt(api: Api) -> None:
     paths = {entry["path"] for entry in body["endpoints"]}
     assert "/llms.txt" in paths
     assert body["documents"]["llms_txt"] == f"{BASE}/llms.txt"
+
+
+# --------------------------------------------------------------------------
+# HEAD: the header-only probe the Link header exists for must not be a 405.
+# --------------------------------------------------------------------------
+
+
+def test_head_on_artifact_page_mirrors_get_without_a_body(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Title\n\nBody")
+    get = api.client.get(f"/a/{artifact_id}")
+    head = api.client.head(f"/a/{artifact_id}")
+    assert head.status_code == 200
+    assert head.content == b""
+    for name in ("link", "x-robots-tag", "content-type", "content-security-policy"):
+        assert head.headers.get(name) == get.headers.get(name), name
+
+
+def test_head_is_not_counted_as_a_view(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Title")
+    assert api.client.head(f"/a/{artifact_id}").status_code == 200
+    assert api.client.head(f"/a/{artifact_id}/raw").status_code == 200
+    assert main.app.state.statedb.views(artifact_id)["total"] == 0
+    assert api.client.get(f"/a/{artifact_id}").status_code == 200
+    assert main.app.state.statedb.views(artifact_id)["total"] == 1
+
+
+def test_head_works_on_the_discovery_documents(api: Api) -> None:
+    for path in ("/", "/llms.txt", "/context", "/skill", "/agent", "/health"):
+        resp = api.client.head(path)
+        assert resp.status_code == 200, path
+        assert resp.content == b"", path
+        assert resp.headers.get("content-type"), path
+
+
+def test_head_keeps_the_status_of_the_get_it_mirrors(api: Api) -> None:
+    assert api.client.head("/a/does-not-exist").status_code == 404
+    protected = _publish_markdown(api, "# Secret", password="hunter22")
+    assert api.client.head(f"/a/{protected}").status_code == 401
+
+
+def test_head_on_a_route_without_get_is_still_refused(api: Api) -> None:
+    # /login/device is POST-only; HEAD must not conjure a GET that does not exist.
+    assert api.client.head("/login/device").status_code == 405
+
+
+# --------------------------------------------------------------------------
+# The landing page tells humans (and the agents they paste it to) about llms.txt.
+# --------------------------------------------------------------------------
+
+
+def test_landing_page_mentions_llms_txt_for_agents(api: Api) -> None:
+    page = api.client.get("/").text
+    # Card, hero link row, the "for agents" section and the footer.
+    assert page.count(f'href="{BASE}/llms.txt"') == 4

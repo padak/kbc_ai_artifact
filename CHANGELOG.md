@@ -4,6 +4,18 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.14.0 — HEAD works, and /llms.txt is everywhere it should be (2026-09-02)
+
+- Every public `GET` route now answers `HEAD` with the same status and
+  headers and an empty body. Until now a `HEAD` was refused with 405, which
+  meant `curl -I` and an assistant's header-only probe of a share link got
+  nothing — the very clients the `Link` header exists for. A `HEAD` is never
+  counted as a view.
+- `/llms.txt` is now mentioned wherever an agent learns about this hub: the
+  landing page's "for agents" card, section and footer, `SKILL.md` and
+  `AGENT.md` (which also explain how to get from a share link to the hub's
+  base URL). The API table on the landing page lists it too.
+
 ## 0.13.1 — The help links name all three documents (2026-09-02)
 
 - The `<link rel="help">` relations on an artifact page and the `Link`

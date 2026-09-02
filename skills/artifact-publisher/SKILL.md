@@ -31,6 +31,14 @@ current truth — re-fetch them rather than trusting a cached copy of this file.
 For what changed in the hub service itself, see `GET /changelog` (rendered
 page) or `GET /changelog.md` (raw source).
 
+`GET /llms.txt` is the shortest orientation for an agent that was handed
+an artifact link rather than this file: what a `/a/{id}` share link is,
+where the readable document behind it lives (`/a/{id}/raw`,
+`/a/{id}/export/markdown`) and which of `/context`, `/openapi.json`,
+`/skill` and `/agent` to read next. Every artifact page also carries those
+pointers as `<link rel="help">` relations and a `Link` response header, and
+every public GET route answers `HEAD` with the same headers and no body.
+
 `GET /agent` serves the Claude Code subagent that knows this entire API
 (auth, publishing, versioning, moderation) without needing this skill loaded
 at all — the copy this hub runs, with `ETag`, `X-Content-SHA256` and
@@ -1188,6 +1196,7 @@ either against a frozen document answers 409.
 | `GET /a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault (versions, comments, and a chronological reasoning trail); 413 over `HUB_EXPORT_MAX_BYTES` of history, 429 over `HUB_MAX_EXPORTS_PER_HOUR` builds per hour |
 | `GET /changelog` | Rendered changelog, in the hub's own visual design |
 | `GET /admin` | Browser moderation studio for the artifact owner (token pasted client-side, never stored server-side) |
+| `GET /llms.txt` | llmstxt.org map of the hub for an AI assistant that was handed a share link (`text/markdown`) |
 | `GET /agent` | This hub's SKILL.md distilled into a ready-to-install Claude Code subagent |
 
 `GET /api/artifacts/{id}/stats` (view counts) and the invitation management
