@@ -6890,6 +6890,8 @@ def test_the_login_page_offers_the_device_flow_and_not_pkce_when_hosted(
     """A hosted hub has no loopback callback, so only the code flow is on."""
     body = api.client.get("/login").text
     assert "Sign in with a code" in body
+    assert "Sign in with your browser" not in body
+    assert 'id="m-pkce"' not in body
     assert "window.HUB_PKCE = false" in body
     assert api.client.get("/login").headers["cache-control"] == "no-store"
 
