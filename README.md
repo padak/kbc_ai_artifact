@@ -203,7 +203,7 @@ Public (no auth):
 | POST | `/login/signout` | Revoke a session on its stack `{stack, token}` |
 | GET | `/docs` | Interactive Swagger UI for this API |
 | GET | `/openapi.json` | Machine-readable OpenAPI schema for this API |
-| GET | `/a/{id}` | Head version rendered in a sandboxed iframe, or the password unlock form; both carry a visually hidden note plus `<link rel>` relations orienting an AI assistant, and every `/a/*` response carries a `Link` header to `/context` and `/skill` |
+| GET | `/a/{id}` | Head version rendered in a sandboxed iframe, or the password unlock form; both carry a visually hidden note plus `<link rel>` relations orienting an AI assistant, and every `/a/*` response carries a `Link` header to `/context`, `/llms.txt`, `/skill` and `/agent` |
 | POST | `/a/{id}/unlock` | Password form target; sets a signed unlock cookie |
 | GET | `/a/{id}/v/{n}` | One specific version (owner/author only when proposed) |
 | GET | `/a/{id}/versions` | Version history JSON (each row's `status` is that version's `live`/`proposed`), plus the document-level `document_status` / `contributions_frozen` / `accept_versions_mode`; proposed rows flagged `outdated`; `?format=html` renders a picker page |
@@ -497,11 +497,15 @@ changes what a human sees or what `/a/{id}/raw` returns:
   accessible "sr-only" recipe (off-canvas and clipped, never `display:none`),
   so screen readers and text extractors read it while a sighted reader sees
   the same zero-chrome page as before. The same pointers appear as
-  `<link rel="alternate|service-desc|help">` relations in the page head.
+  `<link rel="alternate|service-desc|help">` relations in the page head;
+  the three `help` links (`/llms.txt`, `/skill`, `/agent`) each carry a
+  `title` so a machine can tell the entry point, the runtime-agnostic
+  SKILL.md and the Claude Code-only AGENT.md apart.
 - **A `Link` response header** on everything under `/a/` — the page, the raw
-  bytes, a JSON 404 or 401 — so `curl -I` or a HEAD probe gets
-  `</context>; rel="service-desc"` and `</skill>; rel="help"` without parsing
-  a body.
+  bytes, a JSON 404 or 401 — carrying `</context>; rel="service-desc"` and
+  the same three titled `rel="help"` entries, so a client that never parses
+  a body gets them too. (Routes are GET-only, so a HEAD probe is answered
+  405 — still with this header.)
 - **`/llms.txt`** at the root, in the [llmstxt.org](https://llmstxt.org)
   convention: the short Markdown map an assistant checks first on an
   unfamiliar site. It is also listed in `/context` (`endpoints` and
@@ -648,7 +652,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.13.0 \
+  --git-branch v0.13.1 \
   --git-public
 ```
 

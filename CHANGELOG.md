@@ -4,6 +4,17 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.13.1 — The help links name all three documents (2026-09-02)
+
+- The `<link rel="help">` relations on an artifact page and the `Link`
+  response header on everything under `/a/` used to point at `/skill` alone.
+  They now name all three documents an assistant might want, each with a
+  title so a machine can tell them apart: `/llms.txt` first (what this hub
+  is and how to read a share link), then `/skill` (a SKILL.md for any agent
+  runtime) and `/agent` (a Claude Code subagent definition). The hidden note
+  and `/llms.txt` already listed all three; the two header channels now agree
+  with them.
+
 ## 0.13.0 — A shared link explains itself to your AI (2026-09-02)
 
 - Forward an artifact link to an AI assistant and it now knows what it is

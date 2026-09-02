@@ -104,6 +104,7 @@ from src.kbclogin import (
     start_device,
 )
 from src.pages import (
+    HELP_DOCUMENTS,
     admin_page,
     artifact_frame_page,
     changelog_page,
@@ -1865,11 +1866,14 @@ async def artifact_headers(request: Request, call_next):
         # 401 alike -- so the pointer survives whichever the client got.
         # The HTML pages carry the same in <link rel> and a hidden <nav>
         # (pages.agent_note); this header is for clients that never parse
-        # the body.
+        # the body. The help documents and their titles come from one table
+        # (pages.HELP_DOCUMENTS) so header and <link rel> cannot disagree.
         base = base_url(request)
-        response.headers["Link"] = (
-            f'<{base}/context>; rel="service-desc", <{base}/skill>; rel="help"'
+        helps = ", ".join(
+            f'<{base}{route}>; rel="help"; title="{title}"'
+            for route, title in HELP_DOCUMENTS
         )
+        response.headers["Link"] = f'<{base}/context>; rel="service-desc", {helps}'
         # setdefault, not assignment: a handler that has already asked for
         # something stricter (GET /a/{id}/live sends "no-store", so no
         # intermediary can ever answer a change-detection poll from a cache)
@@ -5855,7 +5859,7 @@ def admin(request: Request) -> HTMLResponse:
         "the wrapper carries a visually hidden note and <link rel> relations "
         "pointing at /a/{id}/raw, /a/{id}/export/markdown, /llms.txt, "
         "/context, /docs, /skill and /agent, and every /a/* response carries "
-        "a Link header to /context and /skill.\n\n"
+        "a Link header to /context, /llms.txt, /skill and /agent.\n\n"
         + PASSWORD_GATE_NOTE
         + "\n\nUntil the caller is unlocked, this returns 401 with the unlock "
         "form as HTML rather than the artifact."
