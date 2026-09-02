@@ -20,6 +20,9 @@ content, source, or metadata over a small JSON API.
 
 - Publish HTML, Markdown, or a git repository (public, or private via a
   transient access token) as a hosted artifact
+- **Sign in instead of pasting a token** (`/login`): Keboola's device-code
+  flow works anywhere, PKCE when the hub runs on loopback — the session is
+  used on `/api/*` exactly like a Storage token
 - Unguessable capability URLs (`token_urlsafe`, 24 chars) — no public listing,
   `X-Robots-Tag: noindex` on every artifact response
 - Optional password protection, with a web unlock form and a machine header
@@ -185,7 +188,14 @@ Public (no auth):
 | GET | `/context` | Machine-readable manifest |
 | GET | `/skill` | SKILL.md (`text/markdown`) teaching agents how to publish |
 | GET | `/agent` | The Claude Code subagent definition this hub runs (`text/markdown`, with `ETag`/`X-Content-SHA256`/`X-Hub-Version`); install the attested release copy instead |
-| GET | `/admin` | Browser moderation studio (owner pastes their Storage token client-side; never stored server-side) |
+| GET | `/admin` | Browser moderation studio (the visitor's credential is client-side only; never stored server-side) |
+| GET | `/login` | Sign in to any allowed Keboola stack — device code everywhere, PKCE on a loopback hub |
+| POST | `/login/device` | Start a device-code sign-in `{stack}` → `{user_code, verification_uri_complete, interval, ...}` |
+| POST | `/login/device/token` | Poll it `{stack, device_code}` → `{"status": "pending"}` or `{"status": "ok", credential, projects}` |
+| GET | `/login/pkce/start` | `?stack=` → redirect to the stack's authorization screen (404 unless the hub is on loopback) |
+| GET | `/login/callback` | PKCE callback; finishes the sign-in and re-serves `/login` on its project-picking step |
+| POST | `/login/refresh` | Renew a session `{stack, refresh_token}` |
+| POST | `/login/signout` | Revoke a session on its stack `{stack, token}` |
 | GET | `/docs` | Interactive Swagger UI for this API |
 | GET | `/openapi.json` | Machine-readable OpenAPI schema for this API |
 | GET | `/a/{id}` | Head version rendered in a sandboxed iframe, or the password unlock form |
@@ -205,14 +215,16 @@ Public (no auth):
 | GET | `/health` | Liveness check + service version + index stats |
 
 **Authorization is per project, by design.** Ownership is `(stack, project)`:
-any valid Storage token from the owning project carries full owner authority
+any valid credential from the owning project carries full owner authority
 — update, trash, restore, purge, rotate-link, promote — regardless of that
 token's own scope. A Keboola project *is* the team, and one hub is one
 organisation, so project membership is the intended boundary; the hub does
 not layer roles of its own on top. Keep destructive tokens as safe as you
 keep the project itself.
 
-Authenticated (`X-StorageApi-Token` + `X-Storage-Stack` headers):
+Authenticated (`X-StorageApi-Token` or `Authorization: Bearer`, plus
+`X-Storage-Stack`, plus `X-Storage-Project` when the credential is a sign-in
+bearer):
 
 | Method | Path | Description |
 |---|---|---|
@@ -243,24 +255,108 @@ also fires any webhooks the artifact has registered (`X-Hub-Signature-256`
 HMAC-signed JSON, keyed per receiver, or Slack's `{"text": ...}` shape for a
 `hooks.slack.com` URL) — see *Outbound webhooks* above.
 
-## Quick start (curl)
+## Signing in instead of finding a token
 
-Set `$HUB` to the deployed base URL, put your Keboola Storage API token and
-your stack alias (`us`, `gcp-us`, `eu`, `azure-eu`, `gcp-eu`, or any full
-`https://*.keboola.com` URL) in the environment, and define `hub` — a
-one-line wrapper that hands curl the two auth headers through a process
-substitution, so the token is never a command-line argument visible in `ps`:
+`X-StorageApi-Token` takes either credential:
+
+| Credential | Extra header | Where it comes from |
+|---|---|---|
+| Storage API token, in `X-StorageApi-Token` | none — it names its own project | the project's Storage settings |
+| `kbc_at_*` session / `kbc_pat_*` personal access token, in `Authorization: Bearer` | `X-Storage-Project: <id>` | signing in (below), or the Keboola UI for a PAT |
+
+Each kind goes in the header that kind belongs in, the same split a Keboola
+stack uses: a Storage API token in `X-StorageApi-Token`, a sign-in in
+`Authorization: Bearer`. Putting one in the other's header is a 400 naming the
+right one, and so is sending both at once.
+
+A bearer is scoped to a *person*, so it has to say which project it is acting
+as; a Storage token already knows.
+
+**What a sign-in can reach is decided on Keboola's screen, not here.** A
+`kbc_at_*` session authorizes against every project its approval covered;
+`X-Storage-Project` only selects which of those a given call acts as. The
+PKCE flow therefore asks the stack for its project picker by default, and the
+device flow's approval page offers the same choice — narrow it there if the
+session should not span your whole account. The hub's own project step after
+sign-in is a convenience, not a boundary.
+
+On a deployed hub, `GET /health/headers` reports the header names that
+actually reached the app — that is how you confirm the platform proxy in front
+of it forwards `Authorization`. Everything else — ownership, moderation
+rights, the canonical copy — is identical, because both resolve to the same
+`(stack, project)` identity through the stack's own
+`GET /v2/storage/tokens/verify`.
+
+Every management route takes all three shapes — publishing, versioning,
+moderation, comments, invitations, webhooks. The one capability difference is
+the canonical copy: publishing writes a Storage File into *your* project, so a
+**read-only** personal access token verifies fine and then fails that write
+with a 502 that says so. Reading, moderating and commenting are unaffected.
+
+**In a browser:** open `/login`, pick the stack, approve, pick a project. The
+credential lands in the same `sessionStorage` entry `/admin` and
+`/a/{id}/review` already read, so a pasted token and a sign-in are
+interchangeable to every page.
+
+**From a terminal or an agent:** drive the device flow, which needs no
+callback URL and works from anywhere.
 
 ```bash
-export KBC_TOKEN="…"
+curl -s -X POST "$HUB/login/device" -H "Content-Type: application/json" \
+  -d '{"stack": "eu"}'
+# -> {"device_code": "...", "user_code": "ABCD-EFGH",
+#     "verification_uri_complete": "https://.../admin/auth/device?userCode=...",
+#     "expires_in": 900, "interval": 5}
+
+# Approve that URL in a browser, meanwhile poll every "interval" seconds:
+curl -s -X POST "$HUB/login/device/token" -H "Content-Type: application/json" \
+  -d '{"stack": "eu", "device_code": "..."}'
+# -> {"status": "pending", "interval": 5}
+# -> {"status": "ok", "credential": {"access_token": "kbc_at_...", ...},
+#     "projects": [{"id": 123, "name": "Test", "role": "admin"}]}
+```
+
+A second flow, authorization code + PKCE, is one browser hop with nothing to
+type — but Keboola only accepts an `http://127.0.0.1:{port}/{path}` redirect
+for it, so `/login` offers it exactly when the hub answers on loopback (a hub
+you run yourself). A hosted hub answers 404 on `/login/pkce/start` and uses
+the device code.
+
+The hub makes these calls on the visitor's behalf because a browser cannot: a
+Keboola stack sends no CORS headers for another origin. It relays the result
+and keeps nothing — no server-side session, no stored token. Access tokens
+last an hour and `/login/refresh` rotates them; `/login/signout` revokes the
+session on the stack rather than only forgetting it locally.
+
+Both flows need Keboola's programmatic auth enabled on the stack. Where it is
+off, `/login/device` answers 502 saying so, and a Storage API token remains
+the way in.
+
+## Quick start (curl)
+
+Set `$HUB` to the deployed base URL, put your credential and your stack alias
+(`us`, `gcp-us`, `eu`, `azure-eu`, `gcp-eu`, or any full
+`https://*.keboola.com` URL) in the environment, and define `hub` — a
+one-line wrapper that hands curl the auth headers through a process
+substitution, so the credential is never a command-line argument visible in
+`ps`:
+
+```bash
+export KBC_TOKEN="…"        # a Storage API token, or a kbc_at_/kbc_pat_ one
 export KBC_STACK=eu
+export KBC_PROJECT=         # the project id, only for a sign-in credential
 hub() {
-  curl -s -K <(printf 'header = "X-StorageApi-Token: %s"\nheader = "X-Storage-Stack: %s"\n' "$KBC_TOKEN" "$KBC_STACK") "$@"
+  curl -s -K <(
+    printf 'header = "X-StorageApi-Token: %s"\nheader = "X-Storage-Stack: %s"\n' "$KBC_TOKEN" "$KBC_STACK"
+    [ -n "$KBC_PROJECT" ] && printf 'header = "X-Storage-Project: %s"\n' "$KBC_PROJECT"
+  ) "$@"
 }
 ```
 
-A second identity (a contributing project) is just a different token for one
-call: `KBC_TOKEN="$CONTRIBUTOR_TOKEN" hub …`.
+A Storage token names its own project, so `KBC_PROJECT` stays empty for one;
+a sign-in from `/login` is scoped to a person and needs it. A second identity
+(a contributing project) is just a different credential for one call:
+`KBC_TOKEN="$CONTRIBUTOR_TOKEN" hub …`.
 
 ```bash
 # Publish HTML
@@ -412,6 +508,17 @@ HUB_SECRET_KEY=some-local-secret \
 uv run uvicorn src.main:app --port 8050
 ```
 
+Or use `scripts/dev.sh`, which reads those three from a gitignored
+`.env.local`, binds the loopback interface and sets `HUB_PUBLIC_BASE_URL` to
+match — so `/login` also offers the PKCE flow, which a Keboola stack accepts
+only for an `http://127.0.0.1` callback. It verifies `HUB_STORAGE_TOKEN`
+against `HUB_STACK_URL` before starting, rather than booting a hub whose every
+Storage read answers 401.
+
+`HUB_STORAGE_TOKEN` and `HUB_STACK_URL` describe the **host project** — where
+the hub keeps its own serving copies. They are unrelated to whoever signs in
+at `/login`, who may be in any project on any stack.
+
 Run the test suite:
 
 ```bash
@@ -474,6 +581,12 @@ are missing. Everything else has a documented default, overridable via env.
 | `HUB_MAX_INVITATIONS_PER_ARTIFACT` | `20` | How many live guest invitations one artifact may hold at once (revoked ones are reclaimed automatically to make room) |
 | `HUB_EXPORT_MAX_BYTES` | `67108864` (64 MB) | Ceiling on the source material one vault export may render, and on the archive it writes; a larger artifact answers 413 before anything is built (`0` disables the bound) |
 | `HUB_MAX_EXPORTS_PER_HOUR` | `20` | Vault exports of one artifact one client address may build per UTC hour before the export answers 429 |
+| `HUB_LOGIN_CLIENT_ID` | `kbc-artifact-hub` | Public client label the hub identifies itself with on a stack's sign-in endpoints; a rate-limit and audit label, not a secret |
+| `HUB_LOGIN_TIMEOUT_S` | `20` | Per-request HTTP timeout for a sign-in call to a stack |
+| `HUB_LOGIN_PKCE_TTL_S` | `600` | How long a started PKCE sign-in may sit unfinished before its callback stops being accepted |
+| `HUB_LOGIN_MAX_PENDING_PKCE` | `64` | Concurrently pending PKCE sign-ins held in memory; the oldest above this are dropped |
+| `HUB_MAX_LOGINS_PER_HOUR` | `30` | Sign-in requests one client address may make per UTC hour (429 afterwards): starting a device or PKCE sign-in, renewing a session, signing out |
+| `HUB_MAX_LOGIN_POLLS_PER_HOUR` | `600` | Polls of an already-started device sign-in one client address may make per UTC hour. Counted separately because one honest sign-in polls every few seconds for up to 15 minutes |
 
 ## Deployment to Keboola
 
@@ -486,7 +599,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.11.0 \
+  --git-branch v0.12.0 \
   --git-public
 ```
 
@@ -669,6 +782,21 @@ egress policy or resolver-aware outbound proxy that denies connections to
 loopback, RFC1918/ULA, link-local, cluster/service, and cloud-metadata
 ranges regardless of what hostname validation concluded. Treat the
 in-application hostname check as defense in depth, not the boundary.
+
+**Signed-in sessions.** A `/login` session is a credential of the visitor's,
+handled exactly like a pasted Storage token: the hub relays the sign-in to the
+stack, hands the result to the tab that asked for it, and keeps no session of
+its own — no cookie, no server-side store, nothing written to Storage or disk.
+Every response that carries one is `no-store`, and the PKCE code verifier is
+the one piece that stays on the server (in memory, single-use, TTL-bounded),
+because it is the proof of possession the callback is checked against. The
+`/login/*` endpoints are unauthenticated by necessity — the caller has no
+identity yet — so starting a sign-in is rate-limited per client address
+(`HUB_MAX_LOGINS_PER_HOUR`), which keeps the hub from being usable as an open
+relay onto Keboola's auth API. What a session may do here is bounded by what
+it may do on the stack: `/v2/storage/*` calls made with it resolve to the
+admin's own Storage token *in the project named by `X-Storage-Project`*, and a
+project the admin cannot reach comes back 403 from the stack itself.
 
 **Capability revocation (0.7.0).** `POST /api/artifacts/{id}/rotate-link`
 mints a fresh public share id and the previous one — plus the bare internal

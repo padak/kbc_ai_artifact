@@ -1,8 +1,28 @@
-"""Client authentication: stack resolution and Storage token verification.
+"""Client authentication: stack resolution and credential verification.
 
-The management API authenticates with two headers:
-  X-StorageApi-Token: any Keboola Storage API token
-  X-Storage-Stack:    stack alias or full https URL
+The management API takes one of two credentials, each in the header its kind
+belongs in — the same split a Keboola stack itself uses:
+
+  X-StorageApi-Token:    a Keboola Storage API token
+  Authorization: Bearer  a programmatic bearer (``kbc_at_*`` session,
+                         ``kbc_pat_*`` personal access token)
+
+plus, on every request:
+
+  X-Storage-Stack:       stack alias or full https URL
+  X-Storage-Project:     project id — required with a bearer, which is scoped
+                         to an admin rather than to one project
+
+A Storage token names its project by itself. A bearer does not: the stack
+exchanges it for the admin's own Storage token of the project named in
+``X-KBC-ProjectId`` (see ``BearerTokenAuthenticator`` in Connection), so the
+hub has to say which project the caller is acting as. Both end at the same
+:class:`Owner`, which is why everything downstream is unaware of the
+difference.
+
+The ``X-Kbc-*`` spelling is not usable on the public side — the data-app proxy
+strips those headers — hence ``X-Storage-Project`` on the way in and
+``X-KBC-ProjectId`` only on the way out to a stack.
 
 A stack URL is accepted when it is https and its hostname ends with
 ``.keboola.com``, or when it is explicitly listed in HUB_EXTRA_STACKS.
@@ -13,6 +33,8 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import httpx
+
+from src.kbclogin import is_bearer_credential
 
 logger = logging.getLogger(__name__)
 
@@ -115,19 +137,45 @@ def resolve_stack(raw: str, extra_stacks: tuple[str, ...] = ()) -> str:
     )
 
 
-def verify_token(stack_url: str, token: str, timeout_s: int = 15) -> Owner:
-    """Verify a Storage token against its stack and return the owning project."""
+def storage_headers(token: str, project_id: int | None) -> dict[str, str]:
+    """Headers that authenticate one Storage API call as ``token``.
+
+    A bearer is only half a credential — it says who, not where — so the
+    project id travels with it on every Storage call, not just on verify.
+    """
+    if is_bearer_credential(token):
+        if project_id is None:
+            raise AuthError(
+                "This token is a Keboola sign-in credential, so it needs a "
+                "project: send X-Storage-Project with the project id"
+            )
+        return {
+            "Authorization": f"Bearer {token}",
+            "X-KBC-ProjectId": str(project_id),
+        }
+    return {"X-StorageApi-Token": token}
+
+
+def verify_token(
+    stack_url: str, token: str, timeout_s: int = 15, project_id: int | None = None
+) -> Owner:
+    """Verify a credential against its stack and return the owning project."""
     if not token:
         raise AuthError("Missing X-StorageApi-Token header")
     url = f"{stack_url}/v2/storage/tokens/verify"
     try:
         response = httpx.get(
-            url, headers={"X-StorageApi-Token": token}, timeout=timeout_s
+            url, headers=storage_headers(token, project_id), timeout=timeout_s
         )
     except httpx.HTTPError as exc:
         logger.warning("Stack %s unreachable: %s", stack_url, exc)
         raise StackUnreachableError(f"Could not reach {stack_url}: {exc}") from exc
     if response.status_code in (401, 403):
+        if is_bearer_credential(token):
+            raise AuthError(
+                f"The stack refused this sign-in for project {project_id} — "
+                "the session may have expired, or it does not reach that project"
+            )
         raise AuthError("Storage token rejected by the stack")
     if response.status_code != 200:
         raise StackUnreachableError(
@@ -150,9 +198,19 @@ def verify_token(stack_url: str, token: str, timeout_s: int = 15) -> Owner:
     if not isinstance(owner, dict):
         raise AuthError("Token verify response has no owner project")
     admin = data.get("admin")
+    resolved_id = _owner_project_id(owner.get("id"))
+    # A bearer is exchanged for a Storage token *of the requested project*, so
+    # a different owner coming back means the request was routed somewhere
+    # other than where the caller said. Refuse rather than record an identity
+    # the caller did not ask for.
+    if project_id is not None and resolved_id != project_id:
+        raise AuthError(
+            f"Stack resolved project {resolved_id} for a credential presented "
+            f"as project {project_id}"
+        )
     return Owner(
         stack_url=stack_url,
-        project_id=_owner_project_id(owner.get("id")),
+        project_id=resolved_id,
         project_name=_owner_project_name(owner.get("name")),
         # SEC-075-011: the token-level claims. Unlike the project identity
         # above, none of these can fail the request — see the Owner docstring.

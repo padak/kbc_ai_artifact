@@ -1,0 +1,1 @@
+- [kbc_ai_artifact review patterns](project_kbc_ai_artifact.md) — what's already solved (rate limiting, process-local state) vs. genuinely unverified (proxy Authorization forwarding, bearer account-wide scope) in this repo

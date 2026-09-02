@@ -86,11 +86,28 @@ from src.comments import (
 from src.config import Settings, load_settings
 from src.diff import DiffError, compute_diff
 from src.kbc import BackendError, KbcFilesBackend
+from src.kbclogin import (
+    Credential,
+    LoginError,
+    LoginPending,
+    LoginUnavailable,
+    PkceRegistry,
+    authorize_url,
+    exchange_pkce,
+    introspect,
+    is_bearer_credential,
+    pkce_challenge,
+    poll_device,
+    refresh_credential,
+    revoke,
+    start_device,
+)
 from src.pages import (
     admin_page,
     artifact_frame_page,
     changelog_page,
     landing_page,
+    login_page,
     review_page,
     unlock_page,
     versions_page,
@@ -1287,6 +1304,11 @@ async def lifespan(app: FastAPI):
     app.state.signer = CookieSigner(
         derive_key(settings.secret_key, KEY_LABEL_UNLOCK_COOKIE)
     )
+    # PKCE sign-ins in flight. Process-local, and only ever populated on a
+    # loopback hub — see PkceRegistry.
+    app.state.pkce = PkceRegistry(
+        settings.login_pkce_ttl_s, settings.login_max_pending_pkce
+    )
     app.state.hydrated = False
     statedb = StateDB(
         backend,
@@ -1438,6 +1460,8 @@ app = FastAPI(
 #: cannot drift apart.
 _TOKEN_SECURITY = "StorageApiToken"
 _STACK_SECURITY = "StorageStack"
+_BEARER_SECURITY = "KeboolaBearer"
+_PROJECT_SECURITY = "StorageProject"
 
 
 def custom_openapi() -> dict[str, Any]:
@@ -1464,7 +1488,10 @@ def custom_openapi() -> dict[str, Any]:
         "type": "apiKey",
         "in": "header",
         "name": "X-StorageApi-Token",
-        "description": "Any Keboola Storage API token.",
+        "description": (
+            "A Keboola Storage API token. A kbc_at_*/kbc_pat_* sign-in token "
+            "goes in Authorization: Bearer instead."
+        ),
     }
     security_schemes[_STACK_SECURITY] = {
         "type": "apiKey",
@@ -1475,7 +1502,32 @@ def custom_openapi() -> dict[str, Any]:
             "https://*.keboola.com URL."
         ),
     }
-    security_requirement = [{_TOKEN_SECURITY: [], _STACK_SECURITY: []}]
+    security_schemes[_BEARER_SECURITY] = {
+        "type": "http",
+        "scheme": "bearer",
+        "description": (
+            "A Keboola sign-in token: a kbc_at_* session or a kbc_pat_* "
+            "personal access token, with X-Storage-Project naming the project "
+            "it acts as. A Storage API token belongs in X-StorageApi-Token "
+            "instead; either header alone, never both."
+        ),
+    }
+    security_schemes[_PROJECT_SECURITY] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Storage-Project",
+        "description": (
+            "Project id the caller is acting as. Required with a kbc_at_* or "
+            "kbc_pat_* credential, ignored with a Storage token."
+        ),
+    }
+    # Two alternatives, each a complete way to authenticate: the header pair
+    # every Storage token has always used, or a bearer plus the project it
+    # acts as. Swagger's Authorize dialog offers both.
+    security_requirement = [
+        {_TOKEN_SECURITY: [], _STACK_SECURITY: [], _PROJECT_SECURITY: []},
+        {_BEARER_SECURITY: [], _STACK_SECURITY: [], _PROJECT_SECURITY: []},
+    ]
     for path, methods in schema.get("paths", {}).items():
         if not path.startswith("/api/"):
             continue
@@ -1856,13 +1908,103 @@ def artifact_urls(base: str, share_id: str) -> dict[str, str]:
     }
 
 
+def client_credential(request: Request) -> str:
+    """The caller's credential, from the one header its kind belongs in.
+
+    Each kind of credential has exactly one home, the same one it has on a
+    Keboola stack:
+
+    * ``X-StorageApi-Token`` — a Storage API token, and nothing else.
+    * ``Authorization: Bearer`` — a programmatic bearer (``kbc_at_*`` session,
+      ``kbc_pat_*`` personal access token), which additionally names its
+      project in ``X-Storage-Project``.
+
+    Putting one in the other's header is refused rather than quietly accepted.
+    They are different kinds of credential with different scopes, and a header
+    called ``X-StorageApi-Token`` holding a session token is exactly the
+    confusion that makes people unable to find where a bearer goes. The 400
+    names the header the value does belong in, so the mistake teaches its own
+    fix.
+
+    Two credentials at once is refused for a different reason: whichever the
+    hub picked, the caller believed it was using the other.
+    """
+    bearer = ""
+    raw = request.headers.get("authorization", "").strip()
+    if raw[:7].lower() == "bearer ":
+        bearer = raw[7:].strip()
+    header = request.headers.get("x-storageapi-token", "").strip()
+    if bearer and header:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Send one credential: either X-StorageApi-Token with a "
+                "Storage API token, or Authorization: Bearer with a Keboola "
+                "sign-in token — not both."
+            ),
+        )
+    if header and is_bearer_credential(header):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "That is a Keboola sign-in token, not a Storage API token. "
+                "Send it as 'Authorization: Bearer <token>', with the project "
+                "it acts as in X-Storage-Project."
+            ),
+        )
+    if bearer and not is_bearer_credential(bearer):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Authorization: Bearer carries a Keboola sign-in token "
+                "(kbc_at_… or kbc_pat_…). Send a Storage API token as "
+                "'X-StorageApi-Token: <token>' instead."
+            ),
+        )
+    if not bearer and not header and request.headers.get("x-storage-project"):
+        # A signed-in caller always sends both; a project header arriving
+        # alone means the credential was dropped in transit, and the likeliest
+        # dropper is a proxy in front of this hub -- the same thing that
+        # already strips X-Kbc-*. Saying so beats "you sent no credential",
+        # which is what this otherwise looks like from in here.
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "X-Storage-Project arrived without a credential. If you sent "
+                "Authorization: Bearer, something between you and this hub "
+                "dropped it — GET /health/headers lists the headers that "
+                "actually arrived."
+            ),
+        )
+    return bearer or header
+
+
+def credential_project(request: Request) -> int | None:
+    """The project a signed-in credential is acting as, if one was named.
+
+    Only a programmatic bearer needs it — a Storage token names its own
+    project — so an absent header is not an error here; :func:`verify_token`
+    is the one that insists when the credential cannot do without it.
+    """
+    raw = request.headers.get("x-storage-project", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Storage-Project must be a Keboola project id (an integer)",
+        ) from exc
+
+
 def require_owner(request: Request) -> tuple[Owner, str]:
     """Authenticate the caller and return (caller identity, raw token).
 
     The raw token is returned because the canonical copy of the artifact is
     uploaded to the caller's own project with it. It is never stored or logged.
     """
-    token = request.headers.get("x-storageapi-token", "")
+    token = client_credential(request)
     # Primary header is X-Storage-Stack: the platform proxy in front of
     # deployed data apps strips X-Kbc-* headers, so that name never arrives.
     # X-Kbc-Stack is kept as an alias for direct/local access.
@@ -1874,7 +2016,12 @@ def require_owner(request: Request) -> tuple[Owner, str]:
     except StackError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        owner = verify_token(stack_url, token, settings.token_verify_timeout_s)
+        owner = verify_token(
+            stack_url,
+            token,
+            settings.token_verify_timeout_s,
+            credential_project(request),
+        )
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except StackUnreachableError as exc:
@@ -1889,16 +2036,29 @@ def optional_caller(request: Request) -> Owner | None:
     Anonymous reads are the norm here, so a missing or unusable credential is
     simply "no identity" rather than an error.
     """
-    token = request.headers.get("x-storageapi-token", "")
     raw_stack = request.headers.get("x-storage-stack", "") or request.headers.get(
         "x-kbc-stack", ""
     )
+    try:
+        token = client_credential(request)
+    except HTTPException:
+        # Two conflicting credentials on a public read is one more unusable
+        # credential, not a reason to refuse the read.
+        return None
     if not token or not raw_stack:
         return None
     try:
         stack_url = resolve_stack(raw_stack, settings.extra_stacks)
-        return verify_token(stack_url, token, settings.token_verify_timeout_s)
-    except (StackError, AuthError, StackUnreachableError) as exc:
+        return verify_token(
+            stack_url,
+            token,
+            settings.token_verify_timeout_s,
+            credential_project(request),
+        )
+    except (StackError, AuthError, StackUnreachableError, HTTPException) as exc:
+        # HTTPException lands here too: a malformed X-Storage-Project is one
+        # more unusable credential on a path whose norm is no credential at
+        # all, and a public read must not turn into a 400 over it.
         logger.info("Ignoring unusable read credentials: %s", exc)
         return None
 
@@ -3460,6 +3620,11 @@ def _build(
 def _store_canonical(owner: Owner, token: str, artifact_id: str, html: str) -> int:
     """Upload the canonical copy of the built HTML into the author's project.
 
+    This is the one place a caller's credential does more than identify them,
+    so it is also the one place its *write* capability matters: a read-only
+    personal access token verifies perfectly and then cannot store the copy.
+    The failure says so, since nothing else the caller did was wrong.
+
     **REL-075-009 — accepted residual: a process death here orphans this file.**
 
     The copy lands in the *caller's* project, reachable only with the caller's
@@ -3489,7 +3654,7 @@ def _store_canonical(owner: Owner, token: str, artifact_id: str, html: str) -> i
     ``artifact-id-{id}``, and deletes any whose artifact the hub does not
     serve.
     """
-    backend = KbcFilesBackend(owner.stack_url, token)
+    backend = KbcFilesBackend(owner.stack_url, token, owner.project_id)
     try:
         return backend.upload(
             f"artifact-{artifact_id}.html",
@@ -3505,7 +3670,11 @@ def _store_canonical(owner: Owner, token: str, artifact_id: str, html: str) -> i
         )
         raise HTTPException(
             status_code=502,
-            detail="could not store canonical copy in your project",
+            detail=(
+                "could not store canonical copy in your project — the "
+                "credential must be able to write Storage Files there "
+                "(a read-only personal access token cannot)"
+            ),
         ) from exc
 
 
@@ -3520,7 +3689,7 @@ def _discard_canonical(owner: Owner, token: str, artifact_id: str, file_id: int)
     needs to reap it by hand; it never masks the error that got us here.
     """
     try:
-        KbcFilesBackend(owner.stack_url, token).delete(file_id)
+        KbcFilesBackend(owner.stack_url, token, owner.project_id).delete(file_id)
     except Exception as exc:  # noqa: BLE001 - the original failure must win
         logger.error(
             "Could not discard canonical file %s of artifact %s in project %s "
@@ -3765,8 +3934,27 @@ def context(request: Request) -> dict:
         "auth": {
             "applies_to": "/api/*",
             "headers": {
-                "X-StorageApi-Token": "any Keboola Storage API token",
+                "Authorization": (
+                    "'Bearer {token}' — a programmatic bearer obtained by "
+                    "signing in: a kbc_at_* session or a kbc_pat_* personal "
+                    "access token. Send X-Storage-Project with it. A Storage "
+                    "token here is a 400; so is sending this together with "
+                    "X-StorageApi-Token. On a deployed hub, GET "
+                    "/health/headers reports whether the platform proxy in "
+                    "front of it forwards this header"
+                ),
+                "X-StorageApi-Token": (
+                    "any Keboola Storage API token, and nothing else — a "
+                    "kbc_at_*/kbc_pat_* value here is a 400 naming "
+                    "Authorization: Bearer as its header"
+                ),
                 "X-Storage-Stack": "stack alias or full https URL (X-Kbc-Stack accepted as alias for direct access)",
+                "X-Storage-Project": (
+                    "project id — required with a kbc_at_*/kbc_pat_* bearer, "
+                    "which is scoped to a person rather than to one project, "
+                    "and ignored with a Storage token, which names its own. "
+                    "Not X-Kbc-*: the data-app proxy strips that family"
+                ),
             },
             "stack_aliases": dict(STACK_ALIASES),
             "stack_rule": (
@@ -3775,9 +3963,64 @@ def context(request: Request) -> dict:
                 "HUB_EXTRA_STACKS)"
             ),
             "verification": "GET {stack}/v2/storage/tokens/verify",
+            "sign_in": {
+                "page": "GET /login",
+                "why": (
+                    "obtains a credential without the caller having to find a "
+                    "Storage API token first; the session it returns is used "
+                    "on /api/* exactly like one, with X-Storage-Project added"
+                ),
+                "device_flow": (
+                    "POST /login/device {'stack': ...} returns user_code and "
+                    "verification_uri_complete; the person approves it in a "
+                    "browser while the client polls POST /login/device/token "
+                    "{'stack', 'device_code'} every 'interval' seconds until "
+                    "it answers {'status': 'ok'}. Works from anywhere"
+                ),
+                "pkce_flow": (
+                    "GET /login/pkce/start?stack=... redirects through the "
+                    "stack's authorization screen back to /login/callback. "
+                    "Offered only when this hub answers on http://127.0.0.1 "
+                    "or http://[::1] — a Keboola stack accepts no other "
+                    "redirect target for it"
+                ),
+                "scope": (
+                    "a session authorizes against every project its approval "
+                    "covered on the stack's own screen; X-Storage-Project "
+                    "selects which of those a call acts as and restricts "
+                    "nothing. The PKCE flow asks the stack for its project "
+                    "picker by default; the device flow's approval page "
+                    "offers the same choice"
+                ),
+                "lifecycle": (
+                    "an access token lasts an hour; POST /login/refresh "
+                    "{'stack', 'refresh_token'} renews it, POST /login/signout "
+                    "{'stack', 'token'} revokes the session"
+                ),
+                "relayed_not_stored": (
+                    "the hub calls the stack because a browser cannot (no "
+                    "CORS) and hands the result straight back; it keeps no "
+                    "session of its own"
+                ),
+            },
             "ownership": (
                 "(normalized stack, project id); update, delete, promote and "
-                "head pinning require a token from the owning project"
+                "head pinning require a credential for the owning project — "
+                "a Storage token, a session or a personal access token are "
+                "interchangeable here"
+            ),
+            "destructive_policy_and_sign_in": (
+                "a bearer is exchanged by the stack for the admin's own "
+                "Storage token in the named project, so the claims "
+                "destructive_token_policy reads describe that token — signing "
+                "in is not a way around the policy"
+            ),
+            "write_capability": (
+                "every /api route accepts all three credential shapes; the "
+                "only capability difference is publishing, which stores the "
+                "canonical copy as a Storage File in the caller's own "
+                "project, so a read-only personal access token verifies and "
+                "then fails that one write with 502"
             ),
             "token_storage": "never persisted; used only during the request",
             "reader_password_header": "X-Artifact-Password",
@@ -3837,6 +4080,57 @@ def context(request: Request) -> dict:
                 "path": "/skill",
                 "auth": "none",
                 "purpose": "SKILL.md for agents (text/markdown)",
+            },
+            {
+                "method": "GET",
+                "path": "/login",
+                "auth": "none",
+                "purpose": "sign in to a Keboola stack in a browser (HTML)",
+            },
+            {
+                "method": "POST",
+                "path": "/login/device",
+                "auth": "none",
+                "purpose": (
+                    "start a device-code sign-in on a stack; returns the code "
+                    "to approve and how often to poll"
+                ),
+            },
+            {
+                "method": "POST",
+                "path": "/login/device/token",
+                "auth": "none",
+                "purpose": (
+                    "poll a device-code sign-in; 'pending' until approved, "
+                    "then the session and the projects it reaches"
+                ),
+            },
+            {
+                "method": "GET",
+                "path": "/login/pkce/start",
+                "auth": "none",
+                "purpose": (
+                    "start a PKCE sign-in (loopback hubs only); redirects to "
+                    "the stack"
+                ),
+            },
+            {
+                "method": "GET",
+                "path": "/login/callback",
+                "auth": "none",
+                "purpose": "PKCE callback (loopback hubs only)",
+            },
+            {
+                "method": "POST",
+                "path": "/login/refresh",
+                "auth": "none",
+                "purpose": "renew a signed-in session from its refresh token",
+            },
+            {
+                "method": "POST",
+                "path": "/login/signout",
+                "auth": "none",
+                "purpose": "revoke a signed-in session on its stack",
             },
             {
                 "method": "GET",
@@ -4817,6 +5111,492 @@ def changelog_md() -> Response:
     if text is None:
         return _changelog_not_found()
     return Response(content=text, media_type="text/markdown; charset=utf-8")
+
+
+# --------------------------------------------------------------------------
+# Interactive sign-in
+# --------------------------------------------------------------------------
+
+
+class DeviceStartBody(BaseModel):
+    """Body of ``POST /login/device``."""
+
+    model_config = {"json_schema_extra": {"examples": [{"stack": "eu"}]}}
+
+    stack: str = Field(
+        ...,
+        description=(
+            "Stack alias (us, gcp-us, eu, azure-eu, gcp-eu) or a full "
+            "https://*.keboola.com URL to sign in against."
+        ),
+    )
+
+
+class DevicePollBody(BaseModel):
+    """Body of ``POST /login/device/token``."""
+
+    stack: str = Field(..., description="The stack the sign-in was started on.")
+    device_code: str = Field(
+        ..., description="The deviceCode returned by POST /login/device."
+    )
+
+
+class RefreshBody(BaseModel):
+    """Body of ``POST /login/refresh``."""
+
+    stack: str = Field(..., description="The stack that issued the session.")
+    refresh_token: str = Field(
+        ..., description="The refresh token of the session to renew."
+    )
+
+
+class SignOutBody(BaseModel):
+    """Body of ``POST /login/signout``."""
+
+    stack: str = Field(..., description="The stack that issued the session.")
+    token: str = Field(
+        ..., description="The access or refresh token of the session to end."
+    )
+
+
+def _login_stack(raw: str) -> str:
+    """Resolve a sign-in target the same way every other stack input is."""
+    try:
+        return resolve_stack(raw, settings.extra_stacks)
+    except StackError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _login_unavailable(exc: LoginUnavailable) -> HTTPException:
+    """502 for a stack that cannot, or will not, run this sign-in."""
+    return HTTPException(status_code=502, detail=str(exc))
+
+
+def _claim_login_slot(request: Request, scope: str, limit: int, what: str) -> None:
+    """Charge one outbound sign-in call to this client's hourly budget, or 429.
+
+    Every ``/login/*`` route is unauthenticated — the caller has no identity
+    yet, that is the point — and every one of them makes the hub call a
+    Keboola stack. Unbudgeted, that is an open relay onto somebody else's auth
+    API, and the stack cannot close it from its side: the address *it* rate
+    limits is the hub's, so one abuser there would spend the budget of every
+    person using this hub. The bound has to be here, per caller.
+    """
+    client_ip = _client_ip(request)
+    bucket = _utc_hour()
+    if _read_counter(request.app, scope, client_ip, bucket) >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"too many {what} from your address; at most {limit} are "
+                "allowed per hour"
+            ),
+        )
+    _bump_counter(request.app, scope, client_ip, bucket)
+
+
+def _claim_login(request: Request) -> None:
+    """Charge starting or renewing a session: the low-frequency half."""
+    _claim_login_slot(
+        request, "login", settings.max_logins_per_hour, "sign-in requests"
+    )
+
+
+def _claim_login_poll(request: Request) -> None:
+    """Charge one poll of a device sign-in: the high-frequency half.
+
+    A device code lives 15 minutes and is polled every 5 seconds, so one
+    honest sign-in is on the order of 180 calls — two orders of magnitude
+    above what starting one costs. Sharing a budget with the starts would
+    either throttle the normal flow or make the starts' budget meaningless,
+    so polling is counted separately and bounded generously.
+    """
+    _claim_login_slot(
+        request, "login-poll", settings.max_login_polls_per_hour, "sign-in polls"
+    )
+
+
+def _loopback_origin(base: str) -> bool:
+    """True when ``base`` is the loopback origin PKCE requires.
+
+    Connection accepts only ``http://127.0.0.1:{port}/{path}`` or the IPv6
+    equivalent as a PKCE redirect URI (``PkceAuthorizeRequest`` in the
+    connection repository), which makes the flow available exactly when the
+    hub is reachable at one of those — a hub the user runs themselves.
+    """
+    parts = urlsplit(base)
+    return parts.scheme == "http" and parts.hostname in ("127.0.0.1", "::1")
+
+
+def _pkce_redirect_uri(base: str) -> str:
+    """The loopback callback URI this hub registers with a stack."""
+    return f"{base.rstrip('/')}/login/callback"
+
+
+def _credential_payload(credential: Credential) -> dict[str, Any]:
+    """A signed-in session, shaped for the browser that asked for it.
+
+    The tokens are in here on purpose: they belong to the person signing in,
+    and the hub's whole credential model is that they live in the visitor's
+    own tab and never on this side. Every response carrying this is
+    ``no-store``.
+    """
+    return {
+        "stack": credential.stack_url,
+        "access_token": credential.access_token,
+        "refresh_token": credential.refresh_token,
+        "expires_in": credential.expires_in,
+        "user": {
+            "id": credential.user_id,
+            "email": credential.user_email,
+            "name": credential.user_name,
+        },
+    }
+
+
+def _session_payload(stack_url: str, credential: Credential) -> dict[str, Any]:
+    """The projects a fresh session may act as, for the project picker.
+
+    Introspection failing is not a failed sign-in: the credential is already
+    valid. The picker then has nothing to list and asks for a project id
+    instead, which still completes the login.
+    """
+    try:
+        info = introspect(stack_url, credential.access_token, settings.login_timeout_s)
+    except LoginError as exc:
+        logger.info("Could not list projects for a fresh session: %s", exc)
+        return {"projects": [], "projects_unavailable": True}
+    return {
+        "projects": [
+            {"id": project.id, "name": project.name, "role": project.role}
+            for project in info.projects
+        ],
+        "projects_unavailable": False,
+    }
+
+
+def _credential_response(payload: dict[str, Any]) -> JSONResponse:
+    """A JSON response carrying a credential, kept out of every cache.
+
+    Shares :func:`_no_store` with the webhook-key routes: both answer with
+    something a cache must never hold, and one definition of what that means
+    is one place to keep it right.
+    """
+    return _no_store(JSONResponse(content=payload))
+
+
+@app.get(
+    "/login",
+    tags=["service"],
+    response_class=HTMLResponse,
+    summary="Sign in to Keboola (browser UI)",
+    description=(
+        "Signs a visitor in to any allowed Keboola stack without them having "
+        "to find a Storage API token first.\n\n"
+        "Two flows are offered, both of which Connection itself implements: "
+        "**device authorization** (the page shows a short code, the visitor "
+        "approves it in their Keboola tab) works everywhere, and "
+        "**authorization code + PKCE** (one browser hop, nothing to type) is "
+        "offered when this hub answers on a loopback origin, which is the "
+        "only redirect target a stack accepts for it.\n\n"
+        "The session that comes back is handed to the visitor's own tab and "
+        "used exactly like a pasted Storage token: kept in sessionStorage, "
+        "sent as X-StorageApi-Token plus X-Storage-Project. The hub relays "
+        "the sign-in and keeps nothing."
+    ),
+    responses={200: {"description": "The sign-in page.", "content": CONTENT_HTML}},
+)
+def login(request: Request) -> HTMLResponse:
+    """Serve the sign-in page."""
+    base = base_url(request)
+    return HTMLResponse(
+        login_page(
+            base,
+            SERVICE_VERSION,
+            GITHUB_REPO_URL,
+            pkce_available=_loopback_origin(base),
+            result=None,
+        ),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post(
+    "/login/device",
+    tags=["service"],
+    summary="Start a device-code sign-in",
+    description=(
+        "Opens a device authorization on the named stack and returns the code "
+        "the visitor approves in their browser, plus how often to poll "
+        "POST /login/device/token.\n\n"
+        "The hub makes this call on the visitor's behalf because a browser "
+        "cannot: a Keboola stack sends no CORS headers for this origin."
+    ),
+    responses={
+        200: {"description": "Device authorization opened."},
+        400: RESP_STACK_400,
+        429: {"description": "Too many sign-ins started from this address."},
+        502: {
+            "description": (
+                "The stack could not be reached, or does not offer "
+                "device-code sign-in."
+            )
+        },
+    },
+)
+def login_device_start(request: Request, body: DeviceStartBody) -> JSONResponse:
+    """Open a device authorization and return its user-facing codes."""
+    stack_url = _login_stack(body.stack)
+    _claim_login(request)
+    try:
+        start = start_device(stack_url, settings.login_client_id, settings.login_timeout_s)
+    except LoginUnavailable as exc:
+        raise _login_unavailable(exc) from exc
+    except LoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _credential_response(
+        {
+            "stack": stack_url,
+            "device_code": start.device_code,
+            "user_code": start.user_code,
+            "verification_uri": start.verification_uri,
+            "verification_uri_complete": start.verification_uri_complete,
+            "expires_in": start.expires_in,
+            "interval": start.interval,
+        }
+    )
+
+
+@app.post(
+    "/login/device/token",
+    tags=["service"],
+    summary="Poll a device-code sign-in",
+    description=(
+        "Asks once whether the device authorization has been approved. "
+        "Answers {'status': 'pending'} with the interval to wait while the "
+        "visitor is still in their browser, and {'status': 'ok'} with the "
+        "session and the projects it reaches once they approve."
+    ),
+    responses={
+        200: {"description": "Still pending, or signed in."},
+        400: {"description": "The sign-in was declined, expired, or is invalid."},
+        502: {"description": "The stack could not be reached."},
+    },
+)
+def login_device_poll(request: Request, body: DevicePollBody) -> JSONResponse:
+    """Poll a device authorization once."""
+    stack_url = _login_stack(body.stack)
+    _claim_login_poll(request)
+    try:
+        credential = poll_device(
+            stack_url,
+            settings.login_client_id,
+            body.device_code,
+            settings.login_timeout_s,
+        )
+    except LoginPending as exc:
+        return _credential_response(
+            {
+                "status": "pending",
+                "interval": exc.interval,
+                "slow_down": exc.slow_down,
+            }
+        )
+    except LoginUnavailable as exc:
+        raise _login_unavailable(exc) from exc
+    except LoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _credential_response(
+        {
+            "status": "ok",
+            "credential": _credential_payload(credential),
+            **_session_payload(stack_url, credential),
+        }
+    )
+
+
+@app.get(
+    "/login/pkce/start",
+    tags=["service"],
+    summary="Start a PKCE sign-in (loopback hubs only)",
+    description=(
+        "Redirects the visitor to the stack's authorization screen with a "
+        "freshly generated PKCE challenge. Available only when this hub "
+        "answers on http://127.0.0.1 or http://[::1] — a Keboola stack "
+        "accepts no other redirect target for this flow, so a hosted hub gets "
+        "404 here and uses the device code instead."
+    ),
+    responses={
+        307: {"description": "Redirect to the stack's authorization screen."},
+        400: RESP_STACK_400,
+        404: {"description": "This hub is not on a loopback origin."},
+        429: {"description": "Too many sign-ins started from this address."},
+    },
+)
+def login_pkce_start(
+    request: Request,
+    stack: str = Query(..., description="Stack alias or full https URL."),
+    all_projects: bool = Query(
+        False,
+        description=(
+            "Skip the stack's project picker and issue a session covering "
+            "every project the admin belongs to. Off by default: a session "
+            "narrowed on the stack's own screen is the smaller credential to "
+            "be holding in a browser tab."
+        ),
+    ),
+) -> RedirectResponse:
+    """Begin a PKCE sign-in and send the browser to the stack."""
+    base = base_url(request)
+    if not _loopback_origin(base):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "PKCE sign-in needs a loopback callback, which this hub does "
+                "not have; use the device code instead"
+            ),
+        )
+    stack_url = _login_stack(stack)
+    _claim_login(request)
+    redirect_uri = _pkce_redirect_uri(base)
+    pending = request.app.state.pkce.start(stack_url, redirect_uri)
+    return RedirectResponse(
+        authorize_url(
+            stack_url,
+            settings.login_client_id,
+            redirect_uri,
+            pkce_challenge(pending.verifier),
+            pending.state,
+            pick_project=not all_projects,
+        ),
+        status_code=307,
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+@app.get(
+    "/login/callback",
+    tags=["service"],
+    response_class=HTMLResponse,
+    summary="PKCE callback (loopback hubs only)",
+    description=(
+        "Where the stack sends the browser back after a PKCE sign-in. "
+        "Exchanges the authorization code for a session and re-serves the "
+        "sign-in page on its project-picking step. A code is usable once: the "
+        "pending verifier is consumed here, so a replayed callback fails."
+    ),
+    responses={
+        200: {
+            "description": "The sign-in page, ready to pick a project.",
+            "content": CONTENT_HTML,
+        },
+        404: {"description": "This hub is not on a loopback origin."},
+    },
+)
+def login_callback(
+    request: Request,
+    code: str = Query("", description="Authorization code minted by the stack."),
+    state: str = Query("", description="The state this hub sent with the request."),
+    error: str = Query("", description="Set instead of a code when refused."),
+) -> HTMLResponse:
+    """Finish a PKCE sign-in and hand the session to the page."""
+    base = base_url(request)
+    if not _loopback_origin(base):
+        raise HTTPException(status_code=404, detail="No PKCE sign-in on this hub")
+    result = _pkce_result(request, code, state, error)
+    return HTMLResponse(
+        login_page(
+            base,
+            SERVICE_VERSION,
+            GITHUB_REPO_URL,
+            pkce_available=True,
+            result=result,
+        ),
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+def _pkce_result(
+    request: Request, code: str, state: str, error: str
+) -> dict[str, Any]:
+    """Turn a PKCE callback into what the sign-in page should show next."""
+    pending = request.app.state.pkce.take(state) if state else None
+    if pending is None:
+        # Either the state was never ours, the login already completed, or it
+        # sat unfinished past its TTL. All three are "start again", and none
+        # of them says which — a wrong state must not be a probe.
+        return {"error": "This sign-in is no longer valid. Start again."}
+    if error:
+        return {"error": "The sign-in was declined in the browser."}
+    if not code:
+        return {"error": "The stack returned no authorization code."}
+    try:
+        credential = exchange_pkce(
+            pending.stack_url,
+            settings.login_client_id,
+            code,
+            pending.redirect_uri,
+            pending.state,
+            pending.verifier,
+            settings.login_timeout_s,
+        )
+    except LoginError as exc:
+        return {"error": str(exc)}
+    return {
+        "credential": _credential_payload(credential),
+        **_session_payload(pending.stack_url, credential),
+    }
+
+
+@app.post(
+    "/login/refresh",
+    tags=["service"],
+    summary="Renew a signed-in session",
+    description=(
+        "Exchanges a refresh token for a fresh access/refresh pair so a "
+        "studio tab left open does not have to sign in again when its access "
+        "token ages out. The old refresh token is spent by the stack."
+    ),
+    responses={
+        200: {"description": "A renewed session."},
+        400: {"description": "The refresh token is invalid, expired or revoked."},
+        502: {"description": "The stack could not be reached."},
+    },
+)
+def login_refresh(request: Request, body: RefreshBody) -> JSONResponse:
+    """Rotate a session's refresh token."""
+    stack_url = _login_stack(body.stack)
+    _claim_login(request)
+    try:
+        credential = refresh_credential(
+            stack_url, body.refresh_token, settings.login_timeout_s
+        )
+    except LoginUnavailable as exc:
+        raise _login_unavailable(exc) from exc
+    except LoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _credential_response({"credential": _credential_payload(credential)})
+
+
+@app.post(
+    "/login/signout",
+    tags=["service"],
+    summary="End a signed-in session",
+    description=(
+        "Revokes a session on its stack, so logging out of the studio also "
+        "ends the credential rather than only forgetting it locally. Always "
+        "answers 204: a credential the stack will not revoke is one it has "
+        "already forgotten."
+    ),
+    responses={204: {"description": "The session is no longer usable."}},
+    status_code=204,
+)
+def login_signout(request: Request, body: SignOutBody) -> Response:
+    """Revoke a session on its stack."""
+    stack_url = _login_stack(body.stack)
+    _claim_login(request)
+    revoke(stack_url, body.token, settings.login_timeout_s)
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 @app.get(

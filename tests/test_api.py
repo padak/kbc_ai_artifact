@@ -8,8 +8,9 @@ The whole HTTP surface of ``src.main`` is exercised through a single
   e.g. to simulate a container restart by hydrating a second store over the
   same backend),
 - ``src.main.verify_token`` is monkeypatched so ``"good-token"`` verifies as
-  project 123 and ``"other-token"`` as project 999; any other token raises
-  ``AuthError``,
+  project 123 and ``"other-token"`` as project 999; a ``kbc_at_*``/``kbc_pat_*``
+  bearer from ``_SESSION_TOKENS`` verifies as whatever project the request
+  named; any other token raises ``AuthError``,
 - the canonical-copy upload (``KbcFilesBackend`` constructed with the
   *caller's* token inside ``src.main._store_canonical``) is intercepted at
   the same seam (``src.main.KbcFilesBackend``) and, for any stack/token pair
@@ -34,15 +35,21 @@ import json
 import logging
 import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
 import zipfile
 from typing import Any, NamedTuple
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 
 import src.main as main
 import src.pages as pages
-from src.auth import STACK_ALIASES, AuthError, Owner
+from src.auth import STACK_ALIASES, AuthError, Owner, storage_headers
+from src.kbclogin import is_bearer_credential
 from src.builder import BuiltArtifact
 import src.comments as comments_module
 from src.comments import CommentStore
@@ -78,6 +85,18 @@ _TOKEN_CLAIMS: dict[str, dict[str, Any]] = {
     "other-token": {"token_id": "tok-other", "is_master_token": True},
 }
 
+#: Signed-in credentials the fake stack accepts. Unlike a Storage token these
+#: name no project of their own — the request does, via X-Storage-Project.
+#:
+#: Their claims mirror what a stack really answers: a bearer is exchanged for
+#: the admin's *own* Storage token in the named project, so verify describes
+#: that token — a project administrator's, hence ``admin_role="admin"`` rather
+#: than a master token.
+_SESSION_TOKENS: dict[str, dict[str, Any]] = {
+    "kbc_at_session_secret": {"token_id": "tok-session", "admin_role": "admin"},
+    "kbc_pat_personal_secret": {"token_id": "tok-pat", "admin_role": "admin"},
+}
+
 
 class Api(NamedTuple):
     client: TestClient
@@ -106,9 +125,12 @@ def api(tmp_path, settings, monkeypatch):
     class _CanonicalBackend:
         """Fake KbcFilesBackend used only for the author's canonical copy."""
 
-        def __init__(self, stack_url: str, token: str) -> None:
+        def __init__(
+            self, stack_url: str, token: str, project_id: int | None = None
+        ) -> None:
             self.stack_url = stack_url
             self.token = token
+            self.project_id = project_id
 
         def upload(self, name: str, content: bytes, tags: list[str]) -> int:
             counter["n"] += 1
@@ -117,6 +139,7 @@ def api(tmp_path, settings, monkeypatch):
                 {
                     "stack_url": self.stack_url,
                     "token": self.token,
+                    "project_id": self.project_id,
                     "name": name,
                     "content": content,
                     "tags": list(tags),
@@ -130,16 +153,43 @@ def api(tmp_path, settings, monkeypatch):
                 {"stack_url": self.stack_url, "token": self.token, "deleted": file_id}
             )
 
-    def fake_kbc_files_backend(stack_url: str, token: str):
+    def fake_kbc_files_backend(
+        stack_url: str, token: str, project_id: int | None = None
+    ):
         """Route hub-project calls to the shared in-memory backend, else fake."""
         if (
             stack_url == test_settings.hub_stack_url
             and token == test_settings.hub_storage_token
         ):
             return backend
-        return _CanonicalBackend(stack_url, token)
+        return _CanonicalBackend(stack_url, token, project_id)
 
-    def fake_verify_token(stack_url: str, token: str, timeout_s: int = 15) -> Owner:
+    def fake_verify_token(
+        stack_url: str,
+        token: str,
+        timeout_s: int = 15,
+        project_id: int | None = None,
+    ) -> Owner:
+        """Stand in for the stack, for both credential shapes.
+
+        A Storage token is looked up in the fixture's table; a signed-in
+        bearer names its project on the request instead, exactly as the real
+        stack resolves ``X-KBC-ProjectId`` into an owner.
+        """
+        if is_bearer_credential(token):
+            # Delegate the "which headers does this credential travel under"
+            # question to the real code, so the fixture cannot drift from the
+            # message a caller actually gets for an incomplete credential.
+            storage_headers(token, project_id)
+            claims = _SESSION_TOKENS.get(token)
+            if claims is None:
+                raise AuthError("session rejected by the stack")
+            return Owner(
+                stack_url=stack_url,
+                project_id=project_id,
+                project_name=f"project {project_id}",
+                **claims,
+            )
         project = _OWNER_PROJECTS.get(token)
         if project is None:
             raise AuthError("Storage token rejected by the stack")
@@ -259,6 +309,13 @@ def test_context_lists_all_endpoints_and_stack_aliases(api: Api) -> None:
         ("GET", "/health/headers"),
         ("GET", "/context"),
         ("GET", "/skill"),
+        ("GET", "/login"),
+        ("POST", "/login/device"),
+        ("POST", "/login/device/token"),
+        ("GET", "/login/pkce/start"),
+        ("GET", "/login/callback"),
+        ("POST", "/login/refresh"),
+        ("POST", "/login/signout"),
         ("GET", "/agent"),
         ("GET", "/changelog"),
         ("GET", "/changelog.md"),
@@ -384,9 +441,16 @@ def test_openapi_json_has_expected_paths_and_security_schemes(api: Api) -> None:
     assert "/a/{artifact_id}" in schema["paths"]
 
     security_schemes = schema["components"]["securitySchemes"]
-    scheme_headers = {s["name"] for s in security_schemes.values()}
+    scheme_headers = {s["name"] for s in security_schemes.values() if "name" in s}
     assert "X-StorageApi-Token" in scheme_headers
     assert "X-Storage-Stack" in scheme_headers
+    assert "X-Storage-Project" in scheme_headers
+    # The bearer spelling is an http scheme, not a named header.
+    assert security_schemes["KeboolaBearer"] == {
+        "type": "http",
+        "scheme": "bearer",
+        "description": security_schemes["KeboolaBearer"]["description"],
+    }
 
 
 def test_openapi_json_never_leaks_the_hub_storage_token(api: Api) -> None:
@@ -468,10 +532,14 @@ def test_openapi_api_operations_carry_the_security_schemes(api: Api) -> None:
         if path.startswith("/api/"):
             security = operation.get("security")
             assert security, f"{method} {path}: missing security requirement"
-            names = set(security[0])
-            assert names == {"StorageApiToken", "StorageStack"}, (
-                f"{method} {path}: unexpected security {names}"
-            )
+            # Two alternatives, either of which authenticates on its own: the
+            # header pair, or the standard bearer spelling. Both carry the
+            # project header, which only a bearer actually needs.
+            alternatives = [set(option) for option in security]
+            assert alternatives == [
+                {"StorageApiToken", "StorageStack", "StorageProject"},
+                {"KeboolaBearer", "StorageStack", "StorageProject"},
+            ], f"{method} {path}: unexpected security {alternatives}"
         else:
             assert (
                 "security" not in operation
@@ -1645,7 +1713,7 @@ def test_admin_page_keeps_credentials_in_the_tab_only(api: Api) -> None:
     assert "sessionStorage" in text
     assert "hub_admin_auth" in text
     # The promise made to the visitor on the sign-in card.
-    assert "Your token stays in this browser tab" in text
+    assert "the credential stays in this browser tab" in text
 
 
 def test_admin_page_offers_every_stack_alias_and_a_custom_url(api: Api) -> None:
@@ -4092,7 +4160,7 @@ def test_publish_rolls_back_when_the_canonical_upload_fails(
         def upload(self, name: str, content: bytes, tags: list[str]) -> int:
             raise BackendError("the caller's project storage is down")
 
-    def factory(stack_url: str, token: str):
+    def factory(stack_url: str, token: str, project_id: int | None = None):
         if (
             stack_url == api.settings.hub_stack_url
             and token == api.settings.hub_storage_token
@@ -6709,3 +6777,837 @@ def test_release_workflow_gates_tests_and_attests_the_documents() -> None:
     assert "uv run pytest tests/" in runs, "the release must be gated on the suite"
     assert "SHA256SUMS" in runs
     assert "gh release" in runs
+
+
+# --------------------------------------------------------------------------
+# Interactive sign-in
+# --------------------------------------------------------------------------
+
+#: A credential shaped exactly like the ones `/login` hands the browser.
+SESSION_HEADERS = {
+    "Authorization": "Bearer kbc_at_session_secret",
+    "X-Storage-Stack": "us",
+    "X-Storage-Project": "123",
+}
+
+_STACK = "https://connection.keboola.com"
+_CLI_TOKEN_BODY = {
+    "accessToken": "kbc_at_session_secret",
+    "refreshToken": "kbc_rt_session_secret",
+    "tokenType": "Bearer",
+    "expiresIn": 3600,
+    "sessionId": "sid",
+    "user": {"id": 42, "email": "someone@keboola.com", "name": "Someone"},
+}
+
+
+def _pending_body(error: str, interval: int = 5) -> dict:
+    return {
+        "error": "cliAuth",
+        "exceptionId": "x",
+        "code": "y",
+        "uuid": "z",
+        "params": {"error": error, "interval": interval},
+        "exceptionDetailUrl": "https://example.com",
+    }
+
+
+def _introspect_body(projects: list[dict]) -> dict:
+    return {
+        "sessionId": "sid",
+        "user": {"id": 42, "email": "someone@keboola.com", "name": "Someone"},
+        "grantType": "device_code",
+        "sudoVerified": False,
+        "createdAt": "2026-09-01T00:00:00+00:00",
+        "expiresAt": "2026-09-01T01:00:00+00:00",
+        "projects": projects,
+    }
+
+
+def test_a_signed_in_session_publishes_as_the_project_it_names(api: Api) -> None:
+    """concept-auth: a Keboola sign-in is one more way to be a project.
+
+    Everything downstream — ownership, the canonical copy, the listing — has
+    to behave exactly as it does for a pasted Storage token, which is the
+    whole point of resolving both credential shapes into one Owner.
+    """
+    resp = api.client.post(
+        "/api/artifacts", json={"markdown": "# From a session"},
+        headers=SESSION_HEADERS,
+    )
+    assert resp.status_code == 201, resp.text
+    artifact_id = resp.json()["id"]
+
+    listed = api.client.get("/api/artifacts", headers=SESSION_HEADERS)
+    assert [row["id"] for row in listed.json()["artifacts"]] == [artifact_id]
+
+    # And the same project reaches it through a pasted Storage token, because
+    # the identity recorded is the project, not the way it signed in.
+    assert api.client.get("/api/artifacts", headers=AUTH_HEADERS).json()[
+        "artifacts"
+    ][0]["id"] == artifact_id
+
+    assert api.canonical_calls[-1]["project_id"] == 123
+    assert api.canonical_calls[-1]["token"] == "kbc_at_session_secret"
+
+
+def test_a_session_without_a_project_is_an_incomplete_credential(api: Api) -> None:
+    resp = api.client.get(
+        "/api/artifacts",
+        headers={
+            "Authorization": "Bearer kbc_at_session_secret",
+            "X-Storage-Stack": "us",
+        },
+    )
+    assert resp.status_code == 401
+    assert "X-Storage-Project" in resp.json()["detail"]
+
+
+def test_a_malformed_project_header_is_a_bad_request(api: Api) -> None:
+    resp = api.client.get(
+        "/api/artifacts", headers={**SESSION_HEADERS, "X-Storage-Project": "abc"}
+    )
+    assert resp.status_code == 400
+
+
+def test_a_malformed_project_header_never_breaks_a_public_read(api: Api) -> None:
+    """optional_caller must degrade to "no identity", not to a 400."""
+    artifact_id = _publish_markdown(api, "# Public")
+    resp = api.client.get(
+        f"/a/{artifact_id}", headers={**SESSION_HEADERS, "X-Storage-Project": "abc"}
+    )
+    assert resp.status_code == 200
+
+
+def test_the_login_page_offers_the_device_flow_and_not_pkce_when_hosted(
+    api: Api,
+) -> None:
+    """A hosted hub has no loopback callback, so only the code flow is on."""
+    body = api.client.get("/login").text
+    assert "Sign in with a code" in body
+    assert "window.HUB_PKCE = false" in body
+    assert api.client.get("/login").headers["cache-control"] == "no-store"
+
+
+def test_pkce_is_refused_without_a_loopback_origin(api: Api) -> None:
+    assert api.client.get("/login/pkce/start?stack=us").status_code == 404
+    assert api.client.get("/login/callback?code=x&state=y").status_code == 404
+
+
+def test_starting_a_device_sign_in_returns_the_user_code(api: Api) -> None:
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "deviceCode": "kbc_dc_secret",
+                    "userCode": "ABCD-EFGH",
+                    "verificationUri": f"{_STACK}/admin/auth/device",
+                    "verificationUriComplete": (
+                        f"{_STACK}/admin/auth/device?userCode=ABCD-EFGH"
+                    ),
+                    "expiresIn": 900,
+                    "interval": 5,
+                },
+            )
+        )
+        resp = api.client.post("/login/device", json={"stack": "us"})
+    assert resp.status_code == 200
+    assert resp.json()["user_code"] == "ABCD-EFGH"
+    assert resp.json()["stack"] == _STACK
+    assert resp.headers["cache-control"] == "no-store"
+
+
+def test_a_sign_in_against_a_disallowed_stack_is_refused(api: Api) -> None:
+    resp = api.client.post("/login/device", json={"stack": "https://evil.example.com"})
+    assert resp.status_code == 400
+
+
+def test_a_stack_without_the_feature_reports_it_rather_than_failing(api: Api) -> None:
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device").mock(return_value=httpx.Response(404))
+        resp = api.client.post("/login/device", json={"stack": "us"})
+    assert resp.status_code == 502
+    assert "does not offer" in resp.json()["detail"]
+
+
+def test_polling_reports_pending_until_the_sign_in_is_approved(api: Api) -> None:
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device/token").mock(
+            return_value=httpx.Response(400, json=_pending_body("slow_down", 10))
+        )
+        resp = api.client.post(
+            "/login/device/token", json={"stack": "us", "device_code": "kbc_dc_secret"}
+        )
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "pending", "interval": 10, "slow_down": True}
+
+
+def test_an_approved_sign_in_returns_the_session_and_its_projects(api: Api) -> None:
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device/token").mock(
+            return_value=httpx.Response(200, json=_CLI_TOKEN_BODY)
+        )
+        mock.get(f"{_STACK}/v1/auth/token/introspect").mock(
+            return_value=httpx.Response(
+                200,
+                json=_introspect_body([{"id": 123, "name": "Test", "role": "admin"}]),
+            )
+        )
+        resp = api.client.post(
+            "/login/device/token", json={"stack": "us", "device_code": "kbc_dc_secret"}
+        )
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["credential"]["access_token"] == "kbc_at_session_secret"
+    assert body["credential"]["user"]["email"] == "someone@keboola.com"
+    assert body["projects"] == [{"id": 123, "name": "Test", "role": "admin"}]
+    assert body["projects_unavailable"] is False
+    assert resp.headers["cache-control"] == "no-store"
+
+
+def test_a_session_whose_projects_cannot_be_listed_still_signs_in(api: Api) -> None:
+    """Introspection is a convenience; failing it must not undo a valid login."""
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device/token").mock(
+            return_value=httpx.Response(200, json=_CLI_TOKEN_BODY)
+        )
+        mock.get(f"{_STACK}/v1/auth/token/introspect").mock(
+            return_value=httpx.Response(500)
+        )
+        resp = api.client.post(
+            "/login/device/token", json={"stack": "us", "device_code": "kbc_dc_secret"}
+        )
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["projects"] == []
+    assert body["projects_unavailable"] is True
+
+
+def test_a_declined_sign_in_is_a_bad_request(api: Api) -> None:
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device/token").mock(
+            return_value=httpx.Response(400, json=_pending_body("access_denied"))
+        )
+        resp = api.client.post(
+            "/login/device/token", json={"stack": "us", "device_code": "kbc_dc_secret"}
+        )
+    assert resp.status_code == 400
+    assert "declined" in resp.json()["detail"]
+
+
+def test_a_session_can_be_renewed_and_revoked(api: Api) -> None:
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/token/refresh").mock(
+            return_value=httpx.Response(
+                200, json={**_CLI_TOKEN_BODY, "accessToken": "kbc_at_next_secret"}
+            )
+        )
+        renewed = api.client.post(
+            "/login/refresh", json={"stack": "us", "refresh_token": "kbc_rt_session_secret"}
+        )
+        assert renewed.json()["credential"]["access_token"] == "kbc_at_next_secret"
+
+        revoked = mock.post(f"{_STACK}/v1/auth/token/revoke").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        out = api.client.post(
+            "/login/signout", json={"stack": "us", "token": "kbc_rt_session_secret"}
+        )
+    assert out.status_code == 204
+    assert revoked.called
+
+
+def test_signing_out_succeeds_even_when_the_stack_refuses(api: Api) -> None:
+    """A credential the stack will not revoke is one it has already forgotten."""
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/token/revoke").mock(
+            return_value=httpx.Response(401, json={})
+        )
+        resp = api.client.post(
+            "/login/signout", json={"stack": "us", "token": "kbc_rt_session_secret"}
+        )
+    assert resp.status_code == 204
+
+
+def test_starting_sign_ins_is_rate_limited_per_address(api: Api) -> None:
+    """The hub relays sign-ins to a stack, so it must not be an open relay."""
+    limit = api.settings.max_logins_per_hour
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device").mock(return_value=httpx.Response(404))
+        for _ in range(limit):
+            api.client.post("/login/device", json={"stack": "us"})
+        resp = api.client.post("/login/device", json={"stack": "us"})
+    assert resp.status_code == 429
+
+
+def test_polling_has_its_own_budget_far_above_the_starts(api: Api) -> None:
+    """One honest sign-in polls ~180 times, so polls cannot share the starts'
+    budget — but they still need one of their own."""
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/device/token").mock(
+            return_value=httpx.Response(400, json=_pending_body("authorization_pending"))
+        )
+        for _ in range(api.settings.max_logins_per_hour + 5):
+            resp = api.client.post(
+                "/login/device/token",
+                json={"stack": "us", "device_code": "kbc_dc_secret"},
+            )
+            assert resp.status_code == 200
+    assert api.settings.max_login_polls_per_hour > api.settings.max_logins_per_hour
+
+
+def test_every_login_route_is_bounded_per_address(api: Api, monkeypatch) -> None:
+    """concept-abuse: /login/* is unauthenticated and calls a Keboola stack.
+
+    The stack cannot bound this from its side — the address it rate limits is
+    the hub's, so one abuser there would spend every other visitor's budget.
+    Each route has to charge the caller here.
+    """
+    monkeypatch.setattr(
+        main,
+        "settings",
+        dataclasses.replace(
+            api.settings, max_logins_per_hour=2, max_login_polls_per_hour=2
+        ),
+    )
+    routes = {
+        "/login/device": {"stack": "us"},
+        "/login/device/token": {"stack": "us", "device_code": "kbc_dc_secret"},
+        "/login/refresh": {"stack": "us", "refresh_token": "kbc_rt_x"},
+        "/login/signout": {"stack": "us", "token": "kbc_rt_x"},
+    }
+    with respx.mock as mock:
+        # Whatever the stack would answer is beside the point: the budget is
+        # spent before the call, and the third attempt must not reach it.
+        mock.post(url__regex=r".*/v1/auth/.*").mock(
+            return_value=httpx.Response(400, json=_pending_body("invalid_request"))
+        )
+        for path, body in routes.items():
+            main._fallback_counts.clear()
+            statuses = [
+                api.client.post(path, json=body).status_code for _ in range(3)
+            ]
+            assert statuses[-1] == 429, f"{path} is unbounded: {statuses}"
+
+
+
+def test_the_login_endpoints_are_not_marked_as_needing_a_token(api: Api) -> None:
+    """A sign-in route the caller must already be signed in for would be absurd."""
+    schema = api.client.get("/openapi.json").json()
+    for path, methods in schema["paths"].items():
+        if not path.startswith("/login"):
+            continue
+        for operation in methods.values():
+            assert "security" not in operation, path
+
+
+@pytest.fixture
+def loopback_api(api: Api, monkeypatch) -> Api:
+    """The same hub, answering on the loopback origin PKCE needs.
+
+    A Keboola stack accepts only an ``http://127.0.0.1:{port}`` redirect for
+    the PKCE flow, so the flow exists exactly for a hub the user runs
+    themselves — which is what this fixture models.
+    """
+    monkeypatch.setattr(
+        main,
+        "settings",
+        dataclasses.replace(api.settings, public_base_url="http://127.0.0.1:8050"),
+    )
+    return api
+
+
+def test_the_loopback_login_page_offers_the_browser_flow(loopback_api: Api) -> None:
+    body = loopback_api.client.get("/login").text
+    assert "window.HUB_PKCE = true" in body
+    assert "Sign in with your browser" in body
+
+
+def test_pkce_start_redirects_to_the_stack_with_a_challenge(
+    loopback_api: Api,
+) -> None:
+    resp = loopback_api.client.get(
+        "/login/pkce/start?stack=us", follow_redirects=False
+    )
+    assert resp.status_code == 307
+    target = httpx.URL(resp.headers["location"])
+    assert str(target).startswith(f"{_STACK}/admin/auth/pkce/authorize?")
+    assert target.params["codeChallengeMethod"] == "S256"
+    assert (
+        target.params["redirectUri"] == "http://127.0.0.1:8050/login/callback"
+    )
+    assert len(target.params["codeChallenge"]) == 43
+    assert len(target.params["state"]) >= 22
+
+
+def test_the_pkce_callback_completes_the_sign_in(loopback_api: Api) -> None:
+    start = loopback_api.client.get(
+        "/login/pkce/start?stack=us", follow_redirects=False
+    )
+    state = httpx.URL(start.headers["location"]).params["state"]
+
+    with respx.mock as mock:
+        exchange = mock.post(f"{_STACK}/v1/auth/pkce/token").mock(
+            return_value=httpx.Response(200, json=_CLI_TOKEN_BODY)
+        )
+        mock.get(f"{_STACK}/v1/auth/token/introspect").mock(
+            return_value=httpx.Response(
+                200,
+                json=_introspect_body([{"id": 123, "name": "Test", "role": "admin"}]),
+            )
+        )
+        resp = loopback_api.client.get(f"/login/callback?code=the-code&state={state}")
+
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+    body = resp.text
+    assert "kbc_at_session_secret" in body
+    assert '"name": "Test"' in body or '"name":"Test"' in body
+    sent = json.loads(exchange.calls.last.request.read())
+    assert sent["code"] == "the-code"
+    assert sent["state"] == state
+    assert len(sent["codeVerifier"]) == 43
+
+
+def test_a_pkce_code_cannot_be_replayed(loopback_api: Api) -> None:
+    """The pending verifier is consumed by the first callback, valid or not."""
+    start = loopback_api.client.get(
+        "/login/pkce/start?stack=us", follow_redirects=False
+    )
+    state = httpx.URL(start.headers["location"]).params["state"]
+
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/pkce/token").mock(
+            return_value=httpx.Response(200, json=_CLI_TOKEN_BODY)
+        )
+        mock.get(f"{_STACK}/v1/auth/token/introspect").mock(
+            return_value=httpx.Response(200, json=_introspect_body([]))
+        )
+        first = loopback_api.client.get(f"/login/callback?code=c&state={state}")
+        second = loopback_api.client.get(f"/login/callback?code=c&state={state}")
+
+    assert "kbc_at_session_secret" in first.text
+    assert "kbc_at_session_secret" not in second.text
+    assert "no longer valid" in second.text
+
+
+def test_an_unknown_callback_state_says_nothing_about_why(loopback_api: Api) -> None:
+    resp = loopback_api.client.get("/login/callback?code=c&state=never-issued")
+    assert resp.status_code == 200
+    assert "no longer valid" in resp.text
+
+
+def test_a_declined_pkce_authorization_is_reported_not_exchanged(
+    loopback_api: Api,
+) -> None:
+    start = loopback_api.client.get(
+        "/login/pkce/start?stack=us", follow_redirects=False
+    )
+    state = httpx.URL(start.headers["location"]).params["state"]
+    with respx.mock as mock:
+        exchange = mock.post(f"{_STACK}/v1/auth/pkce/token")
+        resp = loopback_api.client.get(
+            f"/login/callback?error=access_denied&state={state}"
+        )
+    assert not exchange.called
+    assert "declined" in resp.text
+
+
+def test_starting_a_pkce_sign_in_is_bounded_too(
+    loopback_api: Api, monkeypatch
+) -> None:
+    """On a loopback hub, so a 429 cannot be confused with the 404 a hosted
+    hub answers for a flow it does not offer."""
+    monkeypatch.setattr(
+        main,
+        "settings",
+        dataclasses.replace(
+            loopback_api.settings,
+            public_base_url="http://127.0.0.1:8050",
+            max_logins_per_hour=2,
+        ),
+    )
+    statuses = [
+        loopback_api.client.get(
+            "/login/pkce/start?stack=us", follow_redirects=False
+        ).status_code
+        for _ in range(3)
+    ]
+    assert statuses == [307, 307, 429], statuses
+
+
+def test_a_project_name_cannot_close_the_script_it_is_embedded_in(
+    loopback_api: Api,
+) -> None:
+    """The callback inlines stack-supplied names into a <script> element."""
+    start = loopback_api.client.get(
+        "/login/pkce/start?stack=us", follow_redirects=False
+    )
+    state = httpx.URL(start.headers["location"]).params["state"]
+    with respx.mock as mock:
+        mock.post(f"{_STACK}/v1/auth/pkce/token").mock(
+            return_value=httpx.Response(200, json=_CLI_TOKEN_BODY)
+        )
+        mock.get(f"{_STACK}/v1/auth/token/introspect").mock(
+            return_value=httpx.Response(
+                200,
+                json=_introspect_body(
+                    [{"id": 1, "name": "</script><img src=x>", "role": "admin"}]
+                ),
+            )
+        )
+        resp = loopback_api.client.get(f"/login/callback?code=c&state={state}")
+    assert "</script><img" not in resp.text
+    assert "\\u003c/script>" in resp.text
+
+
+# --------------------------------------------------------------------------
+# Inline scripts
+# --------------------------------------------------------------------------
+
+
+def test_every_inline_script_parses() -> None:
+    """Each page ships its JavaScript as a Python string, which nothing checks.
+
+    A Python-style implicit string concatenation ("a" "b") is valid Python and
+    a syntax error in JavaScript, so the mistake survives every test that only
+    looks at rendered markup — and takes the whole page down in the browser.
+    Parsing each script catches that class of typo at test time.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available to parse the inline scripts")
+    scripts = {
+        name: getattr(pages, name) for name in dir(pages) if name.endswith("_JS")
+    }
+    assert scripts, "no inline scripts found to check"
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, source in scripts.items():
+            path = pathlib.Path(tmp) / f"{name}.js"
+            path.write_text(source)
+            result = subprocess.run(
+                [node, "--check", str(path)], capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"{name} does not parse:\n{result.stderr}"
+
+
+def test_a_hub_side_failure_does_not_discard_the_visitors_credential() -> None:
+    """Only 401/403 says anything about the credential.
+
+    The studio and the review page both boot by calling /api/artifacts. When
+    the hub's own Storage is down that call is a 502 — the same for every
+    visitor — and throwing the sign-in away over it sends people back through
+    a sign-in that cannot fix anything.
+    """
+    for source in (pages._ADMIN_JS, pages._REVIEW_JS):
+        assert "err.status === 401" in source or "isCredentialRejected" in source
+        assert source.count("That session is no longer valid") == 1
+
+
+#: A personal access token, the other credential shape a bearer can be.
+PAT_HEADERS = {
+    "Authorization": "Bearer kbc_pat_personal_secret",
+    "X-Storage-Stack": "us",
+    "X-Storage-Project": "123",
+}
+
+
+def test_a_personal_access_token_drives_the_whole_management_api(api: Api) -> None:
+    """concept-auth: every /api route takes a PAT, not just the read ones.
+
+    A PAT authenticates the same way a session does, so if one route special-
+    cased the Storage token the rest of the surface would quietly diverge.
+    This walks a full lifecycle on a PAT alone.
+    """
+    published = api.client.post(
+        "/api/artifacts",
+        json={"markdown": "# From a PAT", "accept_versions": True},
+        headers=PAT_HEADERS,
+    )
+    assert published.status_code == 201, published.text
+    artifact_id = published.json()["id"]
+
+    updated = api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"markdown": "# From a PAT\n\nSecond version."},
+        headers=PAT_HEADERS,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["version"] == 2
+
+    listed = api.client.get("/api/artifacts", headers=PAT_HEADERS)
+    assert [row["id"] for row in listed.json()["artifacts"]] == [artifact_id]
+
+    pinned = api.client.put(
+        f"/api/artifacts/{artifact_id}/head",
+        json={"mode": "pinned", "version": 1},
+        headers=PAT_HEADERS,
+    )
+    assert pinned.status_code == 200, pinned.text
+
+    thread = api.client.post(
+        f"/api/artifacts/{artifact_id}/comments",
+        json={"version": 1, "exact": "From a PAT", "prefix": "", "suffix": "",
+              "body": "Looks right."},
+        headers=PAT_HEADERS,
+    )
+    assert thread.status_code == 201, thread.text
+
+    assert api.client.get(
+        f"/api/artifacts/{artifact_id}/stats", headers=PAT_HEADERS
+    ).status_code == 200
+    assert api.client.delete(
+        f"/api/artifacts/{artifact_id}", headers=PAT_HEADERS
+    ).status_code == 200
+
+
+def test_a_pat_and_a_session_in_one_project_are_the_same_owner(api: Api) -> None:
+    """Ownership is the project, however the caller proved they are in it."""
+    artifact_id = api.client.post(
+        "/api/artifacts", json={"markdown": "# Shared"}, headers=SESSION_HEADERS
+    ).json()["id"]
+
+    promoted = api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"markdown": "# Shared\n\nEdited through a PAT."},
+        headers=PAT_HEADERS,
+    )
+    assert promoted.status_code == 200, promoted.text
+
+    # And a Storage token for the same project reaches it too.
+    assert api.client.get(
+        f"/api/artifacts/{artifact_id}/stats", headers=AUTH_HEADERS
+    ).status_code == 200
+
+
+def test_a_credential_that_cannot_write_says_so(api: Api, monkeypatch) -> None:
+    """A read-only PAT verifies, then fails the one write the caller's own
+    project needs. The message has to name that, or the caller sees a bare
+    502 for a request that was in every other way correct."""
+    class _ReadOnly:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def upload(self, name: str, content: bytes, tags: list[str]) -> int:
+            raise BackendError("403 Client Error: Forbidden")
+
+    monkeypatch.setattr(main, "KbcFilesBackend", _ReadOnly)
+    resp = api.client.post(
+        "/api/artifacts", json={"markdown": "# Nope"}, headers=PAT_HEADERS
+    )
+    assert resp.status_code == 502
+    assert "read-only personal access token" in resp.json()["detail"]
+
+
+# --------------------------------------------------------------------------
+# Credential spellings
+# --------------------------------------------------------------------------
+
+
+def test_a_session_authenticates_through_the_standard_bearer_header(api: Api) -> None:
+    """concept-auth: a bearer is sent the way bearers are sent.
+
+    Authorization: Bearer is where a kbc_at_* token goes on a Keboola stack,
+    so it is where it goes here — one kind of credential, one header.
+    """
+    resp = api.client.post(
+        "/api/artifacts",
+        json={"markdown": "# Via Authorization"},
+        headers={
+            "Authorization": "Bearer kbc_at_session_secret",
+            "X-Storage-Stack": "us",
+            "X-Storage-Project": "123",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert api.canonical_calls[-1]["token"] == "kbc_at_session_secret"
+
+
+def test_the_bearer_scheme_is_matched_case_insensitively(api: Api) -> None:
+    resp = api.client.get(
+        "/api/artifacts",
+        headers={
+            "Authorization": "bearer kbc_at_session_secret",
+            "X-Storage-Stack": "us",
+            "X-Storage-Project": "123",
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_a_storage_token_in_the_bearer_header_is_refused(api: Api) -> None:
+    """Each header carries one kind of credential, and says so when it doesn't.
+
+    Accepting either value in either header is what made it impossible to tell
+    where a sign-in belongs; the 400 names the header that value wants.
+    """
+    resp = api.client.get(
+        "/api/artifacts",
+        headers={"Authorization": "Bearer good-token", "X-Storage-Stack": "us"},
+    )
+    assert resp.status_code == 400
+    assert "X-StorageApi-Token" in resp.json()["detail"]
+
+
+def test_a_sign_in_token_in_the_storage_header_is_refused(api: Api) -> None:
+    """The mistake this contract exists to prevent, and it teaches its own fix."""
+    resp = api.client.get(
+        "/api/artifacts",
+        headers={
+            "X-StorageApi-Token": "kbc_at_session_secret",
+            "X-Storage-Stack": "us",
+            "X-Storage-Project": "123",
+        },
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "Authorization: Bearer" in detail
+    assert "X-Storage-Project" in detail
+
+
+def test_two_credentials_in_one_request_are_refused(api: Api) -> None:
+    """Resolving this by precedence would authenticate as the one the caller
+    did not mean."""
+    resp = api.client.get(
+        "/api/artifacts",
+        headers={
+            "Authorization": "Bearer kbc_at_session_secret",
+            "X-StorageApi-Token": "good-token",
+            "X-Storage-Stack": "us",
+            "X-Storage-Project": "123",
+        },
+    )
+    assert resp.status_code == 400
+    assert "Send one credential" in resp.json()["detail"]
+
+
+def test_conflicting_credentials_never_break_a_public_read(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Public")
+    resp = api.client.get(
+        f"/a/{artifact_id}",
+        headers={
+            "Authorization": "Bearer kbc_at_session_secret",
+            "X-StorageApi-Token": "good-token",
+            "X-Storage-Stack": "us",
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_a_non_bearer_authorization_scheme_is_ignored(api: Api) -> None:
+    """Basic auth from some intermediary must not be read as a credential."""
+    resp = api.client.get(
+        "/api/artifacts",
+        headers={
+            "Authorization": "Basic dXNlcjpwYXNz",
+            "X-StorageApi-Token": "good-token",
+            "X-Storage-Stack": "us",
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_curl_examples_carry_both_credentials_and_a_switch(api: Api) -> None:
+    """concept-docs: an example must not silently assume one credential.
+
+    Both header blocks are in the markup and CSS hides one, so the page reads
+    correctly for whichever credential the visitor holds — and still shows a
+    complete, working example with JavaScript off.
+    """
+    body = api.client.get("/").text
+    assert body.count('class="credsw"') == 3
+    assert body.count("cred cred-tok") == body.count("cred cred-bearer") == 5
+    assert "X-StorageApi-Token: $KBC_TOKEN" in body
+    assert "Authorization: Bearer $KBC_TOKEN" in body
+    assert "X-Storage-Project: $KBC_PROJECT" in body
+    assert pages._CREDENTIAL_JS in body
+
+
+def test_the_versions_picker_switches_its_example_too(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Doc", accept_versions=True)
+    body = api.client.get(f"/a/{artifact_id}/versions?format=html").text
+    assert 'class="credsw"' in body
+    assert "cred cred-tok" in body and "cred cred-bearer" in body
+    assert pages._CREDENTIAL_JS in body
+
+
+def test_the_token_form_is_what_shows_without_javascript(api: Api) -> None:
+    """The default must be the credential that needs no sign-in to try."""
+    assert ".cred-bearer { display: none; }" in pages._CSS
+    assert ".auth-bearer .cred-tok { display: none; }" in pages._CSS
+
+
+def test_a_signed_in_session_is_judged_by_the_token_the_stack_resolved(
+    api: Api, monkeypatch
+) -> None:
+    """concept-auth: SEC-075-011 still governs a sign-in credential.
+
+    A bearer is exchanged by the stack for the admin's own Storage token in
+    the named project, so ``/v2/storage/tokens/verify`` describes *that*
+    token. The destructive-token policy therefore reads real claims for a
+    session, exactly as it does for a pasted token — a sign-in is not a way
+    around it.
+    """
+    artifact_id = api.client.post(
+        "/api/artifacts", json={"markdown": "# Gated"}, headers=SESSION_HEADERS
+    ).json()["id"]
+
+    monkeypatch.setattr(
+        main,
+        "settings",
+        dataclasses.replace(api.settings, destructive_token_policy="admin"),
+    )
+    # The fixture's session resolves to a project administrator, so it passes.
+    assert api.client.post(
+        f"/api/artifacts/{artifact_id}/rotate-link", headers=SESSION_HEADERS
+    ).status_code == 200
+
+
+def test_a_sign_in_without_admin_claims_is_refused_the_destructive_routes(
+    api: Api, monkeypatch
+) -> None:
+    """The same session, resolved to a non-admin token, is gated like any other."""
+    artifact_id = api.client.post(
+        "/api/artifacts", json={"markdown": "# Gated"}, headers=SESSION_HEADERS
+    ).json()["id"]
+
+    monkeypatch.setitem(
+        _SESSION_TOKENS, "kbc_at_session_secret", {"admin_role": "readOnly"}
+    )
+    monkeypatch.setattr(
+        main,
+        "settings",
+        dataclasses.replace(api.settings, destructive_token_policy="admin"),
+    )
+    refused = api.client.delete(
+        f"/api/artifacts/{artifact_id}/purge", headers=SESSION_HEADERS
+    )
+    assert refused.status_code == 403
+    assert "destructive_token_policy=admin" in refused.json()["detail"]
+
+
+def test_a_project_header_with_no_credential_names_the_likely_cause(api: Api) -> None:
+    """concept-ops: a stripped Authorization must not look like "you sent nothing".
+
+    A signed-in caller always sends both headers. The project header arriving
+    alone means the credential was dropped in transit — and the likeliest
+    dropper is a proxy in front of this hub, which already strips X-Kbc-*.
+    Without this, a user who has just signed in successfully gets the same
+    401 as someone who never had a credential at all.
+    """
+    resp = api.client.get(
+        "/api/artifacts",
+        headers={"X-Storage-Stack": "us", "X-Storage-Project": "123"},
+    )
+    assert resp.status_code == 401
+    detail = resp.json()["detail"]
+    assert "dropped it" in detail
+    assert "/health/headers" in detail
+
+
+def test_no_credential_at_all_still_reads_as_no_credential(api: Api) -> None:
+    """The hint above must not fire for a caller who simply sent nothing."""
+    resp = api.client.get("/api/artifacts", headers={"X-Storage-Stack": "us"})
+    assert resp.status_code == 401
+    assert "dropped it" not in resp.json()["detail"]

@@ -9,6 +9,7 @@ from src.auth import (
     StackError,
     StackUnreachableError,
     resolve_stack,
+    storage_headers,
     verify_token,
 )
 
@@ -322,3 +323,90 @@ class TestVerifyTokenClaims:
         assert owner.project_id == 123
         assert owner.project_name == "Proj"
         assert owner.is_project_admin is False
+
+
+class TestStorageHeaders:
+    """Which authentication scheme each credential shape travels under."""
+
+    def test_a_storage_token_uses_the_storage_header(self):
+        assert storage_headers("1234-abcdef", None) == {
+            "X-StorageApi-Token": "1234-abcdef"
+        }
+
+    def test_a_project_id_is_irrelevant_to_a_storage_token(self):
+        assert storage_headers("1234-abcdef", 123) == {
+            "X-StorageApi-Token": "1234-abcdef"
+        }
+
+    def test_a_session_bearer_names_its_project(self):
+        assert storage_headers("kbc_at_abc_secret", 123) == {
+            "Authorization": "Bearer kbc_at_abc_secret",
+            "X-KBC-ProjectId": "123",
+        }
+
+    def test_a_personal_access_token_authenticates_the_same_way(self):
+        assert storage_headers("kbc_pat_abc_secret", 7) == {
+            "Authorization": "Bearer kbc_pat_abc_secret",
+            "X-KBC-ProjectId": "7",
+        }
+
+    def test_a_bearer_without_a_project_is_an_incomplete_credential(self):
+        with pytest.raises(AuthError) as excinfo:
+            storage_headers("kbc_at_abc_secret", None)
+        assert "X-Storage-Project" in str(excinfo.value)
+
+
+class TestVerifyBearer:
+    """A signed-in session verifies through the project it names."""
+
+    def test_the_project_it_names_becomes_the_owner(self):
+        with respx.mock as mock:
+            route = mock.get(VERIFY_URL).mock(
+                return_value=httpx.Response(
+                    200, json={"owner": {"id": 123, "name": "Proj"}}
+                )
+            )
+            owner = verify_token(
+                "https://connection.keboola.com",
+                "kbc_at_abc_secret",
+                project_id=123,
+            )
+        request = route.calls.last.request
+        assert request.headers["authorization"] == "Bearer kbc_at_abc_secret"
+        assert request.headers["x-kbc-projectid"] == "123"
+        assert "x-storageapi-token" not in request.headers
+        assert owner.key == "123@connection.keboola.com"
+
+    def test_a_bearer_without_a_project_never_reaches_the_stack(self):
+        with respx.mock as mock:
+            route = mock.get(VERIFY_URL).mock(return_value=httpx.Response(200))
+            with pytest.raises(AuthError):
+                verify_token("https://connection.keboola.com", "kbc_at_abc_secret")
+        assert not route.called
+
+    def test_a_project_the_session_cannot_reach_is_refused(self):
+        with respx.mock as mock:
+            mock.get(VERIFY_URL).mock(return_value=httpx.Response(403))
+            with pytest.raises(AuthError) as excinfo:
+                verify_token(
+                    "https://connection.keboola.com",
+                    "kbc_at_abc_secret",
+                    project_id=42,
+                )
+        assert "42" in str(excinfo.value)
+
+    def test_an_owner_other_than_the_named_project_is_refused(self):
+        """The stack resolving a different project means the call was misrouted."""
+        with respx.mock as mock:
+            mock.get(VERIFY_URL).mock(
+                return_value=httpx.Response(
+                    200, json={"owner": {"id": 999, "name": "Elsewhere"}}
+                )
+            )
+            with pytest.raises(AuthError) as excinfo:
+                verify_token(
+                    "https://connection.keboola.com",
+                    "kbc_at_abc_secret",
+                    project_id=123,
+                )
+        assert "999" in str(excinfo.value)

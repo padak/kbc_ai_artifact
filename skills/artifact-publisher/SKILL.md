@@ -126,6 +126,77 @@ never gated. Regardless of policy, pick a project for artifact
 administration whose token holders you would trust with purge/rotate/promote
 power.
 
+### Signing in instead of finding a token
+
+If the person you are working for has no Storage token at hand, they do not
+need to go and mint one. The API also takes a **programmatic bearer** — a
+`kbc_at_*` session or a `kbc_pat_*` personal access token — from Keboola's own
+sign-in flows. It goes in `Authorization: Bearer`, the same header a Keboola
+stack takes one in, and because a bearer is scoped to a person rather than to
+one project it also names the project you are acting as:
+
+```
+Authorization: Bearer kbc_at_...
+X-Storage-Stack: <alias-or-url>
+X-Storage-Project: <project id>
+```
+
+`X-StorageApi-Token` carries a Storage API token and nothing else. Putting a
+`kbc_at_`/`kbc_pat_` token in it is a 400 that tells you which header it
+belongs in, and so is sending both at once.
+
+**Scope**: a session authorizes against every project its approval on
+Keboola's screen covered. `X-Storage-Project` only selects which of those a
+call acts as — it is not a restriction, and neither is any project step a hub
+shows you afterwards. If a sign-in should not span the whole account, narrow
+it on Keboola's approval page.
+
+Against a deployed hub, check `GET /health/headers` once: it reports the
+header names that actually reached the app, which is how you confirm the
+platform proxy in front of it forwards `Authorization`.
+
+The friendly path is `GET /login` in a browser: it walks the person through
+the sign-in and hands the result to the same tab `/admin` reads. From a
+terminal or an agent, drive the device flow yourself — it needs no callback
+URL and works from anywhere:
+
+```bash
+# 1. Ask for a code (poll every "interval" seconds, give up after "expiresIn")
+curl -sS -X POST "$HUB/login/device" \
+  -H "Content-Type: application/json" \
+  -d '{"stack": "eu"}'
+# -> {"device_code": "...", "user_code": "ABCD-EFGH",
+#     "verification_uri_complete": "https://.../admin/auth/device?userCode=...",
+#     "expires_in": 900, "interval": 5}
+
+# 2. Show the person verification_uri_complete and user_code, then poll:
+curl -sS -X POST "$HUB/login/device/token" \
+  -H "Content-Type: application/json" \
+  -d '{"stack": "eu", "device_code": "..."}'
+# -> {"status": "pending", "interval": 5}      while they are still approving
+# -> {"status": "ok", "credential": {...}, "projects": [{"id": 123, ...}]}
+```
+
+`credential.access_token` is the value for `X-StorageApi-Token`, and the
+`projects` array is what to pick `X-Storage-Project` from. An access token
+lasts an hour; `POST /login/refresh {"stack", "refresh_token"}` renews it and
+`POST /login/signout {"stack", "token"}` ends the session. Treat all of these
+exactly like the Storage token: never in a URL, never in a log, never written
+anywhere durable.
+
+`GET /login/pkce/start?stack=...` is a second, one-hop flow, but a Keboola
+stack only accepts an `http://127.0.0.1` callback for it, so it exists only
+when the hub itself runs on loopback. Anywhere else it answers 404 and the
+device flow above is the one to use.
+
+The stack must have Keboola's programmatic auth enabled; where it is not,
+`/login/device` answers 502 saying so, and a Storage token is the way in.
+
+Every route below works with all three credentials. The single exception is a
+**read-only** personal access token: publishing stores the canonical copy in
+the caller's own project, and a read-only credential cannot write it — the hub
+answers 502 naming that. Reading, moderating and commenting still work.
+
 ## Workflows
 
 Three end-to-end walkthroughs showing how the pieces below fit together in

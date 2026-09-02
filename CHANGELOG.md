@@ -4,6 +4,35 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.12.0 — Sign in with Keboola (2026-09-02)
+
+- You no longer need to go and find a Storage API token to use this service.
+  Open `/login`, pick your stack, approve the sign-in in your Keboola tab, and
+  choose the project you are publishing as. The admin studio and the review
+  page both accept that sign-in wherever they used to want a pasted token.
+- **Keboola's own screen decides which projects a sign-in can reach**, and
+  this service asks it to let you narrow that rather than granting everything
+  by default. The project you pick here afterwards only says which of those
+  you are publishing as.
+- Two ways in, and the page picks the right one: a short code you approve in
+  a browser — which works from anywhere, including a browser on a different
+  device — or, when you are running this service on your own machine, a
+  single browser hop with nothing to type.
+- Signing out now ends the session on Keboola's side, rather than only
+  forgetting it in this tab. A tab left open renews itself instead of asking
+  you to sign in again every hour.
+- Scripts and AI assistants can do the same thing: `/skill`, `/agent` and
+  `/context` all describe the sign-in, and a session is used on the API
+  exactly like a token was.
+- Each credential goes where that kind of credential goes on Keboola itself:
+  a Storage API token in `X-StorageApi-Token`, a sign-in in the standard
+  `Authorization: Bearer` header. Mixing them up is answered by a message
+  naming the right header, rather than a bare "unauthorized". Every curl
+  example on the front page has a **token / sign-in** switch, so the whole
+  page reads for whichever one you actually hold.
+- Your credential still never reaches this service's storage or logs. It is
+  relayed to Keboola, handed back to your own browser tab, and forgotten.
+
 ## 0.11.0 — Second security review follow-up (2026-09-02)
 
 **Two items need a change on your side: `HUB_TRUSTED_PROXY_CIDRS` (second

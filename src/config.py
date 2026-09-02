@@ -288,6 +288,32 @@ class Settings:
     # verification. 0 disables the grace period — rotation takes effect
     # immediately for every subsequent delivery.
     webhook_key_overlap_s: int = 600
+    # Interactive sign-in (src/kbclogin.py)
+    # Public client label the hub identifies itself with on a stack's device
+    # and PKCE endpoints (HUB_LOGIN_CLIENT_ID). Not a secret and not a security
+    # boundary — the stack uses it for rate-limit buckets and audit records.
+    login_client_id: str = "kbc-artifact-hub"
+    # Per-request HTTP timeout for a sign-in call to a stack
+    # (HUB_LOGIN_TIMEOUT_S).
+    login_timeout_s: int = 20
+    # How long a started PKCE login may sit unfinished before its verifier is
+    # dropped and the callback stops being accepted (HUB_LOGIN_PKCE_TTL_S).
+    login_pkce_ttl_s: int = 600
+    # Concurrently pending PKCE logins held in memory; the oldest above this
+    # are dropped (HUB_LOGIN_MAX_PENDING_PKCE). PKCE is only offered on a
+    # loopback origin, so this bounds a single developer's own tabs.
+    login_max_pending_pkce: int = 64
+    # Sign-ins one client address may start per UTC hour before /login answers
+    # 429 (HUB_MAX_LOGINS_PER_HOUR). Each start costs a call to a stack, so
+    # this keeps the hub from becoming an open relay onto Keboola's auth API.
+    # Polling an already-started sign-in is not counted: the stack bounds it.
+    max_logins_per_hour: int = 30
+    # Polls of an already-started device sign-in one client address may make
+    # per UTC hour (HUB_MAX_LOGIN_POLLS_PER_HOUR). Counted apart from the
+    # starts above because one honest sign-in polls every few seconds for up
+    # to a quarter of an hour — sharing one budget would either throttle the
+    # normal flow or make the start budget meaningless.
+    max_login_polls_per_hour: int = 600
     # Guest invitations (0.7.0)
     # How many invitations one artifact may hold at once
     # (HUB_MAX_INVITATIONS_PER_ARTIFACT). Each entry is a named capability
@@ -419,4 +445,12 @@ def load_settings() -> Settings:
         ),
         export_max_bytes=_int_env("HUB_EXPORT_MAX_BYTES", 64 * 1024 * 1024),
         max_exports_per_hour=_int_env("HUB_MAX_EXPORTS_PER_HOUR", 20),
+        login_client_id=(
+            os.environ.get("HUB_LOGIN_CLIENT_ID", "").strip() or "kbc-artifact-hub"
+        ),
+        login_timeout_s=_int_env("HUB_LOGIN_TIMEOUT_S", 20),
+        login_pkce_ttl_s=_int_env("HUB_LOGIN_PKCE_TTL_S", 600),
+        login_max_pending_pkce=_int_env("HUB_LOGIN_MAX_PENDING_PKCE", 64),
+        max_logins_per_hour=_int_env("HUB_MAX_LOGINS_PER_HOUR", 30),
+        max_login_polls_per_hour=_int_env("HUB_MAX_LOGIN_POLLS_PER_HOUR", 600),
     )
