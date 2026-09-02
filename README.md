@@ -36,6 +36,10 @@ content, source, or metadata over a small JSON API.
 - **Head pointer**: `/a/{id}` serves the newest live version, or one you pin
 - Machine-readable API: `/context` manifest and a `/skill` SKILL.md an AI
   agent can read to learn how to publish and contribute, unassisted
+- **A shared link explains itself to an AI**: every artifact page carries
+  a hidden note, `<link rel>` relations and a `Link` header pointing at the
+  raw document, its Markdown rendering, `/context`, `/docs`, `/skill` and
+  `/agent`; a root `/llms.txt` (llmstxt.org) maps the hub for assistants
 - **Admin studio** (`/admin`): a browser moderation UI where an artifact's
   owner pastes their Storage token client-side (kept in `sessionStorage`,
   never sent to or stored by the server) to review proposal diffs, promote or
@@ -187,6 +191,7 @@ Public (no auth):
 | POST | `/` | Returns 200 (platform health check) |
 | GET | `/context` | Machine-readable manifest |
 | GET | `/skill` | SKILL.md (`text/markdown`) teaching agents how to publish |
+| GET | `/llms.txt` | llmstxt.org map of the hub for AI assistants (`text/markdown`): what a share link is, where the document behind it lives, which documents to read to operate the API |
 | GET | `/agent` | The Claude Code subagent definition this hub runs (`text/markdown`, with `ETag`/`X-Content-SHA256`/`X-Hub-Version`); install the attested release copy instead |
 | GET | `/admin` | Browser moderation studio (the visitor's credential is client-side only; never stored server-side) |
 | GET | `/login` | Sign in to any allowed Keboola stack — device code everywhere, PKCE on a loopback hub |
@@ -198,7 +203,7 @@ Public (no auth):
 | POST | `/login/signout` | Revoke a session on its stack `{stack, token}` |
 | GET | `/docs` | Interactive Swagger UI for this API |
 | GET | `/openapi.json` | Machine-readable OpenAPI schema for this API |
-| GET | `/a/{id}` | Head version rendered in a sandboxed iframe, or the password unlock form |
+| GET | `/a/{id}` | Head version rendered in a sandboxed iframe, or the password unlock form; both carry a visually hidden note plus `<link rel>` relations orienting an AI assistant, and every `/a/*` response carries a `Link` header to `/context` and `/skill` |
 | POST | `/a/{id}/unlock` | Password form target; sets a signed unlock cookie |
 | GET | `/a/{id}/v/{n}` | One specific version (owner/author only when proposed) |
 | GET | `/a/{id}/versions` | Version history JSON (each row's `status` is that version's `live`/`proposed`), plus the document-level `document_status` / `contributions_frozen` / `accept_versions_mode`; proposed rows flagged `outdated`; `?format=html` renders a picker page |
@@ -474,6 +479,37 @@ repository has to send it again. Use the narrowest scope possible and revoke
 the token when it is no longer needed. Note that the published artifact is
 still served from a public URL: the token protects the clone, not the result.
 
+## Sharing a link with an AI assistant
+
+A reader who forwards `https://<hub>/a/{id}` to their assistant gets an
+assistant that can find its way around. The wrapper page embeds the document
+as an iframe `srcdoc`, which HTML-to-text extraction drops — so on its own the
+page would read as a bare title. Three channels fix that, none of which
+changes what a human sees or what `/a/{id}/raw` returns:
+
+- **A hidden note in the page.** Every artifact page, every pinned version
+  page and the password form in front of a protected artifact carry a
+  `<nav aria-label="For AI agents">` written in plain sentences with absolute
+  URLs: what a share link is, where the raw HTML (`/a/{id}/raw`) and the
+  Markdown rendering (`/a/{id}/export/markdown`) are, that a password goes in
+  `X-Artifact-Password`, and where `/llms.txt`, `/context`, `/docs`,
+  `/openapi.json`, `/skill` and `/agent` are. It is hidden with the standard
+  accessible "sr-only" recipe (off-canvas and clipped, never `display:none`),
+  so screen readers and text extractors read it while a sighted reader sees
+  the same zero-chrome page as before. The same pointers appear as
+  `<link rel="alternate|service-desc|help">` relations in the page head.
+- **A `Link` response header** on everything under `/a/` — the page, the raw
+  bytes, a JSON 404 or 401 — so `curl -I` or a HEAD probe gets
+  `</context>; rel="service-desc"` and `</skill>; rel="help"` without parsing
+  a body.
+- **`/llms.txt`** at the root, in the [llmstxt.org](https://llmstxt.org)
+  convention: the short Markdown map an assistant checks first on an
+  unfamiliar site. It is also listed in `/context` (`endpoints` and
+  `documents.llms_txt`).
+
+The note is the hub's own text about the hub's own routes; nothing from the
+artifact is ever placed in it.
+
 ## Install the agent / skill
 
 Two files teach an AI agent this API: the Claude Code subagent (`AGENT.md`,
@@ -612,7 +648,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.12.0 \
+  --git-branch v0.13.0 \
   --git-public
 ```
 

@@ -4,6 +4,27 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.13.0 — A shared link explains itself to your AI (2026-09-02)
+
+- Forward an artifact link to an AI assistant and it now knows what it is
+  looking at. Before, the assistant fetched the page, its text extraction
+  dropped the embedded document, and it was left with a bare title: no hint
+  that this was an Artifact Hub, where the readable document lived, or where
+  the API was described. Every artifact page — and the password form in front
+  of a protected one — now carries a note written for machines: what a share
+  link is, where the raw HTML and the Markdown rendering are, which header a
+  password goes in, and where `/context`, `/docs`, `/skill` and `/agent`
+  are. It is hidden the way accessibility text is hidden, so a reader sees
+  exactly the page they saw before, and the published document itself is
+  untouched byte for byte.
+- The same pointers travel as standard `<link rel>` relations in the page
+  and as a `Link` response header on everything under `/a/`, so a client that
+  never parses the body — `curl -I`, an agent's HEAD probe, a JSON 404 — gets
+  them too.
+- New `/llms.txt`, in the llmstxt.org convention: a short Markdown map of the
+  hub that an assistant landing on an unfamiliar site checks first. It is
+  listed in `/context` and links to everything above.
+
 ## 0.12.0 — Sign in with Keboola (2026-09-02)
 
 - You no longer need to go and find a Storage API token to use this service.

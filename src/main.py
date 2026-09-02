@@ -1858,6 +1858,18 @@ async def artifact_headers(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     if request.url.path.startswith("/a/"):
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        # Orientation for a machine that was handed a share link and reads
+        # headers (curl -I, an agent's HEAD probe): where this service
+        # describes itself. Standard relation names, absolute URLs, on every
+        # answer under /a/ -- the wrapper page, the raw bytes, a JSON 404 or
+        # 401 alike -- so the pointer survives whichever the client got.
+        # The HTML pages carry the same in <link rel> and a hidden <nav>
+        # (pages.agent_note); this header is for clients that never parse
+        # the body.
+        base = base_url(request)
+        response.headers["Link"] = (
+            f'<{base}/context>; rel="service-desc", <{base}/skill>; rel="help"'
+        )
         # setdefault, not assignment: a handler that has already asked for
         # something stricter (GET /a/{id}/live sends "no-store", so no
         # intermediary can ever answer a change-detection poll from a cache)
@@ -2215,6 +2227,7 @@ def _framed(
             base_url=base_url(request),
             share_id=meta.share_id,
             pinned_version=envelope.version if pinned else None,
+            hub_version=SERVICE_VERSION,
         ),
         headers={"Content-Security-Policy": "frame-ancestors 'self'"},
     )
@@ -4092,6 +4105,15 @@ def context(request: Request) -> dict:
             },
             {
                 "method": "GET",
+                "path": "/llms.txt",
+                "auth": "none",
+                "purpose": (
+                    "llmstxt.org entry point: a short Markdown map of this "
+                    "hub for an AI assistant that was handed a share link"
+                ),
+            },
+            {
+                "method": "GET",
                 "path": "/login",
                 "auth": "none",
                 "purpose": "sign in to a Keboola stack in a browser (HTML)",
@@ -4911,6 +4933,99 @@ def context(request: Request) -> dict:
     }
 
 
+def llms_txt_document(base: str) -> str:
+    """The llmstxt.org map of this hub, with absolute URLs.
+
+    The convention: a root ``/llms.txt`` in Markdown -- an H1, a blockquote
+    summary, then link lists -- that an AI assistant checks when it lands on
+    an unfamiliar site. Here it is the shortest path from "someone sent me
+    /a/{id}" to knowing what the id is, where the readable document is and
+    which document to read next. Built per request from ``base`` so the URLs
+    are the ones the caller can actually reach (see :func:`base_url`).
+    """
+    base = base.rstrip("/")
+    return (
+        "# KBC Artifact Hub\n"
+        "\n"
+        "> One web address where a team publishes HTML and Markdown documents "
+        "(\"artifacts\"), versions them, reviews them and shares them by link. "
+        "A Keboola Data App; identity is a Keboola project.\n"
+        "\n"
+        f"This hub is at {base}. Version {SERVICE_VERSION}.\n"
+        "\n"
+        "## If you were handed a link\n"
+        "\n"
+        f"A share link looks like {base}/a/{{id}}: the unguessable id in the "
+        "URL is the reader's only credential, so treat the link itself as a "
+        "secret. That page wraps the document in a sandboxed iframe, which "
+        "text extractors drop; fetch the document itself instead:\n"
+        "\n"
+        f"- [Raw HTML]({base}/a/{{id}}/raw): the published document, byte for "
+        "byte\n"
+        f"- [Markdown]({base}/a/{{id}}/export/markdown): the author's own "
+        "Markdown when the artifact was published from Markdown, otherwise a "
+        "conversion of the HTML (the X-Artifact-Markdown-Source response "
+        "header says which)\n"
+        f"- [Metadata]({base}/a/{{id}}/meta): title, head version, "
+        "timestamps, as JSON\n"
+        f"- [Versions]({base}/a/{{id}}/versions): every live version, with "
+        f"{base}/a/{{id}}/v/{{n}} serving one of them\n"
+        "\n"
+        "A password-protected artifact answers 401 to all of these until the "
+        "password is sent in the X-Artifact-Password request header.\n"
+        "\n"
+        "## Operating the hub\n"
+        "\n"
+        f"- [Service manifest]({base}/context): machine-readable JSON with "
+        "the endpoint catalog, auth model, publish body schema and the limits "
+        "this deployment is configured with; the authoritative source when "
+        "any document disagrees with the running service\n"
+        f"- [OpenAPI schema]({base}/openapi.json) and its interactive form, "
+        f"[Swagger UI]({base}/docs): the full REST API\n"
+        f"- [SKILL.md]({base}/skill): teaches an agent to sign in, publish, "
+        "update, review and moderate artifacts\n"
+        f"- [Claude Code subagent]({base}/agent): a ready-to-install agent "
+        "definition with the same knowledge\n"
+        f"- [Human landing page]({base}/) and [changelog]({base}/changelog)\n"
+        "\n"
+        "## Optional\n"
+        "\n"
+        f"- [Health]({base}/health)\n"
+        f"- [Source and releases]({GITHUB_REPO_URL}): install SKILL.md and "
+        "AGENT.md from the attested release assets rather than the live "
+        "endpoints\n"
+    )
+
+
+@app.get(
+    "/llms.txt",
+    tags=["service"],
+    response_class=MarkdownResponse,
+    summary="llms.txt map of this hub for AI assistants",
+    description=(
+        "The llmstxt.org entry point: a short Markdown document that tells an "
+        "AI assistant what this service is, what a /a/{id} share link is, "
+        "where the readable document behind it lives and which documents "
+        "(/context, /openapi.json, /skill, /agent) to read to operate the "
+        "hub. Unauthenticated, identical for every caller, built with the "
+        "absolute URLs of this deployment."
+    ),
+    responses={
+        200: {
+            "description": "The llms.txt document.",
+            "content": CONTENT_MARKDOWN,
+        }
+    },
+)
+def llms_txt(request: Request) -> Response:
+    """Serve the llmstxt.org map of this hub."""
+    return Response(
+        llms_txt_document(base_url(request)),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get(
     "/skill",
     tags=["service"],
@@ -4999,6 +5114,7 @@ def _documents_manifest(base: str) -> dict[str, Any]:
             entry["sha256"] = digest
             entry["bytes"] = len(raw)
         manifest[key] = entry
+    manifest["llms_txt"] = f"{base.rstrip('/')}/llms.txt"
     manifest["sums"] = _release_asset_url("SHA256SUMS")
     manifest["verify"] = (
         "Install from the release asset, not from the live endpoint: download "
@@ -5735,7 +5851,11 @@ def admin(request: Request) -> HTMLResponse:
         "without allow-same-origin, so the artifact's own scripts run in an "
         "opaque origin and cannot reach this origin's storage or cookies. "
         "Readers see no difference; machines that want the bytes themselves "
-        "use GET /a/{id}/raw.\n\n"
+        "use GET /a/{id}/raw. For an AI assistant that was handed the link, "
+        "the wrapper carries a visually hidden note and <link rel> relations "
+        "pointing at /a/{id}/raw, /a/{id}/export/markdown, /llms.txt, "
+        "/context, /docs, /skill and /agent, and every /a/* response carries "
+        "a Link header to /context and /skill.\n\n"
         + PASSWORD_GATE_NOTE
         + "\n\nUntil the caller is unlocked, this returns 401 with the unlock "
         "form as HTML rather than the artifact."
@@ -5775,7 +5895,7 @@ def read_artifact(
     if meta is None:
         return _not_found(public_id)
     if not reader_allowed(meta, request):
-        return HTMLResponse(unlock_page(public_id, None), status_code=401)
+        return HTMLResponse(unlock_page(public_id, None, base_url=base_url(request)), status_code=401)
     envelope = request.app.state.store.get_head(meta.id)
     if envelope is None:
         return _not_found(public_id)
@@ -5847,13 +5967,17 @@ def unlock_artifact(
                 unlock_page(
                     public_id,
                     "Too many attempts — wait an hour and try again",
+                    base_url=base_url(request),
                 ),
                 status_code=429,
             )
         if not check_password(password, meta.password):
             _record_unlock_failure(request.app, meta.id, client_ip)
             return HTMLResponse(
-                unlock_page(public_id, "Wrong password"), status_code=401
+                unlock_page(
+                    public_id, "Wrong password", base_url=base_url(request)
+                ),
+                status_code=401,
             )
     response = RedirectResponse(f"/a/{meta.share_id}", status_code=303)
     response.set_cookie(
@@ -6346,7 +6470,7 @@ def read_version(
     if meta is None:
         return _not_found(public_id)
     if not reader_allowed(meta, request):
-        return HTMLResponse(unlock_page(public_id, None), status_code=401)
+        return HTMLResponse(unlock_page(public_id, None, base_url=base_url(request)), status_code=401)
     envelope = request.app.state.store.get_version(meta.id, version)
     if envelope is None:
         return _version_not_found(public_id, version)
@@ -6425,7 +6549,7 @@ def read_versions(
     wants_html = format == "html"
     if not reader_allowed(meta, request):
         if wants_html:
-            return HTMLResponse(unlock_page(public_id, None), status_code=401)
+            return HTMLResponse(unlock_page(public_id, None, base_url=base_url(request)), status_code=401)
         return _password_required()
 
     store = request.app.state.store
