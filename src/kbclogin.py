@@ -46,6 +46,7 @@ __all__ = [
     "LoginError",
     "LoginPending",
     "LoginRejected",
+    "LoginThrottled",
     "LoginUnavailable",
     "PendingPkce",
     "PkceRegistry",
@@ -111,6 +112,16 @@ class LoginPending(LoginError):
         super().__init__("Authorization is still pending.")
         self.interval = interval
         self.slow_down = slow_down
+
+
+class LoginThrottled(LoginError):
+    """The stack is rate-limiting sign-in calls; the same attempt can repeat.
+
+    Deliberately not a :class:`LoginRejected`: nothing about the sign-in is
+    wrong. A device code refused this way is still valid until it expires, so
+    the right answer is to wait and ask again — telling the caller it was
+    refused would make them start over with a new code for nothing.
+    """
 
 
 class LoginRejected(LoginError):
@@ -298,7 +309,13 @@ class PkceRegistry:
 
     def __init__(self, ttl_s: int, max_pending: int) -> None:
         self._ttl_s = ttl_s
-        self._max_pending = max_pending
+        # At least one entry, always. A registry that cannot hold the login it
+        # was just asked to start is not "off", it is a broken flow: the
+        # verifier would be evicted before the callback could claim it, and
+        # eviction on an empty registry has nothing to evict. An operator who
+        # wants no PKCE gets that from the loopback-origin rule, not from
+        # configuring the registry down to nothing.
+        self._max_pending = max(1, max_pending)
         self._lock = threading.Lock()
         self._pending: dict[str, PendingPkce] = {}
 
@@ -521,7 +538,12 @@ def _request(
             f"{stack_url} does not offer this sign-in method "
             "(programmatic auth is off on that stack)"
         )
-    if response.status_code in (200, 201):
+    if 200 <= response.status_code < 300:
+        # Any 2xx is a success, and one of them carries nothing: a stack may
+        # answer a revocation with 204. An empty success body is not a parse
+        # failure, and must not be reported as a revocation that did not take.
+        if not response.content:
+            return None
         try:
             return response.json()
         except ValueError as exc:
@@ -579,9 +601,8 @@ def _raise_for_error(
         f" ({error[:_MAX_LOGGED_ERROR_CHARS]})" if error else "",
     )
     if response.status_code == 429:
-        raise LoginRejected(
-            "The stack is rate-limiting sign-in attempts. Try again in a minute.",
-            error=error or "rate_limited",
+        raise LoginThrottled(
+            "The stack is rate-limiting sign-in attempts. Try again in a minute."
         )
     if response.status_code >= 500:
         raise LoginUnavailable(

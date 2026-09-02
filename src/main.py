@@ -43,7 +43,7 @@ from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
@@ -90,6 +90,7 @@ from src.kbclogin import (
     Credential,
     LoginError,
     LoginPending,
+    LoginThrottled,
     LoginUnavailable,
     PkceRegistry,
     authorize_url,
@@ -796,7 +797,12 @@ def _statedb(app_obj: FastAPI | None) -> StateDB | None:
 
 
 def _fallback_bump(scope: str, key: str, bucket: str) -> int:
-    """Per-process counter used when the state sidecar is unavailable."""
+    """Per-process counter: the sidecar's stand-in, and some scopes' only home.
+
+    Used whenever the state sidecar is unavailable, and used directly by the
+    scopes that are deliberately not persisted — see
+    :func:`_claim_login_slot`.
+    """
     entry = (scope, key, bucket)
     with _fallback_lock:
         if len(_fallback_counts) > _SUBMISSION_SWEEP_AT:
@@ -1523,9 +1529,12 @@ def custom_openapi() -> dict[str, Any]:
     }
     # Two alternatives, each a complete way to authenticate: the header pair
     # every Storage token has always used, or a bearer plus the project it
-    # acts as. Swagger's Authorize dialog offers both.
+    # acts as. Swagger's Authorize dialog offers both. X-Storage-Project is
+    # only in the bearer alternative — a Storage token names its own project
+    # and the header is ignored for it, so requiring it would make every
+    # generated client demand a value it has nowhere to get.
     security_requirement = [
-        {_TOKEN_SECURITY: [], _STACK_SECURITY: [], _PROJECT_SECURITY: []},
+        {_TOKEN_SECURITY: [], _STACK_SECURITY: []},
         {_BEARER_SECURITY: [], _STACK_SECURITY: [], _PROJECT_SECURITY: []},
     ]
     for path, methods in schema.get("paths", {}).items():
@@ -5172,6 +5181,26 @@ def _login_unavailable(exc: LoginUnavailable) -> HTTPException:
     return HTTPException(status_code=502, detail=str(exc))
 
 
+def _login_throttled(exc: LoginThrottled) -> HTTPException:
+    """429 for a stack that is rate-limiting sign-ins: wait, do not restart.
+
+    The same status this hub answers for its own budgets, and for the same
+    reason: it says "ask again", where the 400 a refusal gets says "start
+    over". A device code the stack throttled is still valid, so a caller that
+    could not tell the two apart would throw a good code away.
+    """
+    return HTTPException(status_code=429, detail=str(exc))
+
+
+#: Rate-limit scopes for the sign-in routes. Three rather than one because
+#: the routes share nothing but their target: polling is two orders of
+#: magnitude more frequent than starting, and signing out must not be
+#: blockable by either (see :func:`_claim_login_signout`).
+COUNTER_LOGINS = "login"
+COUNTER_LOGIN_POLLS = "login-poll"
+COUNTER_LOGIN_SIGNOUTS = "login-signout"
+
+
 def _claim_login_slot(request: Request, scope: str, limit: int, what: str) -> None:
     """Charge one outbound sign-in call to this client's hourly budget, or 429.
 
@@ -5181,10 +5210,21 @@ def _claim_login_slot(request: Request, scope: str, limit: int, what: str) -> No
     API, and the stack cannot close it from its side: the address *it* rate
     limits is the hub's, so one abuser there would spend the budget of every
     person using this hub. The bound has to be here, per caller.
+
+    Counted the way :func:`_claim_slot` counts: the bump is unconditional and
+    comes first, so a caller who keeps hammering a spent budget keeps being
+    counted instead of getting a free read per attempt.
+
+    The bucket lives in this process, not in the state sidecar. A sign-in
+    budget is per-address, hourly and disposable — losing it to a restart
+    costs one address one hour's leniency — while a single device sign-in
+    polls on the order of 180 times, and persisting that would dirty the
+    StateDB on every poll and re-upload the whole snapshot every five minutes
+    for rows nothing will ever read again. Correct under the single-instance
+    invariant that the rest of the state layer already depends on.
     """
-    client_ip = _client_ip(request)
-    bucket = _utc_hour()
-    if _read_counter(request.app, scope, client_ip, bucket) >= limit:
+    used = _fallback_bump(scope, _client_ip(request), _utc_hour())
+    if used > limit:
         raise HTTPException(
             status_code=429,
             detail=(
@@ -5192,13 +5232,30 @@ def _claim_login_slot(request: Request, scope: str, limit: int, what: str) -> No
                 "allowed per hour"
             ),
         )
-    _bump_counter(request.app, scope, client_ip, bucket)
 
 
 def _claim_login(request: Request) -> None:
     """Charge starting or renewing a session: the low-frequency half."""
     _claim_login_slot(
-        request, "login", settings.max_logins_per_hour, "sign-in requests"
+        request, COUNTER_LOGINS, settings.max_logins_per_hour, "sign-in requests"
+    )
+
+
+def _claim_login_signout(request: Request) -> None:
+    """Charge revoking a session, in a budget of its own.
+
+    Sign-out shares no bucket with starting or renewing a session, because a
+    429 here does not merely delay somebody — it leaves a live credential on
+    the stack while the tab that held it has already forgotten it. A budget
+    anything else can spend is therefore a budget that can silently turn
+    signing out into a no-op.
+
+    It is still charged: the route is unauthenticated and still calls out to a
+    stack. One honest visitor signs out about as often as they sign in, so the
+    same hourly ceiling is roomy for them and still shuts an abuser down.
+    """
+    _claim_login_slot(
+        request, COUNTER_LOGIN_SIGNOUTS, settings.max_logins_per_hour, "sign-outs"
     )
 
 
@@ -5212,7 +5269,7 @@ def _claim_login_poll(request: Request) -> None:
     so polling is counted separately and bounded generously.
     """
     _claim_login_slot(
-        request, "login-poll", settings.max_login_polls_per_hour, "sign-in polls"
+        request, COUNTER_LOGIN_POLLS, settings.max_login_polls_per_hour, "sign-in polls"
     )
 
 
@@ -5300,24 +5357,26 @@ def _credential_response(payload: dict[str, Any]) -> JSONResponse:
         "offered when this hub answers on a loopback origin, which is the "
         "only redirect target a stack accepts for it.\n\n"
         "The session that comes back is handed to the visitor's own tab and "
-        "used exactly like a pasted Storage token: kept in sessionStorage, "
-        "sent as X-StorageApi-Token plus X-Storage-Project. The hub relays "
-        "the sign-in and keeps nothing."
+        "used exactly where a pasted Storage token would be: kept in "
+        "sessionStorage, sent as Authorization: Bearer plus X-Storage-Project "
+        "(a Storage token's own header, X-StorageApi-Token, refuses a "
+        "session). The hub relays the sign-in and keeps nothing."
     ),
     responses={200: {"description": "The sign-in page.", "content": CONTENT_HTML}},
 )
 def login(request: Request) -> HTMLResponse:
     """Serve the sign-in page."""
     base = base_url(request)
-    return HTMLResponse(
-        login_page(
-            base,
-            SERVICE_VERSION,
-            GITHUB_REPO_URL,
-            pkce_available=_loopback_origin(base),
-            result=None,
-        ),
-        headers={"Cache-Control": "no-store"},
+    return _no_store(
+        HTMLResponse(
+            login_page(
+                base,
+                SERVICE_VERSION,
+                GITHUB_REPO_URL,
+                pkce_available=_loopback_origin(base),
+                result=None,
+            )
+        )
     )
 
 
@@ -5352,6 +5411,8 @@ def login_device_start(request: Request, body: DeviceStartBody) -> JSONResponse:
         start = start_device(stack_url, settings.login_client_id, settings.login_timeout_s)
     except LoginUnavailable as exc:
         raise _login_unavailable(exc) from exc
+    except LoginThrottled as exc:
+        raise _login_throttled(exc) from exc
     except LoginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _credential_response(
@@ -5380,6 +5441,13 @@ def login_device_start(request: Request, body: DeviceStartBody) -> JSONResponse:
     responses={
         200: {"description": "Still pending, or signed in."},
         400: {"description": "The sign-in was declined, expired, or is invalid."},
+        429: {
+            "description": (
+                "Too many polls from this address, or the stack is throttling "
+                "them. Wait and ask again — the device code is still valid; "
+                "only the 400 above means starting over."
+            )
+        },
         502: {"description": "The stack could not be reached."},
     },
 )
@@ -5404,6 +5472,8 @@ def login_device_poll(request: Request, body: DevicePollBody) -> JSONResponse:
         )
     except LoginUnavailable as exc:
         raise _login_unavailable(exc) from exc
+    except LoginThrottled as exc:
+        raise _login_throttled(exc) from exc
     except LoginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _credential_response(
@@ -5460,17 +5530,19 @@ def login_pkce_start(
     _claim_login(request)
     redirect_uri = _pkce_redirect_uri(base)
     pending = request.app.state.pkce.start(stack_url, redirect_uri)
-    return RedirectResponse(
-        authorize_url(
-            stack_url,
-            settings.login_client_id,
-            redirect_uri,
-            pkce_challenge(pending.verifier),
-            pending.state,
-            pick_project=not all_projects,
-        ),
-        status_code=307,
-        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    return _no_store(
+        RedirectResponse(
+            authorize_url(
+                stack_url,
+                settings.login_client_id,
+                redirect_uri,
+                pkce_challenge(pending.verifier),
+                pending.state,
+                pick_project=not all_projects,
+            ),
+            status_code=307,
+            headers={"Referrer-Policy": "no-referrer"},
+        )
     )
 
 
@@ -5504,15 +5576,17 @@ def login_callback(
     if not _loopback_origin(base):
         raise HTTPException(status_code=404, detail="No PKCE sign-in on this hub")
     result = _pkce_result(request, code, state, error)
-    return HTMLResponse(
-        login_page(
-            base,
-            SERVICE_VERSION,
-            GITHUB_REPO_URL,
-            pkce_available=True,
-            result=result,
-        ),
-        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    return _no_store(
+        HTMLResponse(
+            login_page(
+                base,
+                SERVICE_VERSION,
+                GITHUB_REPO_URL,
+                pkce_available=True,
+                result=result,
+            ),
+            headers={"Referrer-Policy": "no-referrer"},
+        )
     )
 
 
@@ -5560,6 +5634,12 @@ def _pkce_result(
     responses={
         200: {"description": "A renewed session."},
         400: {"description": "The refresh token is invalid, expired or revoked."},
+        429: {
+            "description": (
+                "Too many sign-in requests from this address, or the stack is "
+                "throttling them."
+            )
+        },
         502: {"description": "The stack could not be reached."},
     },
 )
@@ -5573,6 +5653,8 @@ def login_refresh(request: Request, body: RefreshBody) -> JSONResponse:
         )
     except LoginUnavailable as exc:
         raise _login_unavailable(exc) from exc
+    except LoginThrottled as exc:
+        raise _login_throttled(exc) from exc
     except LoginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _credential_response({"credential": _credential_payload(credential)})
@@ -5584,19 +5666,25 @@ def login_refresh(request: Request, body: RefreshBody) -> JSONResponse:
     summary="End a signed-in session",
     description=(
         "Revokes a session on its stack, so logging out of the studio also "
-        "ends the credential rather than only forgetting it locally. Always "
-        "answers 204: a credential the stack will not revoke is one it has "
-        "already forgotten."
+        "ends the credential rather than only forgetting it locally.\n\n"
+        "A reached stack always answers 204: a credential the stack will not "
+        "revoke is one it has already forgotten. The one other answer is 429 "
+        "— sign-outs have an hourly per-address budget of their own, "
+        "deliberately not shared with starting or renewing a session, so a "
+        "spent sign-in budget can never silently leave a session alive."
     ),
-    responses={204: {"description": "The session is no longer usable."}},
+    responses={
+        204: {"description": "The session is no longer usable."},
+        429: {"description": "Too many sign-outs from this address."},
+    },
     status_code=204,
 )
 def login_signout(request: Request, body: SignOutBody) -> Response:
     """Revoke a session on its stack."""
     stack_url = _login_stack(body.stack)
-    _claim_login(request)
+    _claim_login_signout(request)
     revoke(stack_url, body.token, settings.login_timeout_s)
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+    return _no_store(Response(status_code=204))
 
 
 @app.get(
@@ -7977,17 +8065,23 @@ def purge_artifact(
     )
 
 
-def _no_store(response: Response) -> Response:
+#: Lets :func:`_no_store` hand back the exact response class it was given, so
+#: a handler annotated ``-> HTMLResponse`` stays honest about what it returns.
+_ResponseT = TypeVar("_ResponseT", bound=Response)
+
+
+def _no_store(response: _ResponseT) -> _ResponseT:
     """Force ``Cache-Control: no-store`` / ``Pragma: no-cache`` (SEC-100-006).
 
     Assignment, not ``setdefault``: the ``artifact_headers`` middleware only
     ever sets a *default* Cache-Control, and only on ``/a/*`` paths, so there
     is nothing here for this to lose a conflict with -- but a secret-bearing
     response must never depend on that staying true. Every response that can
-    carry a webhook receiver's signing key (this listing, and the rotate-key
-    response below) goes through this before it leaves the handler, so a
-    shared or browser cache can never be the reason a rotated-away key stays
-    reachable.
+    carry one goes through this before it leaves the handler -- a webhook
+    receiver's signing key (this listing, and the rotate-key response below)
+    and every ``/login/*`` answer, which carry a visitor's own session -- so a
+    shared or browser cache can never be the reason a credential somebody has
+    rotated or signed out of stays reachable.
     """
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"

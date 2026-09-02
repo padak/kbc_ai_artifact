@@ -1,1 +1,0 @@
-- [Project error-handling style](project_error_handling_style.md) — kbc_ai_artifact deliberately degrades a lot; read before flagging catch/fallback here; the one real gap found is unlogged stack-rejection responses in src/kbclogin.py

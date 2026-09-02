@@ -129,16 +129,24 @@ class KbcFilesBackend:
         self._client: Client | None = None
 
     def _files(self) -> Any:
-        """Return the ``files`` sub-client, building the client on first use."""
+        """Return the ``files`` sub-client, building the client on first use.
+
+        The client is cached only once its authentication is in place. A
+        half-built one must not be reachable: :meth:`_apply_auth` is what
+        moves a bearer out of ``X-StorageApi-Token``, so a cached client that
+        skipped it would put the bearer in a Storage token's header on every
+        later call.
+        """
         if self._client is None:
             try:
-                self._client = Client(self.stack_url, self._token)
+                client = Client(self.stack_url, self._token)
             except Exception as exc:  # noqa: BLE001 - normalized to BackendError
                 raise BackendError(
                     f"Could not create a Storage client for {self.stack_url}: "
                     f"{_safe_message(exc, self._token)}"
                 ) from exc
-            self._apply_auth(self._client.files)
+            self._apply_auth(client.files)
+            self._client = client
         return self._client.files
 
     def _apply_auth(self, endpoint: Any) -> None:

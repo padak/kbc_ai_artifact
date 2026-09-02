@@ -1,1 +1,0 @@
-- [kbc_ai_artifact project notes](project_kbc_ai_artifact.md) — architecture, credential/SSRF/rate-limit conventions, recurring gap pattern to watch for

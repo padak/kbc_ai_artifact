@@ -11,3 +11,5 @@ logs/
 _review/
 *.egg-info/
 requirements-prod.txt
+.claude/agent-memory/
+.claude/settings.local.json

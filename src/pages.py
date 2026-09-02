@@ -587,20 +587,196 @@ main { max-width: 68rem; }
 .modal iframe { flex: 1; width: 100%; border: 0; background: #fff; }
 """
 
+#: The credential every studio page holds, in one place: reading and writing
+#: the one ``sessionStorage`` entry, choosing the header each kind of
+#: credential belongs in, renewing a Keboola session, revoking it, and telling
+#: a 401 about the credential apart from a 401 about the document.
+#:
+#: ``/admin``, ``/a/{id}/review`` and ``/login`` all hold the same record, so
+#: all three take it from here: a second copy of any of this is a copy that
+#: can disagree with the others. Installed as ``window.hubSession`` by its own
+#: ``<script>``, ahead of the page's, and it reads ``window.HUB_BASE`` the way
+#: every other snippet here does.
+_SESSION_JS = """
+(function () {
+  "use strict";
+
+  var BASE = String(window.HUB_BASE || "").replace(/\\/+$/, "");
+
+  /* The credential lives in the page's closure and in sessionStorage, and
+     nowhere else: not in a cookie, not in the URL, and not in any web storage
+     that outlives the tab. sessionStorage is per-tab and cleared when the tab
+     closes, so a reload keeps the session while closing the tab ends it. */
+  var AUTH_KEY = "hub_admin_auth";
+
+  /* The renewal in flight, if any. See renew(). */
+  var renewing = null;
+
+  function read() {
+    try {
+      var raw = window.sessionStorage.getItem(AUTH_KEY);
+      if (!raw) { return null; }
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.token && parsed.stack) {
+        /* Copied rather than picked apart field by field, so a record written
+           by a newer /login keeps whatever else it carries. project and
+           refresh come from /login only: a Keboola session names the project
+           it acts as and can be renewed, a pasted Storage token does
+           neither. One entry holds both shapes. */
+        var record = Object.assign({}, parsed);
+        record.project = parsed.project || null;
+        record.refresh = parsed.refresh || null;
+        return record;
+      }
+    } catch (err) {
+      /* Storage disabled or unreadable: just sign in again. */
+    }
+    return null;
+  }
+
+  /* False when this browser refused to keep the record. A page that already
+     holds the credential in memory can carry on — the session just will not
+     survive a reload; /login, which has nowhere else to put it, says so. */
+  function write(record) {
+    try {
+      window.sessionStorage.setItem(AUTH_KEY, JSON.stringify(record));
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function forget() {
+    try { window.sessionStorage.removeItem(AUTH_KEY); } catch (err) {}
+  }
+
+  /* Each kind of credential goes in the header that kind belongs in: a
+     Storage API token in X-StorageApi-Token, a Keboola sign-in in the
+     standard Authorization: Bearer. The hub refuses the other way round, and
+     rightly — they are different credentials with different scopes.
+
+     X-Storage-Project rides along with a sign-in, which is scoped to a person
+     rather than to one project. X-Storage-Project, not X-Kbc-*: the data-app
+     proxy strips that family before the hub ever sees it. */
+  function headers(record, out) {
+    if (/^kbc_(at|pat)_/.test(record.token)) {
+      out["Authorization"] = "Bearer " + record.token;
+    } else {
+      out["X-StorageApi-Token"] = record.token;
+    }
+    out["X-Storage-Stack"] = record.stack;
+    if (record.project) { out["X-Storage-Project"] = String(record.project); }
+    return out;
+  }
+
+  async function exchange(record) {
+    var resp = await fetch(BASE + "/login/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stack: record.stack, refresh_token: record.refresh })
+    });
+    if (!resp.ok) { return null; }
+    var data = null;
+    try { data = await resp.json(); } catch (err) { return null; }
+    if (!data || !data.credential) { return null; }
+    /* Merged onto the record, not rebuilt from a fixed field list: a renewal
+       replaces the two tokens and must not quietly drop anything else the
+       record holds. */
+    var next = Object.assign({}, record, {
+      token: data.credential.access_token,
+      refresh: data.credential.refresh_token
+    });
+    write(next);
+    return next;
+  }
+
+  /* A Keboola session ages out after an hour; a pasted Storage token does
+     not. Rotating the refresh token in place keeps a tab that was left open
+     working instead of sending the visitor back to sign in. Resolves to the
+     renewed record, or null when there is nothing to renew and when the stack
+     refused.
+
+     One exchange at a time, and every caller awaits that same one: the stack
+     spends the refresh token on the first request, so two 401s renewing
+     independently would have the second told its session is dead — and it
+     would have spent a sign-in slot to be told so. */
+  function renew(record) {
+    if (!record || !record.refresh) { return Promise.resolve(null); }
+    if (!renewing) {
+      renewing = exchange(record).catch(function () {
+        /* Offline, or a refusal: the caller reports the failure it already
+           had, which is more useful than one about the renewal. */
+        return null;
+      }).then(function (value) {
+        renewing = null;
+        return value;
+      });
+    }
+    return renewing;
+  }
+
+  /* Signing out of a Keboola session revokes it on its stack, so the tokens
+     are dead rather than merely forgotten here. Fire-and-forget: ending the
+     local session must not wait on the network, or be blocked by it. */
+  function end(record) {
+    if (!record || !record.refresh) { return; }
+    var payload = JSON.stringify({ stack: record.stack, token: record.refresh });
+    try {
+      fetch(BASE + "/login/signout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true
+      }).catch(function () {});
+    } catch (err) { /* offline: the session expires on its own */ }
+  }
+
+  /* Only the credential being refused says anything about the credential. A
+     502 means the hub's own Storage is unavailable, which is the same for
+     every visitor and is not a reason to throw away a working sign-in. */
+  function rejected(err) {
+    return !!err && (err.status === 401 || err.status === 403);
+  }
+
+  /* The reader gate's own 401 body: {"error": "password required"}. That is a
+     401 about the *document*, not about the credential — an owner who is
+     signed in gets it too — so renewing over it would spend a refresh
+     token, and a sign-in slot, to be told exactly the same thing again. */
+  function lockedBody(data) {
+    return !!data && data.error === "password required";
+  }
+
+  function locked(err) {
+    return !!err && err.status === 401 && lockedBody(err.payload);
+  }
+
+  window.hubSession = {
+    read: read,
+    write: write,
+    forget: forget,
+    headers: headers,
+    renew: renew,
+    end: end,
+    rejected: rejected,
+    locked: locked,
+    lockedBody: lockedBody
+  };
+})();
+"""
+
 #: The whole studio, as one IIFE. Deliberately dependency-free and readable:
 #: it only ever talks to the endpoints a terminal could call with curl, using
-#: the two management headers the visitor supplied.
+#: the two management headers the visitor supplied. Session handling comes
+#: from :data:`_SESSION_JS`, which every page that holds a credential shares.
 _ADMIN_JS = """
 (function () {
   "use strict";
 
   var BASE = String(window.HUB_BASE || "").replace(/\\/+$/, "");
 
-  /* The credential lives in this closure and in sessionStorage, and nowhere
-     else: not in a cookie, not in the URL, and not in any web storage that
-     outlives the tab. sessionStorage is per-tab and cleared when the tab
-     closes, so a reload keeps the session while closing the tab ends it. */
-  var AUTH_KEY = "hub_admin_auth";
+  /* Reading, renewing and revoking the credential, shared with every other
+     page that holds one. This closure keeps the record itself. */
+  var SESSION = window.hubSession;
   var auth = null;
 
   /* One live watch per *expanded* detail panel. A collapsed row polls
@@ -647,102 +823,17 @@ _ADMIN_JS = """
 
   /* ---------------------------------------------------------------- auth */
 
-  function loadAuth() {
-    try {
-      var raw = window.sessionStorage.getItem(AUTH_KEY);
-      if (!raw) { return null; }
-      var parsed = JSON.parse(raw);
-      if (parsed && parsed.token && parsed.stack) {
-        /* project and refresh come from /login only: a Keboola session names
-           the project it acts as and can be renewed, a pasted Storage token
-           does neither. One entry holds both shapes. */
-        return {
-          token: parsed.token,
-          stack: parsed.stack,
-          project: parsed.project || null,
-          refresh: parsed.refresh || null
-        };
-      }
-    } catch (err) {
-      /* Storage disabled or unreadable: just sign in again. */
-    }
-    return null;
-  }
-
-  function storeAuth(value) {
-    try {
-      window.sessionStorage.setItem(AUTH_KEY, JSON.stringify(value));
-    } catch (err) {
-      /* Non-fatal: the session simply will not survive a reload. */
-    }
-  }
-
-  function clearAuth() {
-    try { window.sessionStorage.removeItem(AUTH_KEY); } catch (err) {}
-  }
-
-  /* A Keboola session ages out after an hour; a pasted Storage token does
-     not. Rotating the refresh token in place keeps a tab that was left open
-     working instead of sending the visitor back to sign in. False when there
-     is nothing to renew, or the stack refused. */
+  /* The renewed record has to land in this closure as well as in storage,
+     which is the one thing the shared session module cannot do for us. */
   async function renewSession() {
-    if (!auth || !auth.refresh) { return false; }
-    var resp = await fetch(BASE + "/login/refresh", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stack: auth.stack, refresh_token: auth.refresh })
-    });
-    if (!resp.ok) { return false; }
-    var data = null;
-    try { data = await resp.json(); } catch (err) { return false; }
-    if (!data || !data.credential) { return false; }
-    auth = {
-      token: data.credential.access_token,
-      stack: auth.stack,
-      project: auth.project,
-      refresh: data.credential.refresh_token
-    };
-    storeAuth(auth);
+    var next = await SESSION.renew(auth);
+    if (!next) { return false; }
+    auth = next;
     return true;
   }
 
-  /* Signing out of a Keboola session revokes it on its stack, so the tokens
-     are dead rather than merely forgotten here. Fire-and-forget: ending the
-     local session must not wait on the network, or be blocked by it. */
-  function endSession() {
-    if (!auth || !auth.refresh) { return; }
-    var payload = JSON.stringify({ stack: auth.stack, token: auth.refresh });
-    try {
-      fetch(BASE + "/login/signout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
-        keepalive: true
-      }).catch(function () {});
-    } catch (err) { /* offline: the session expires on its own */ }
-  }
-
-  /* Each kind of credential goes in the header that kind belongs in: a
-     Storage API token in X-StorageApi-Token, a Keboola sign-in in the
-     standard Authorization: Bearer. The hub refuses the other way round, and
-     rightly — they are different credentials with different scopes.
-
-     X-Storage-Project rides along with a sign-in, which is scoped to a person
-     rather than to one project. X-Storage-Project, not X-Kbc-*: the data-app
-     proxy strips that family before the hub ever sees it. */
-  function credentialHeaders(out) {
-    if (/^kbc_(at|pat)_/.test(auth.token)) {
-      out["Authorization"] = "Bearer " + auth.token;
-    } else {
-      out["X-StorageApi-Token"] = auth.token;
-    }
-    out["X-Storage-Stack"] = auth.stack;
-    if (auth.project) { out["X-Storage-Project"] = String(auth.project); }
-    return out;
-  }
-
   function headers(withBody) {
-    var out = credentialHeaders({});
+    var out = SESSION.headers(auth, {});
     if (withBody) { out["Content-Type"] = "application/json"; }
     return out;
   }
@@ -763,36 +854,32 @@ _ADMIN_JS = """
     var opts = options || {};
     var hasBody = opts.body !== undefined;
     var body = hasBody ? JSON.stringify(opts.body) : undefined;
-    var resp = await fetch(BASE + path, {
-      method: opts.method || "GET",
-      headers: headers(hasBody),
-      body: body
-    });
-    /* One retry, and only on 401: an aged-out access token is the single
-       failure this page can put right by itself. */
-    if (resp.status === 401 && await renewSession()) {
-      resp = await fetch(BASE + path, {
+    async function attempt() {
+      var resp = await fetch(BASE + path, {
         method: opts.method || "GET",
         headers: headers(hasBody),
         body: body
       });
+      var text = await resp.text();
+      var data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
+      return { resp: resp, text: text, data: data };
     }
-    var text = await resp.text();
-    var data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
-    if (!resp.ok) {
-      var failure = new Error(apiMessage(resp.status, data, text));
-      failure.status = resp.status;
+    var out = await attempt();
+    /* One retry, and only on a 401 that is about the session: an aged-out
+       access token is the single failure this page can put right by itself.
+       The body decides, so the reader gate's own 401 does not spend a
+       refresh token to be answered with the same 401 again. */
+    if (out.resp.status === 401 && !SESSION.lockedBody(out.data)
+        && await renewSession()) {
+      out = await attempt();
+    }
+    if (!out.resp.ok) {
+      var failure = new Error(apiMessage(out.resp.status, out.data, out.text));
+      failure.status = out.resp.status;
       throw failure;
     }
-    return data;
-  }
-
-  /* Only the credential being refused says anything about the credential. A
-     502 means the hub's own Storage is unavailable, which is the same for
-     every visitor and is not a reason to throw away a working sign-in. */
-  function isCredentialRejected(err) {
-    return !!err && (err.status === 401 || err.status === 403);
+    return out.data;
   }
 
   /* Proposed versions and diffs are 403 for an anonymous browser tab, so they
@@ -1534,8 +1621,8 @@ _ADMIN_JS = """
 
   function leaveStudio() {
     stopWatchers();
-    endSession();
-    clearAuth();
+    SESSION.end(auth);
+    SESSION.forget();
     auth = null;
     $("artifacts").textContent = "";
     $("token").value = "";
@@ -1579,7 +1666,7 @@ _ADMIN_JS = """
     auth = { token: token, stack: stack, project: null, refresh: null };
     try {
       var data = await request("/api/artifacts");
-      storeAuth(auth);
+      SESSION.write(auth);
       $("token").value = "";
       enterStudio(data);
     } catch (err) {
@@ -1608,7 +1695,7 @@ _ADMIN_JS = """
 
   /* --------------------------------------------------------------- start */
 
-  auth = loadAuth();
+  auth = SESSION.read();
   if (auth) {
     var options = Array.prototype.map.call(
       $("stack").options, function (option) { return option.value; }
@@ -1626,8 +1713,8 @@ _ADMIN_JS = """
       enterStudio(data);
     }, function (err) {
       show($("loading"), false);
-      if (isCredentialRejected(err)) {
-        clearAuth();
+      if (SESSION.rejected(err)) {
+        SESSION.forget();
         auth = null;
         setError($("login-error"),
           "That session is no longer valid: " + err.message);
@@ -2565,7 +2652,13 @@ reload keeps you signed in and closing the tab forgets the token.
     return _page(
         "Artifact Hub · Admin studio",
         _CONTROLS_CSS + _ADMIN_CSS + _LIVE_CSS,
-        body + _LIVE_JS + "</script>\n<script>" + _ADMIN_JS + "</script>",
+        body
+        + _SESSION_JS
+        + "</script>\n<script>"
+        + _LIVE_JS
+        + "</script>\n<script>"
+        + _ADMIN_JS
+        + "</script>",
     )
 
 
@@ -3362,8 +3455,10 @@ _REVIEW_JS = """
   var ID = String(window.HUB_ARTIFACT_ID || "");
   var PATH = BASE + "/a/" + encodeURIComponent(ID);
 
-  /* Shared with /admin on purpose: one sign-in serves both pages. */
-  var AUTH_KEY = "hub_admin_auth";
+  /* Reading, renewing and revoking the credential, shared with /admin and
+     /login on purpose: one sign-in serves every page. This closure keeps the
+     record itself. */
+  var SESSION = window.hubSession;
   var auth = null;
 
   /* An invited guest's credential, taken from the URL *fragment*
@@ -3472,7 +3567,7 @@ _REVIEW_JS = """
       guest.name = data.name || "";
       guestPending = false;
     } catch (err) {
-      if (isLockError(err)) {
+      if (SESSION.locked(err)) {
         /* Locked document, not a dead invitation: /a/{id}/guest is behind the
            reader gate too. Hold on to the credential and ask again once the
            password lands. */
@@ -3505,105 +3600,23 @@ _REVIEW_JS = """
 
   /* ---------------------------------------------------------------- auth */
 
-  function loadAuth() {
-    try {
-      var raw = window.sessionStorage.getItem(AUTH_KEY);
-      if (!raw) { return null; }
-      var parsed = JSON.parse(raw);
-      if (parsed && parsed.token && parsed.stack) {
-        /* project and refresh come from /login only: a Keboola session names
-           the project it acts as and can be renewed, a pasted Storage token
-           does neither. One entry holds both shapes. */
-        return {
-          token: parsed.token,
-          stack: parsed.stack,
-          project: parsed.project || null,
-          refresh: parsed.refresh || null
-        };
-      }
-    } catch (err) {
-      /* Storage disabled or unreadable: just sign in again. */
-    }
-    return null;
-  }
-
-  function storeAuth(value) {
-    try { window.sessionStorage.setItem(AUTH_KEY, JSON.stringify(value)); }
-    catch (err) { /* Non-fatal: the session will not survive a reload. */ }
-  }
-
-  function clearAuth() {
-    try { window.sessionStorage.removeItem(AUTH_KEY); } catch (err) {}
-  }
-
-  /* A Keboola session ages out after an hour; a pasted Storage token does
-     not. Rotating the refresh token in place keeps a tab that was left open
-     working instead of sending the visitor back to sign in. False when there
-     is nothing to renew, or the stack refused. */
+  /* The renewed record has to land in this closure as well as in storage,
+     which is the one thing the shared session module cannot do for us. */
   async function renewSession() {
-    if (!auth || !auth.refresh) { return false; }
-    var resp = await fetch(BASE + "/login/refresh", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stack: auth.stack, refresh_token: auth.refresh })
-    });
-    if (!resp.ok) { return false; }
-    var data = null;
-    try { data = await resp.json(); } catch (err) { return false; }
-    if (!data || !data.credential) { return false; }
-    auth = {
-      token: data.credential.access_token,
-      stack: auth.stack,
-      project: auth.project,
-      refresh: data.credential.refresh_token
-    };
-    storeAuth(auth);
+    var next = await SESSION.renew(auth);
+    if (!next) { return false; }
+    auth = next;
     return true;
-  }
-
-  /* Signing out of a Keboola session revokes it on its stack, so the tokens
-     are dead rather than merely forgotten here. Fire-and-forget: ending the
-     local session must not wait on the network, or be blocked by it. */
-  function endSession() {
-    if (!auth || !auth.refresh) { return; }
-    var payload = JSON.stringify({ stack: auth.stack, token: auth.refresh });
-    try {
-      fetch(BASE + "/login/signout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
-        keepalive: true
-      }).catch(function () {});
-    } catch (err) { /* offline: the session expires on its own */ }
   }
 
   /* Whichever credential this visitor has. A guest never has a token and a
      signed-in project never needs the invitation, so the two are mutually
      exclusive; the token wins when somebody has both, because it identifies a
      verified project and the guest header does not. */
-  /* Each kind of credential goes in the header that kind belongs in: a
-     Storage API token in X-StorageApi-Token, a Keboola sign-in in the
-     standard Authorization: Bearer. The hub refuses the other way round, and
-     rightly — they are different credentials with different scopes.
-
-     X-Storage-Project rides along with a sign-in, which is scoped to a person
-     rather than to one project. X-Storage-Project, not X-Kbc-*: the data-app
-     proxy strips that family before the hub ever sees it. */
-  function credentialHeaders(out) {
-    if (/^kbc_(at|pat)_/.test(auth.token)) {
-      out["Authorization"] = "Bearer " + auth.token;
-    } else {
-      out["X-StorageApi-Token"] = auth.token;
-    }
-    out["X-Storage-Stack"] = auth.stack;
-    if (auth.project) { out["X-Storage-Project"] = String(auth.project); }
-    return out;
-  }
-
   function headers(withBody) {
     var out = {};
     if (auth) {
-      credentialHeaders(out);
+      SESSION.headers(auth, out);
     } else if (guest) {
       out["X-Artifact-Guest"] = guest.credential;
     }
@@ -3636,38 +3649,32 @@ _REVIEW_JS = """
     return err;
   }
 
-  /* The gate's own 401 body: {"error": "password required"}. A bad token or a
-     revoked invitation is a different 401 and keeps its own message. */
-  function isLockError(err) {
-    if (!err || err.status !== 401) { return false; }
-    var payload = err.payload || {};
-    return payload.error === "password required";
-  }
-
   async function api(path, options) {
     var opts = options || {};
     var hasBody = opts.body !== undefined;
     var body = hasBody ? JSON.stringify(opts.body) : undefined;
-    var resp = await fetch(BASE + path, {
-      method: opts.method || "GET",
-      headers: headers(hasBody),
-      body: body
-    });
-    /* One retry, and only on 401: an aged-out access token is the single
-       failure this page can put right by itself. The password gate answers
-       401 too, but renewSession() is a no-op without a session to renew. */
-    if (resp.status === 401 && await renewSession()) {
-      resp = await fetch(BASE + path, {
+    async function attempt() {
+      var resp = await fetch(BASE + path, {
         method: opts.method || "GET",
         headers: headers(hasBody),
         body: body
       });
+      var text = await resp.text();
+      var data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
+      return { resp: resp, text: text, data: data };
     }
-    var text = await resp.text();
-    var data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
-    if (!resp.ok) { throw apiError(resp.status, data, text); }
-    return data;
+    var out = await attempt();
+    /* One retry, and only on a 401 that is about the session: an aged-out
+       access token is the single failure this page can put right by itself.
+       The reader gate answers 401 as well \u2014 to a signed-in owner too \u2014
+       so the body is read first, and renewing is skipped for that one. */
+    if (out.resp.status === 401 && !SESSION.lockedBody(out.data)
+        && await renewSession()) {
+      out = await attempt();
+    }
+    if (!out.resp.ok) { throw apiError(out.resp.status, out.data, out.text); }
+    return out.data;
   }
 
   /* Public reads. credentials:"same-origin" carries the unlock cookie of a
@@ -3729,7 +3736,7 @@ _REVIEW_JS = """
      screen; false when it was anything else and the caller should report it
      the way it always did. */
   async function lockDown(err) {
-    if (!isLockError(err)) { return false; }
+    if (!SESSION.locked(err)) { return false; }
     if (locked) { return true; }
     if (!(await protectedArtifact())) { return false; }
     showLock();
@@ -4089,9 +4096,9 @@ _REVIEW_JS = """
   }
 
   function signedOut() {
-    endSession();
+    SESSION.end(auth);
     auth = null;
-    clearAuth();
+    SESSION.forget();
     $("rv-token").value = "";
     /* Falls back to the guest banner when this visitor arrived through an
        invitation and signed in on top of it. */
@@ -4103,7 +4110,7 @@ _REVIEW_JS = """
     auth = { token: token, stack: stack, project: null, refresh: null };
     try {
       var data = await api("/api/artifacts");
-      storeAuth(auth);
+      SESSION.write(auth);
       $("rv-token").value = "";
       signedIn(data.project_id);
       renderThreads();
@@ -4267,7 +4274,7 @@ _REVIEW_JS = """
   guest = readInvite();
   if (guest) { checkInvite(); }
 
-  auth = loadAuth();
+  auth = SESSION.read();
   if (auth) {
     var stacks = Array.prototype.map.call($("rv-stack").options,
       function (option) { return option.value; });
@@ -4282,9 +4289,9 @@ _REVIEW_JS = """
       signedIn(data.project_id);
       renderThreads();
     }, function (err) {
-      if (err && (err.status === 401 || err.status === 403)) {
+      if (SESSION.rejected(err)) {
         auth = null;
-        clearAuth();
+        SESSION.forget();
         renderIdentity();
         setError($("rv-signin-error"),
           "That session is no longer valid: " + err.message);
@@ -4480,6 +4487,8 @@ it</button>
         + _SCROLL_REPORTER_JS
         + "</script>\n<script>"
         + _LIVE_JS
+        + "</script>\n<script>"
+        + _SESSION_JS
         + "</script>\n<script>"
         + _REVIEW_JS
         + "</script>",
@@ -4937,15 +4946,25 @@ _LOGIN_JS = """
   var PKCE = window.HUB_PKCE === true;
   var RESULT = window.HUB_LOGIN_RESULT || null;
 
-  /* The same entry /admin and the review page read. A sign-in is just another
-     way to fill it in; nothing downstream knows which way it was filled. */
-  var AUTH_KEY = "hub_admin_auth";
+  /* The same record /admin and the review page read, written through the
+     module all three share. A sign-in is just another way to fill it in;
+     nothing downstream knows which way it was filled. */
+  var SESSION = window.hubSession;
 
   /* Set once a sign-in succeeds, and cleared when a project is chosen. Holds
      the session for exactly as long as the picker is on screen. */
   var pending = null;
   var pollTimer = null;
   var deviceDeadline = 0;
+
+  /* Poll cadence, in seconds. The stack names the interval; these are what to
+     do when it does not. RFC 8628 answers slow_down with "add five seconds",
+     which matters because the hub forwards interval 0 whenever the stack
+     omits one — without the step, slow_down would only change the label. */
+  var DEFAULT_POLL_INTERVAL_S = 5;
+  var SLOW_DOWN_STEP_S = 5;
+  /* Ceiling on the doubling backoff a transient failure falls back to. */
+  var MAX_POLL_INTERVAL_S = 30;
 
   function $(id) { return document.getElementById(id); }
   function show(node, on) { node.hidden = !on; }
@@ -4991,11 +5010,25 @@ _LOGIN_JS = """
     var text = await resp.text();
     var data = null;
     try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
-    if (!resp.ok) { throw new Error(apiMessage(resp.status, data, text)); }
+    if (!resp.ok) {
+      /* The status travels with the error: polling has to tell a terminal
+         refusal from a failure that is worth another try. */
+      var failure = new Error(apiMessage(resp.status, data, text));
+      failure.status = resp.status;
+      throw failure;
+    }
     return data;
   }
 
   /* ------------------------------------------------------------- device */
+
+  /* The approval URL comes from an allowlisted https stack, so it is already
+     an https URL. Checked anyway: it is the one stack-supplied value that
+     goes into an href and into window.open(), and neither should ever be
+     handed a javascript: URL because a stack answered oddly. */
+  function approvalUrl(raw) {
+    return /^https:\/\//.test(String(raw || "")) ? String(raw) : "";
+  }
 
   function stopPolling() {
     if (pollTimer) { window.clearTimeout(pollTimer); pollTimer = null; }
@@ -5009,16 +5042,19 @@ _LOGIN_JS = """
     button.disabled = true;
     try {
       var start = await post("/login/device", { stack: stack });
+      var approval = approvalUrl(start.verification_uri_complete);
       $("usercode").textContent = start.user_code;
-      $("verify-link").href = start.verification_uri_complete;
       $("verify-plain").textContent = start.verification_uri;
+      var link = $("verify-link");
+      if (approval) { link.href = approval; } else { link.removeAttribute("href"); }
+      show(link, !!approval);
       deviceDeadline = Date.now() + (start.expires_in || 0) * 1000;
       step("device");
       /* Opened from the click that started the sign-in, so it is not a popup
          the browser blocks. A blocked one is not fatal: the link below the
-         code does the same thing. */
-      window.open(start.verification_uri_complete, "_blank", "noopener");
-      schedulePoll(start, start.interval || 5);
+         code does the same thing, and so does the plain URL under it. */
+      if (approval) { window.open(approval, "_blank", "noopener"); }
+      schedulePoll(start, start.interval || DEFAULT_POLL_INTERVAL_S);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -5045,9 +5081,11 @@ _LOGIN_JS = """
         device_code: start.device_code
       });
       if (data && data.status === "pending") {
-        /* slow_down means the stack wants a longer gap from now on, so the
-           new interval is kept for every later poll, not just the next one. */
+        /* The stack's own interval when it sends one, plus RFC 8628's five
+           seconds when it says slow_down. Kept for every later poll, not just
+           the next one. */
         var next = data.interval || interval;
+        if (data.slow_down) { next = Math.max(next, interval + SLOW_DOWN_STEP_S); }
         $("poll-note").textContent = data.slow_down
           ? "waiting for approval (slowing down)…"
           : "waiting for approval…";
@@ -5056,9 +5094,18 @@ _LOGIN_JS = """
       }
       signedIn(data);
     } catch (err) {
-      stopPolling();
-      setError(err.message);
-      step("stack");
+      /* Only a terminal refusal ends the sign-in. Everything else — a network
+         blip, this hub's own 429, a stack that timed out — leaves the device
+         code valid until deviceDeadline, and starting over would cost the
+         person a second code and a second approval tab for nothing. */
+      if (err && err.status === 400) {
+        stopPolling();
+        setError(err.message);
+        step("stack");
+        return;
+      }
+      $("poll-note").textContent = "waiting for approval (retrying)…";
+      schedulePoll(start, Math.min(interval * 2, MAX_POLL_INTERVAL_S));
     }
   }
 
@@ -5119,14 +5166,15 @@ _LOGIN_JS = """
 
   function finish(projectId) {
     setError("");
-    try {
-      window.sessionStorage.setItem(AUTH_KEY, JSON.stringify({
-        token: pending.access_token,
-        refresh: pending.refresh_token,
-        stack: pending.stack,
-        project: projectId
-      }));
-    } catch (err) {
+    var kept = SESSION.write({
+      token: pending.access_token,
+      refresh: pending.refresh_token,
+      stack: pending.stack,
+      project: projectId
+    });
+    if (!kept) {
+      /* This page has nowhere else to put the session: the next page is a
+         fresh document that reads it back out of storage. */
       setError("This browser refused to keep the session. Enable storage " +
         "for this site, or paste a Storage token into /admin instead.");
       return;
@@ -5283,7 +5331,7 @@ window.HUB_LOGIN_RESULT = {result_json};</script>
     return _page(
         "Artifact Hub · Sign in",
         _CONTROLS_CSS + _ADMIN_CSS + _LOGIN_CSS,
-        body + _LOGIN_JS + "</script>",
+        body + _SESSION_JS + "</script>\n<script>" + _LOGIN_JS + "</script>",
     )
 
 

@@ -33,6 +33,29 @@ have.
 - Your credential still never reaches this service's storage or logs. It is
   relayed to Keboola, handed back to your own browser tab, and forgotten.
 
+From the review of the above, before it shipped:
+
+- **A hiccup while you are approving a code no longer wastes the code.** The
+  short code is good for fifteen minutes, but any blip while the page waited
+  for your approval — a dropped connection, a busy moment on Keboola's side —
+  sent you back to the start with a new code and a new tab. The page now
+  keeps waiting, easing off as it goes, and only gives up when the sign-in
+  itself is actually refused or expires.
+- **Signing out works even on a busy network.** Every visitor behind one
+  office connection shares this service's hourly sign-in budget, and signing
+  out used to spend from that same budget — so on a busy day it could quietly
+  do nothing, leaving the session alive on Keboola while your tab had already
+  forgotten it. It now has a budget of its own.
+- **A project id left over in your environment no longer breaks a call made
+  with a Storage API token.** The front page tells you to export one for a
+  sign-in; a later call with an ordinary token of a different project was then
+  refused, which is not what the documentation said would happen. A Storage
+  token names its own project, and now really is the only thing that does.
+- **The instructions an AI assistant reads were sending the sign-in to the
+  wrong header** — the very mistake the service answers with an error naming
+  the right one. The front page's copy-paste `hub` wrapper, `/skill` and
+  `/agent` now all pick the right header for whichever credential you export.
+
 ## 0.11.0 — Second security review follow-up (2026-09-02)
 
 **Two items need a change on your side: `HUB_TRUSTED_PROXY_CIDRS` (second

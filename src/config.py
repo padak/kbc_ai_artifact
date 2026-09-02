@@ -303,10 +303,13 @@ class Settings:
     # are dropped (HUB_LOGIN_MAX_PENDING_PKCE). PKCE is only offered on a
     # loopback origin, so this bounds a single developer's own tabs.
     login_max_pending_pkce: int = 64
-    # Sign-ins one client address may start per UTC hour before /login answers
-    # 429 (HUB_MAX_LOGINS_PER_HOUR). Each start costs a call to a stack, so
-    # this keeps the hub from becoming an open relay onto Keboola's auth API.
-    # Polling an already-started sign-in is not counted: the stack bounds it.
+    # Sign-ins one client address may start or renew per UTC hour before
+    # /login answers 429 (HUB_MAX_LOGINS_PER_HOUR). Each one costs a call to a
+    # stack, so this keeps the hub from becoming an open relay onto Keboola's
+    # auth API. Two neighbours are counted apart under the same ceiling rather
+    # than sharing this bucket: polling (below, far higher — one sign-in polls
+    # for minutes) and signing out (a spent budget there would leave a live
+    # session on the stack, so it must not be spendable by anything else).
     max_logins_per_hour: int = 30
     # Polls of an already-started device sign-in one client address may make
     # per UTC hour (HUB_MAX_LOGIN_POLLS_PER_HOUR). Counted apart from the

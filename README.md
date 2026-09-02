@@ -316,6 +316,11 @@ curl -s -X POST "$HUB/login/device/token" -H "Content-Type: application/json" \
 #     "projects": [{"id": 123, "name": "Test", "role": "admin"}]}
 ```
 
+`credential.access_token` is what goes in `Authorization: Bearer`, and the id
+of the project you pick out of `projects` goes in `X-Storage-Project`. Export
+them as `KBC_TOKEN` and `KBC_PROJECT` and the `hub` wrapper below picks the
+right header on its own.
+
 A second flow, authorization code + PKCE, is one browser hop with nothing to
 type — but Keboola only accepts an `http://127.0.0.1:{port}/{path}` redirect
 for it, so `/login` offers it exactly when the hub answers on loopback (a hub
@@ -347,16 +352,24 @@ export KBC_STACK=eu
 export KBC_PROJECT=         # the project id, only for a sign-in credential
 hub() {
   curl -s -K <(
-    printf 'header = "X-StorageApi-Token: %s"\nheader = "X-Storage-Stack: %s"\n' "$KBC_TOKEN" "$KBC_STACK"
+    case "$KBC_TOKEN" in
+      kbc_at_*|kbc_pat_*) printf 'header = "Authorization: Bearer %s"\n' "$KBC_TOKEN";;
+      *) printf 'header = "X-StorageApi-Token: %s"\n' "$KBC_TOKEN";;
+    esac
+    printf 'header = "X-Storage-Stack: %s"\n' "$KBC_STACK"
     [ -n "$KBC_PROJECT" ] && printf 'header = "X-Storage-Project: %s"\n' "$KBC_PROJECT"
   ) "$@"
 }
 ```
 
+The `case` is what makes one wrapper serve both credentials: each kind goes in
+the header it belongs in, and putting one in the other's header is a 400.
+
 A Storage token names its own project, so `KBC_PROJECT` stays empty for one;
-a sign-in from `/login` is scoped to a person and needs it. A second identity
-(a contributing project) is just a different credential for one call:
-`KBC_TOKEN="$CONTRIBUTOR_TOKEN" hub …`.
+a sign-in from `/login` is scoped to a person and needs it. A value left over
+in `KBC_PROJECT` is harmless with a Storage token — the header is ignored for
+one — so a second identity (a contributing project) is just a different
+credential for one call: `KBC_TOKEN="$CONTRIBUTOR_TOKEN" hub …`.
 
 ```bash
 # Publish HTML
@@ -585,7 +598,7 @@ are missing. Everything else has a documented default, overridable via env.
 | `HUB_LOGIN_TIMEOUT_S` | `20` | Per-request HTTP timeout for a sign-in call to a stack |
 | `HUB_LOGIN_PKCE_TTL_S` | `600` | How long a started PKCE sign-in may sit unfinished before its callback stops being accepted |
 | `HUB_LOGIN_MAX_PENDING_PKCE` | `64` | Concurrently pending PKCE sign-ins held in memory; the oldest above this are dropped |
-| `HUB_MAX_LOGINS_PER_HOUR` | `30` | Sign-in requests one client address may make per UTC hour (429 afterwards): starting a device or PKCE sign-in, renewing a session, signing out |
+| `HUB_MAX_LOGINS_PER_HOUR` | `30` | Sign-in requests one client address may make per UTC hour (429 afterwards): starting a device or PKCE sign-in, or renewing a session. Signing out is charged the same ceiling in a bucket of its own, so a spent sign-in budget can never leave a session alive on the stack |
 | `HUB_MAX_LOGIN_POLLS_PER_HOUR` | `600` | Polls of an already-started device sign-in one client address may make per UTC hour. Counted separately because one honest sign-in polls every few seconds for up to 15 minutes |
 
 ## Deployment to Keboola
@@ -687,6 +700,15 @@ every reader of a password-protected document shares one hourly budget, so
 one person guessing passwords can push everyone else into 429 until the hour
 rolls over. The per-artifact backstop
 (`HUB_MAX_UNLOCK_ATTEMPTS_PER_ARTIFACT_PER_HOUR`) applies either way.
+
+**Signing in is the case where "coarse" starts to hurt**, which is why the
+production deploy should set this rather than treat it as optional. The
+unlock budgets are only ever spent by a *failure*; the sign-in poll budget
+(`HUB_MAX_LOGIN_POLLS_PER_HOUR`, 600) is spent by success — a device sign-in
+polls roughly 180 times before the person finishes approving it. Shared
+across every visitor behind the proxy that is three or four concurrent slow
+sign-ins per hour, and the fourth person gets a 429 they did nothing to
+deserve. Behind the Keboola platform proxy the peer is on `10.0.0.0/8`.
 
 Secrets are set with `kbagent data-app secrets-set` and never committed to
 the repository:
@@ -791,9 +813,18 @@ Every response that carries one is `no-store`, and the PKCE code verifier is
 the one piece that stays on the server (in memory, single-use, TTL-bounded),
 because it is the proof of possession the callback is checked against. The
 `/login/*` endpoints are unauthenticated by necessity — the caller has no
-identity yet — so starting a sign-in is rate-limited per client address
-(`HUB_MAX_LOGINS_PER_HOUR`), which keeps the hub from being usable as an open
-relay onto Keboola's auth API. What a session may do here is bounded by what
+identity yet — so every one of them is rate-limited per client address, which
+keeps the hub from being usable as an open relay onto Keboola's auth API.
+Three budgets rather than one, because the routes have nothing in common but
+their target: `HUB_MAX_LOGINS_PER_HOUR` for starting and renewing,
+`HUB_MAX_LOGIN_POLLS_PER_HOUR` for polling a device code (one honest sign-in
+polls every five seconds for up to a quarter of an hour), and the same
+`HUB_MAX_LOGINS_PER_HOUR` ceiling again, separately, for signing out — a 429
+there would leave a live credential on the stack after the tab holding it had
+already forgotten it, so nothing else may spend that budget. The counters live
+in the process rather than in the state sidecar: they are hourly, per-address
+and disposable, and persisting ~180 polls per sign-in would churn the snapshot
+for rows nothing ever reads again. What a session may do here is bounded by what
 it may do on the stack: `/v2/storage/*` calls made with it resolve to the
 admin's own Storage token *in the project named by `X-Storage-Project`*, and a
 project the admin cannot reach comes back 403 from the stack itself.

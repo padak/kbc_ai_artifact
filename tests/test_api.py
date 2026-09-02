@@ -533,11 +533,13 @@ def test_openapi_api_operations_carry_the_security_schemes(api: Api) -> None:
             security = operation.get("security")
             assert security, f"{method} {path}: missing security requirement"
             # Two alternatives, either of which authenticates on its own: the
-            # header pair, or the standard bearer spelling. Both carry the
-            # project header, which only a bearer actually needs.
+            # header pair, or the standard bearer spelling plus the project it
+            # acts as. The project header belongs to the bearer alternative
+            # alone: a Storage token names its own project and the header is
+            # ignored for it.
             alternatives = [set(option) for option in security]
             assert alternatives == [
-                {"StorageApiToken", "StorageStack", "StorageProject"},
+                {"StorageApiToken", "StorageStack"},
                 {"KeboolaBearer", "StorageStack", "StorageProject"},
             ], f"{method} {path}: unexpected security {alternatives}"
         else:
@@ -3388,8 +3390,10 @@ def test_review_page_ships_its_own_unlock_panel(api: Api) -> None:
     assert "Your invitation is fine" in text
 
     # Locked state is told apart from every other failure: the gate's own 401
-    # payload, confirmed against /meta, which is public while /raw is not.
-    assert 'payload.error === "password required"' in text
+    # body, confirmed against /meta, which is public while /raw is not. The
+    # test lives in the shared session module, which this page carries.
+    assert 'data.error === "password required"' in text
+    assert "SESSION.locked(err)" in text
     assert 'PATH + "/meta"' in text
     assert "data.protected" in text
 
@@ -7300,8 +7304,11 @@ def test_a_hub_side_failure_does_not_discard_the_visitors_credential() -> None:
     visitor — and throwing the sign-in away over it sends people back through
     a sign-in that cannot fix anything.
     """
+    # The test itself is in the module both pages share, so neither can drift
+    # away from it: only these two statuses are about the credential.
+    assert "err.status === 401 || err.status === 403" in pages._SESSION_JS
     for source in (pages._ADMIN_JS, pages._REVIEW_JS):
-        assert "err.status === 401" in source or "isCredentialRejected" in source
+        assert "SESSION.rejected(err)" in source
         assert source.count("That session is no longer valid") == 1
 
 

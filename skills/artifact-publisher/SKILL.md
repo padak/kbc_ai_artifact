@@ -90,19 +90,32 @@ lifetime anyone who can list processes on the host could read it). Define it
 once, in bash or zsh, with the token and stack alias in the environment:
 
 ```bash
-export KBC_TOKEN="…"   # your Keboola Storage API token
+export KBC_TOKEN="…"   # a Storage API token, or a kbc_at_/kbc_pat_ sign-in
 export KBC_STACK=eu    # an alias from the table above, or a full https URL
+export KBC_PROJECT=    # the project id, only for a sign-in credential
 hub() {
-  curl -s -K <(printf 'header = "X-StorageApi-Token: %s"\nheader = "X-Storage-Stack: %s"\n' "$KBC_TOKEN" "$KBC_STACK") "$@"
+  curl -s -K <(
+    case "$KBC_TOKEN" in
+      kbc_at_*|kbc_pat_*) printf 'header = "Authorization: Bearer %s"\n' "$KBC_TOKEN";;
+      *) printf 'header = "X-StorageApi-Token: %s"\n' "$KBC_TOKEN";;
+    esac
+    printf 'header = "X-Storage-Stack: %s"\n' "$KBC_STACK"
+    [ -n "$KBC_PROJECT" ] && printf 'header = "X-Storage-Project: %s"\n' "$KBC_PROJECT"
+  ) "$@"
 }
 ```
+
+The `case` puts each kind of credential in the header it belongs in — see
+*Signing in instead of finding a token* below — so one wrapper serves both.
+`KBC_PROJECT` stays empty for a Storage token, which names its own project.
 
 `printf` is a shell builtin and the config reaches curl as `/dev/fd/N`, so no
 process ever carries the token in its arguments. To act as another identity
 for one call, prefix the environment: `KBC_TOKEN="$CONTRIBUTOR_TOKEN" hub …`.
 
-**Never put the token in a URL, query string, or the request body.** It only
-ever belongs in the `X-StorageApi-Token` header.
+**Never put the credential in a URL, query string, or the request body.** It
+only ever belongs in a request header — `X-StorageApi-Token` for a Storage API
+token, `Authorization: Bearer` for a sign-in (see below).
 
 **Ownership is the project, not the individual token.** The hub authorizes
 owner-only operations (update, trash, restore, purge, rotate-link,
@@ -175,9 +188,17 @@ curl -sS -X POST "$HUB/login/device/token" \
   -d '{"stack": "eu", "device_code": "..."}'
 # -> {"status": "pending", "interval": 5}      while they are still approving
 # -> {"status": "ok", "credential": {...}, "projects": [{"id": 123, ...}]}
+# -> 429 / 502                                 back off, the code is still good
+# -> 400                                       declined or expired: start again
 ```
 
-`credential.access_token` is the value for `X-StorageApi-Token`, and the
+Only the 400 ends a sign-in. A 429 (this hub's poll budget, or the stack's
+own) and a 502 both leave the device code valid for the rest of its
+`expires_in` window, so lengthen the gap and keep asking instead of minting a
+second code; `slow_down: true` in a pending answer is the stack asking for the
+same thing (RFC 8628: add five seconds).
+
+`credential.access_token` is the value for `Authorization: Bearer`, and the
 `projects` array is what to pick `X-Storage-Project` from. An access token
 lasts an hour; `POST /login/refresh {"stack", "refresh_token"}` renews it and
 `POST /login/signout {"stack", "token"}` ends the session. Treat all of these

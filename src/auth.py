@@ -159,9 +159,18 @@ def storage_headers(token: str, project_id: int | None) -> dict[str, str]:
 def verify_token(
     stack_url: str, token: str, timeout_s: int = 15, project_id: int | None = None
 ) -> Owner:
-    """Verify a credential against its stack and return the owning project."""
+    """Verify a credential against its stack and return the owning project.
+
+    ``project_id`` is the ``X-Storage-Project`` header. It is what makes a
+    bearer usable at all, and it is *ignored* for a Storage API token, which
+    names its own project: a caller who keeps the header set in their
+    environment and then hands one call a Storage token of another project is
+    describing the credential's project no better and no worse than the token
+    itself does, so the token wins.
+    """
     if not token:
         raise AuthError("Missing X-StorageApi-Token header")
+    bearer = is_bearer_credential(token)
     url = f"{stack_url}/v2/storage/tokens/verify"
     try:
         response = httpx.get(
@@ -171,7 +180,7 @@ def verify_token(
         logger.warning("Stack %s unreachable: %s", stack_url, exc)
         raise StackUnreachableError(f"Could not reach {stack_url}: {exc}") from exc
     if response.status_code in (401, 403):
-        if is_bearer_credential(token):
+        if bearer:
             raise AuthError(
                 f"The stack refused this sign-in for project {project_id} — "
                 "the session may have expired, or it does not reach that project"
@@ -202,8 +211,9 @@ def verify_token(
     # A bearer is exchanged for a Storage token *of the requested project*, so
     # a different owner coming back means the request was routed somewhere
     # other than where the caller said. Refuse rather than record an identity
-    # the caller did not ask for.
-    if project_id is not None and resolved_id != project_id:
+    # the caller did not ask for. A Storage token is not checked against the
+    # header: it was never routed by it (see the docstring).
+    if bearer and project_id is not None and resolved_id != project_id:
         raise AuthError(
             f"Stack resolved project {resolved_id} for a credential presented "
             f"as project {project_id}"

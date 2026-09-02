@@ -16,6 +16,7 @@ import respx
 from src.kbclogin import (
     LoginPending,
     LoginRejected,
+    LoginThrottled,
     LoginUnavailable,
     PkceRegistry,
     authorize_url,
@@ -166,13 +167,19 @@ class TestStartDevice:
             start_device(STACK, CLIENT, TIMEOUT)
 
     @respx.mock
-    def test_a_rate_limited_start_is_rejected_with_a_readable_message(self):
+    def test_a_rate_limited_start_is_throttled_not_rejected(self):
+        """Throttling says "ask again"; a rejection says "start over".
+
+        A caller that could not tell them apart would throw away a device
+        code the stack is still willing to honour.
+        """
         respx.post(DEVICE_URL).mock(
             return_value=httpx.Response(429, json=_cli_error("rate_limited"))
         )
-        with pytest.raises(LoginRejected) as excinfo:
+        with pytest.raises(LoginThrottled) as excinfo:
             start_device(STACK, CLIENT, TIMEOUT)
         assert "rate-limiting" in str(excinfo.value)
+        assert not isinstance(excinfo.value, LoginRejected)
 
     @respx.mock
     def test_a_body_missing_the_codes_is_unavailable(self):
