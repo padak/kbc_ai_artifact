@@ -95,17 +95,53 @@ token belonging to the owning project — regardless of that token's intended
 scope — carries full owner authority, including purge and rotate-link. Don't
 assume a narrowly-scoped token is denied destructive actions here; it isn't.
 
+**No token to hand? Sign the user in instead.** A `kbc_at_*` session or
+`kbc_pat_*` personal access token from Keboola's own sign-in authenticates
+just as well, in the header that kind of credential belongs in:
+`Authorization: Bearer <token>` — never in `X-StorageApi-Token`, which carries
+a Storage API token and nothing else (the hub answers 400 naming the right
+header). Because a bearer is scoped to a person rather than to one project,
+add `X-Storage-Project: <project id>` alongside `X-Storage-Stack`. Obtain one
+with the device flow, which needs no callback URL:
+
+```bash
+curl -sS -X POST "$HUB/login/device" -H "Content-Type: application/json" \
+  -d '{"stack": "eu"}'
+# Show the user "user_code" and "verification_uri_complete", then poll
+# every "interval" seconds until status is no longer "pending":
+curl -sS -X POST "$HUB/login/device/token" -H "Content-Type: application/json" \
+  -d '{"stack": "eu", "device_code": "..."}'
+```
+
+While polling, only a **400** means start over with a new code — the sign-in
+was declined or the code expired. A 429 or a 502 means wait and ask again:
+the code is good for the whole `expires_in` window, so back off (a `429` says
+you or the stack is polling too fast) rather than minting a second one.
+
+The success body carries `credential.access_token` (the value for
+`Authorization: Bearer`) and a `projects` array to pick `X-Storage-Project` from
+— ask the user which project, never guess. It lasts an hour;
+`POST /login/refresh {"stack", "refresh_token"}` renews it and
+`POST /login/signout {"stack", "token"}` ends it. Every token-handling rule
+below applies to these unchanged. A 502 saying the stack "does not offer" the
+flow means that stack has programmatic auth off — fall back to a Storage
+token. Every operation below accepts all three credentials; only a
+**read-only** PAT is short of one thing — publishing writes a canonical copy
+into the user's own project, which it cannot do (502, and the message says
+so).
+
 **Token handling rules — non-negotiable:**
 
 - Never print, log, or echo the token's value in your responses or in shell
   output you show the user.
 - Read it from an environment variable the user has already set (common
   names: `KBC_TOKEN`, `KBC_STORAGE_TOKEN`, `STORAGE_TOKEN`) — check with
-  something like `[ -n "$KBC_TOKEN" ]` before asking. If none is set, ask the
-  user to export one rather than having them paste it into chat for you to
-  retype.
-- Never put the token in a URL, query string, or request body — only in the
-  `X-StorageApi-Token` header.
+  something like `[ -n "$KBC_TOKEN" ]` before asking. If none is set, offer
+  the sign-in above, or ask the user to export one — never have them paste it
+  into chat for you to retype.
+- Never put the credential in a URL, query string, or request body — only in
+  a request header: `X-StorageApi-Token` for a Storage API token,
+  `Authorization: Bearer` for a sign-in.
 - The same rules apply to a git `git_token` used for private-repo publishing
   (see below): it is transient, request-scoped, never persisted by the hub,
   and you must never echo it either.
@@ -116,12 +152,24 @@ once in your shell (bash or zsh) with the token and stack alias in the
 environment:
 
 ```bash
-export KBC_TOKEN="…"   # your Keboola Storage API token
+export KBC_TOKEN="…"   # a Storage API token, or a kbc_at_/kbc_pat_ sign-in
 export KBC_STACK=eu    # or us, gcp-us, azure-eu, gcp-eu, or a full https URL
+export KBC_PROJECT=    # the project id, only for a sign-in credential
 hub() {
-  curl -s -K <(printf 'header = "X-StorageApi-Token: %s"\nheader = "X-Storage-Stack: %s"\n' "$KBC_TOKEN" "$KBC_STACK") "$@"
+  curl -s -K <(
+    case "$KBC_TOKEN" in
+      kbc_at_*|kbc_pat_*) printf 'header = "Authorization: Bearer %s"\n' "$KBC_TOKEN";;
+      *) printf 'header = "X-StorageApi-Token: %s"\n' "$KBC_TOKEN";;
+    esac
+    printf 'header = "X-Storage-Stack: %s"\n' "$KBC_STACK"
+    [ -n "$KBC_PROJECT" ] && printf 'header = "X-Storage-Project: %s"\n' "$KBC_PROJECT"
+  ) "$@"
 }
 ```
+
+The `case` puts each kind of credential in the header it belongs in, so the
+same wrapper serves a pasted Storage token and a sign-in alike. `KBC_PROJECT`
+stays empty for a Storage token, which names its own project.
 
 Why not simply `-H "X-StorageApi-Token: $KBC_TOKEN"`: the shell expands that
 before `curl` runs, so for the process's lifetime the literal token is a

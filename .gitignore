@@ -4,8 +4,12 @@ __pycache__/
 *.pyc
 .env
 .env.local
+.dev-cache/
+.scratch/
 logs/
 .pytest_cache/
 _review/
 *.egg-info/
 requirements-prod.txt
+.claude/agent-memory/
+.claude/settings.local.json

@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from kbcstorage.client import Client
 
+from src.auth import AuthError, storage_headers
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -118,22 +120,52 @@ def _file_info_from_api(payload: dict[str, Any]) -> FileInfo | None:
 class KbcFilesBackend:
     """:class:`FilesBackend` backed by a real Keboola stack via ``kbcstorage``."""
 
-    def __init__(self, stack_url: str, token: str) -> None:
+    def __init__(
+        self, stack_url: str, token: str, project_id: int | None = None
+    ) -> None:
         self.stack_url = stack_url.rstrip("/")
         self._token = token
+        self._project_id = project_id
         self._client: Client | None = None
 
     def _files(self) -> Any:
-        """Return the ``files`` sub-client, building the client on first use."""
+        """Return the ``files`` sub-client, building the client on first use.
+
+        The client is cached only once its authentication is in place. A
+        half-built one must not be reachable: :meth:`_apply_auth` is what
+        moves a bearer out of ``X-StorageApi-Token``, so a cached client that
+        skipped it would put the bearer in a Storage token's header on every
+        later call.
+        """
         if self._client is None:
             try:
-                self._client = Client(self.stack_url, self._token)
+                client = Client(self.stack_url, self._token)
             except Exception as exc:  # noqa: BLE001 - normalized to BackendError
                 raise BackendError(
                     f"Could not create a Storage client for {self.stack_url}: "
                     f"{_safe_message(exc, self._token)}"
                 ) from exc
+            self._apply_auth(client.files)
+            self._client = client
         return self._client.files
+
+    def _apply_auth(self, endpoint: Any) -> None:
+        """Point one ``kbcstorage`` endpoint at the right authentication scheme.
+
+        ``kbcstorage`` only knows ``X-StorageApi-Token``. A programmatic bearer
+        authenticates as ``Authorization`` plus ``X-KBC-ProjectId`` instead, so
+        the endpoint's header map is rewritten in place — ``requests`` drops a
+        header whose value is ``None``, which is how the token header is
+        removed without touching the library.
+        """
+        try:
+            headers = storage_headers(self._token, self._project_id)
+        except AuthError as exc:
+            raise BackendError(str(exc)) from exc
+        if "Authorization" not in headers:
+            return
+        endpoint._auth_header.update(headers)
+        endpoint._auth_header["X-StorageApi-Token"] = None
 
     def upload(self, name: str, content: bytes, tags: list[str]) -> int:
         """Write ``content`` to a temp file named ``name`` and upload it.

@@ -4,6 +4,58 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.12.0 — Sign in with Keboola (2026-09-02)
+
+- You no longer need to go and find a Storage API token to use this service.
+  Open `/login`, pick your stack, approve the sign-in in your Keboola tab, and
+  choose the project you are publishing as. The admin studio and the review
+  page both accept that sign-in wherever they used to want a pasted token.
+- **Keboola's own screen decides which projects a sign-in can reach**, and
+  this service asks it to let you narrow that rather than granting everything
+  by default. The project you pick here afterwards only says which of those
+  you are publishing as.
+- Two ways in, and the page picks the right one: a short code you approve in
+  a browser — which works from anywhere, including a browser on a different
+  device — or, when you are running this service on your own machine, a
+  single browser hop with nothing to type.
+- Signing out now ends the session on Keboola's side, rather than only
+  forgetting it in this tab. A tab left open renews itself instead of asking
+  you to sign in again every hour.
+- Scripts and AI assistants can do the same thing: `/skill`, `/agent` and
+  `/context` all describe the sign-in, and a session is used on the API
+  exactly like a token was.
+- Each credential goes where that kind of credential goes on Keboola itself:
+  a Storage API token in `X-StorageApi-Token`, a sign-in in the standard
+  `Authorization: Bearer` header. Mixing them up is answered by a message
+  naming the right header, rather than a bare "unauthorized". Every curl
+  example on the front page has a **token / sign-in** switch, so the whole
+  page reads for whichever one you actually hold.
+- Your credential still never reaches this service's storage or logs. It is
+  relayed to Keboola, handed back to your own browser tab, and forgotten.
+
+From the review of the above, before it shipped:
+
+- **A hiccup while you are approving a code no longer wastes the code.** The
+  short code is good for fifteen minutes, but any blip while the page waited
+  for your approval — a dropped connection, a busy moment on Keboola's side —
+  sent you back to the start with a new code and a new tab. The page now
+  keeps waiting, easing off as it goes, and only gives up when the sign-in
+  itself is actually refused or expires.
+- **Signing out works even on a busy network.** Every visitor behind one
+  office connection shares this service's hourly sign-in budget, and signing
+  out used to spend from that same budget — so on a busy day it could quietly
+  do nothing, leaving the session alive on Keboola while your tab had already
+  forgotten it. It now has a budget of its own.
+- **A project id left over in your environment no longer breaks a call made
+  with a Storage API token.** The front page tells you to export one for a
+  sign-in; a later call with an ordinary token of a different project was then
+  refused, which is not what the documentation said would happen. A Storage
+  token names its own project, and now really is the only thing that does.
+- **The instructions an AI assistant reads were sending the sign-in to the
+  wrong header** — the very mistake the service answers with an error naming
+  the right one. The front page's copy-paste `hub` wrapper, `/skill` and
+  `/agent` now all pick the right header for whichever credential you export.
+
 ## 0.11.0 — Second security review follow-up (2026-09-02)
 
 **Two items need a change on your side: `HUB_TRUSTED_PROXY_CIDRS` (second

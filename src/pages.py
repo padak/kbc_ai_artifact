@@ -36,6 +36,7 @@ markup.
 from __future__ import annotations
 
 import html
+import json
 import re
 
 #: Google Fonts, linked with ``display=swap``. Both families have full local
@@ -253,6 +254,23 @@ code { background: var(--accent-soft); color: var(--accent-ink);
 .term .s { color: #ffc98a; }
 .term .k { color: #8fb6ff; }
 
+/* -------- credential switch ----------------------------------------------
+   Every example carries both credential shapes and hides one, so switching
+   is a class on the root element rather than a rewrite of the text. With no
+   JavaScript the Storage-token form is what shows, which is the form that
+   needs no sign-in to try. */
+.cred-bearer { display: none; }
+.auth-bearer .cred-tok { display: none; }
+.auth-bearer .cred-bearer { display: inline; }
+
+.credsw { margin-left: auto; display: flex; gap: 1px; flex: none;
+  border: 1px solid var(--term-line); border-radius: 6px; overflow: hidden; }
+.credsw button { font: inherit; letter-spacing: inherit; cursor: pointer;
+  padding: .15rem .5rem; border: 0; background: transparent;
+  color: var(--term-dim); text-transform: none; }
+.credsw button:hover { color: var(--term-fg); }
+.credsw button[aria-pressed="true"] { background: #223049; color: #cfe0ff; }
+
 /* -------- feature grid ---------------------------------------------------- */
 .grid {
   display: grid;
@@ -462,6 +480,13 @@ main { max-width: 68rem; }
 }
 .hint { font-size: .82rem; color: var(--muted); margin: 1rem 0 0; }
 .hint code { font-size: .78rem; }
+/* A rule with a word in it: the flex children draw the two halves, so the
+   label needs no background patch to sit on and cannot drift out of it. */
+.login-or { display: flex; align-items: center; gap: .6rem; margin: 1.3rem 0 .1rem;
+  font-family: var(--font-mono); font-size: .72rem; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted); }
+.login-or::before, .login-or::after { content: ""; flex: 1;
+  border-top: 1px solid var(--line); }
 
 /* -------- toolbar --------------------------------------------------------- */
 .toolbar { display: flex; align-items: center; gap: .6rem; margin-bottom: .7rem; }
@@ -562,20 +587,196 @@ main { max-width: 68rem; }
 .modal iframe { flex: 1; width: 100%; border: 0; background: #fff; }
 """
 
+#: The credential every studio page holds, in one place: reading and writing
+#: the one ``sessionStorage`` entry, choosing the header each kind of
+#: credential belongs in, renewing a Keboola session, revoking it, and telling
+#: a 401 about the credential apart from a 401 about the document.
+#:
+#: ``/admin``, ``/a/{id}/review`` and ``/login`` all hold the same record, so
+#: all three take it from here: a second copy of any of this is a copy that
+#: can disagree with the others. Installed as ``window.hubSession`` by its own
+#: ``<script>``, ahead of the page's, and it reads ``window.HUB_BASE`` the way
+#: every other snippet here does.
+_SESSION_JS = """
+(function () {
+  "use strict";
+
+  var BASE = String(window.HUB_BASE || "").replace(/\\/+$/, "");
+
+  /* The credential lives in the page's closure and in sessionStorage, and
+     nowhere else: not in a cookie, not in the URL, and not in any web storage
+     that outlives the tab. sessionStorage is per-tab and cleared when the tab
+     closes, so a reload keeps the session while closing the tab ends it. */
+  var AUTH_KEY = "hub_admin_auth";
+
+  /* The renewal in flight, if any. See renew(). */
+  var renewing = null;
+
+  function read() {
+    try {
+      var raw = window.sessionStorage.getItem(AUTH_KEY);
+      if (!raw) { return null; }
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.token && parsed.stack) {
+        /* Copied rather than picked apart field by field, so a record written
+           by a newer /login keeps whatever else it carries. project and
+           refresh come from /login only: a Keboola session names the project
+           it acts as and can be renewed, a pasted Storage token does
+           neither. One entry holds both shapes. */
+        var record = Object.assign({}, parsed);
+        record.project = parsed.project || null;
+        record.refresh = parsed.refresh || null;
+        return record;
+      }
+    } catch (err) {
+      /* Storage disabled or unreadable: just sign in again. */
+    }
+    return null;
+  }
+
+  /* False when this browser refused to keep the record. A page that already
+     holds the credential in memory can carry on — the session just will not
+     survive a reload; /login, which has nowhere else to put it, says so. */
+  function write(record) {
+    try {
+      window.sessionStorage.setItem(AUTH_KEY, JSON.stringify(record));
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function forget() {
+    try { window.sessionStorage.removeItem(AUTH_KEY); } catch (err) {}
+  }
+
+  /* Each kind of credential goes in the header that kind belongs in: a
+     Storage API token in X-StorageApi-Token, a Keboola sign-in in the
+     standard Authorization: Bearer. The hub refuses the other way round, and
+     rightly — they are different credentials with different scopes.
+
+     X-Storage-Project rides along with a sign-in, which is scoped to a person
+     rather than to one project. X-Storage-Project, not X-Kbc-*: the data-app
+     proxy strips that family before the hub ever sees it. */
+  function headers(record, out) {
+    if (/^kbc_(at|pat)_/.test(record.token)) {
+      out["Authorization"] = "Bearer " + record.token;
+    } else {
+      out["X-StorageApi-Token"] = record.token;
+    }
+    out["X-Storage-Stack"] = record.stack;
+    if (record.project) { out["X-Storage-Project"] = String(record.project); }
+    return out;
+  }
+
+  async function exchange(record) {
+    var resp = await fetch(BASE + "/login/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stack: record.stack, refresh_token: record.refresh })
+    });
+    if (!resp.ok) { return null; }
+    var data = null;
+    try { data = await resp.json(); } catch (err) { return null; }
+    if (!data || !data.credential) { return null; }
+    /* Merged onto the record, not rebuilt from a fixed field list: a renewal
+       replaces the two tokens and must not quietly drop anything else the
+       record holds. */
+    var next = Object.assign({}, record, {
+      token: data.credential.access_token,
+      refresh: data.credential.refresh_token
+    });
+    write(next);
+    return next;
+  }
+
+  /* A Keboola session ages out after an hour; a pasted Storage token does
+     not. Rotating the refresh token in place keeps a tab that was left open
+     working instead of sending the visitor back to sign in. Resolves to the
+     renewed record, or null when there is nothing to renew and when the stack
+     refused.
+
+     One exchange at a time, and every caller awaits that same one: the stack
+     spends the refresh token on the first request, so two 401s renewing
+     independently would have the second told its session is dead — and it
+     would have spent a sign-in slot to be told so. */
+  function renew(record) {
+    if (!record || !record.refresh) { return Promise.resolve(null); }
+    if (!renewing) {
+      renewing = exchange(record).catch(function () {
+        /* Offline, or a refusal: the caller reports the failure it already
+           had, which is more useful than one about the renewal. */
+        return null;
+      }).then(function (value) {
+        renewing = null;
+        return value;
+      });
+    }
+    return renewing;
+  }
+
+  /* Signing out of a Keboola session revokes it on its stack, so the tokens
+     are dead rather than merely forgotten here. Fire-and-forget: ending the
+     local session must not wait on the network, or be blocked by it. */
+  function end(record) {
+    if (!record || !record.refresh) { return; }
+    var payload = JSON.stringify({ stack: record.stack, token: record.refresh });
+    try {
+      fetch(BASE + "/login/signout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true
+      }).catch(function () {});
+    } catch (err) { /* offline: the session expires on its own */ }
+  }
+
+  /* Only the credential being refused says anything about the credential. A
+     502 means the hub's own Storage is unavailable, which is the same for
+     every visitor and is not a reason to throw away a working sign-in. */
+  function rejected(err) {
+    return !!err && (err.status === 401 || err.status === 403);
+  }
+
+  /* The reader gate's own 401 body: {"error": "password required"}. That is a
+     401 about the *document*, not about the credential — an owner who is
+     signed in gets it too — so renewing over it would spend a refresh
+     token, and a sign-in slot, to be told exactly the same thing again. */
+  function lockedBody(data) {
+    return !!data && data.error === "password required";
+  }
+
+  function locked(err) {
+    return !!err && err.status === 401 && lockedBody(err.payload);
+  }
+
+  window.hubSession = {
+    read: read,
+    write: write,
+    forget: forget,
+    headers: headers,
+    renew: renew,
+    end: end,
+    rejected: rejected,
+    locked: locked,
+    lockedBody: lockedBody
+  };
+})();
+"""
+
 #: The whole studio, as one IIFE. Deliberately dependency-free and readable:
 #: it only ever talks to the endpoints a terminal could call with curl, using
-#: the two management headers the visitor supplied.
+#: the two management headers the visitor supplied. Session handling comes
+#: from :data:`_SESSION_JS`, which every page that holds a credential shares.
 _ADMIN_JS = """
 (function () {
   "use strict";
 
   var BASE = String(window.HUB_BASE || "").replace(/\\/+$/, "");
 
-  /* The credential lives in this closure and in sessionStorage, and nowhere
-     else: not in a cookie, not in the URL, and not in any web storage that
-     outlives the tab. sessionStorage is per-tab and cleared when the tab
-     closes, so a reload keeps the session while closing the tab ends it. */
-  var AUTH_KEY = "hub_admin_auth";
+  /* Reading, renewing and revoking the credential, shared with every other
+     page that holds one. This closure keeps the record itself. */
+  var SESSION = window.hubSession;
   var auth = null;
 
   /* One live watch per *expanded* detail panel. A collapsed row polls
@@ -622,37 +823,17 @@ _ADMIN_JS = """
 
   /* ---------------------------------------------------------------- auth */
 
-  function loadAuth() {
-    try {
-      var raw = window.sessionStorage.getItem(AUTH_KEY);
-      if (!raw) { return null; }
-      var parsed = JSON.parse(raw);
-      if (parsed && parsed.token && parsed.stack) {
-        return { token: parsed.token, stack: parsed.stack };
-      }
-    } catch (err) {
-      /* Storage disabled or unreadable: just sign in again. */
-    }
-    return null;
-  }
-
-  function storeAuth(value) {
-    try {
-      window.sessionStorage.setItem(AUTH_KEY, JSON.stringify(value));
-    } catch (err) {
-      /* Non-fatal: the session simply will not survive a reload. */
-    }
-  }
-
-  function clearAuth() {
-    try { window.sessionStorage.removeItem(AUTH_KEY); } catch (err) {}
+  /* The renewed record has to land in this closure as well as in storage,
+     which is the one thing the shared session module cannot do for us. */
+  async function renewSession() {
+    var next = await SESSION.renew(auth);
+    if (!next) { return false; }
+    auth = next;
+    return true;
   }
 
   function headers(withBody) {
-    var out = {
-      "X-StorageApi-Token": auth.token,
-      "X-Storage-Stack": auth.stack
-    };
+    var out = SESSION.headers(auth, {});
     if (withBody) { out["Content-Type"] = "application/json"; }
     return out;
   }
@@ -672,16 +853,33 @@ _ADMIN_JS = """
   async function request(path, options) {
     var opts = options || {};
     var hasBody = opts.body !== undefined;
-    var resp = await fetch(BASE + path, {
-      method: opts.method || "GET",
-      headers: headers(hasBody),
-      body: hasBody ? JSON.stringify(opts.body) : undefined
-    });
-    var text = await resp.text();
-    var data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
-    if (!resp.ok) { throw new Error(apiMessage(resp.status, data, text)); }
-    return data;
+    var body = hasBody ? JSON.stringify(opts.body) : undefined;
+    async function attempt() {
+      var resp = await fetch(BASE + path, {
+        method: opts.method || "GET",
+        headers: headers(hasBody),
+        body: body
+      });
+      var text = await resp.text();
+      var data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
+      return { resp: resp, text: text, data: data };
+    }
+    var out = await attempt();
+    /* One retry, and only on a 401 that is about the session: an aged-out
+       access token is the single failure this page can put right by itself.
+       The body decides, so the reader gate's own 401 does not spend a
+       refresh token to be answered with the same 401 again. */
+    if (out.resp.status === 401 && !SESSION.lockedBody(out.data)
+        && await renewSession()) {
+      out = await attempt();
+    }
+    if (!out.resp.ok) {
+      var failure = new Error(apiMessage(out.resp.status, out.data, out.text));
+      failure.status = out.resp.status;
+      throw failure;
+    }
+    return out.data;
   }
 
   /* Proposed versions and diffs are 403 for an anonymous browser tab, so they
@@ -1423,7 +1621,8 @@ _ADMIN_JS = """
 
   function leaveStudio() {
     stopWatchers();
-    clearAuth();
+    SESSION.end(auth);
+    SESSION.forget();
     auth = null;
     $("artifacts").textContent = "";
     $("token").value = "";
@@ -1464,10 +1663,10 @@ _ADMIN_JS = """
 
     var btn = $("login-btn");
     btn.disabled = true;
-    auth = { token: token, stack: stack };
+    auth = { token: token, stack: stack, project: null, refresh: null };
     try {
       var data = await request("/api/artifacts");
-      storeAuth(auth);
+      SESSION.write(auth);
       $("token").value = "";
       enterStudio(data);
     } catch (err) {
@@ -1496,7 +1695,7 @@ _ADMIN_JS = """
 
   /* --------------------------------------------------------------- start */
 
-  auth = loadAuth();
+  auth = SESSION.read();
   if (auth) {
     var options = Array.prototype.map.call(
       $("stack").options, function (option) { return option.value; }
@@ -1514,9 +1713,18 @@ _ADMIN_JS = """
       enterStudio(data);
     }, function (err) {
       show($("loading"), false);
-      clearAuth();
-      auth = null;
-      setError($("login-error"), "That session is no longer valid: " + err.message);
+      if (SESSION.rejected(err)) {
+        SESSION.forget();
+        auth = null;
+        setError($("login-error"),
+          "That session is no longer valid: " + err.message);
+        return;
+      }
+      /* The credential is kept: signing in again would not fix this. */
+      setError($("login-error"),
+        "The hub could not answer just now, so your artifacts are not " +
+        "listed. Your sign-in is still good \u2014 try Open studio again " +
+        "in a moment. (" + err.message + ")");
     });
   }
 })();
@@ -1526,6 +1734,7 @@ _ADMIN_JS = """
 #: the short, unambiguous aliases; anything else goes through "custom URL",
 #: which the server validates exactly as it validates a curl call.
 _ADMIN_STACKS = ("us", "gcp-us", "eu", "azure-eu", "gcp-eu")
+
 
 
 # --------------------------------------------------------------------------
@@ -1888,14 +2097,96 @@ def _page(title: str, extra_css: str, body: str) -> str:
     )
 
 
-def _term(title: str, body: str) -> str:
-    """A terminal card. ``body`` is pre-escaped markup with optional spans."""
+def _term(title: str, body: str, credential_switch: bool = False) -> str:
+    """A terminal card. ``body`` is pre-escaped markup with optional spans.
+
+    ``credential_switch`` puts a two-way control in the bar for an example
+    that carries authentication headers. Every such control on a page drives
+    the same root class, so switching one switches them all — the reader
+    picks their credential once, not per example.
+    """
+    switch = _CREDENTIAL_SWITCH if credential_switch else ""
     return (
         f'<div class="term"><div class="term-bar">'
         '<span class="dot"></span><span class="dot"></span><span class="dot"></span>'
-        f'<span class="term-title">{html.escape(title)}</span></div>'
+        f'<span class="term-title">{html.escape(title)}</span>{switch}</div>'
         f"<pre><code>{body}</code></pre></div>"
     )
+
+
+#: The control ``_term`` puts in the bar of an example that authenticates.
+#: Buttons, not a link or a checkbox: this changes what the page shows and
+#: nothing else, and it must be reachable from the keyboard.
+_CREDENTIAL_SWITCH = (
+    '<span class="credsw" role="group" aria-label="credential">'
+    '<button type="button" data-cred="tok" aria-pressed="true">token</button>'
+    '<button type="button" data-cred="bearer" aria-pressed="false">sign-in</button>'
+    "</span>"
+)
+
+#: The two authentication header blocks every credential-bearing example
+#: shows, one of them hidden. Both are always in the markup, so the switch is
+#: a CSS class rather than a rewrite — and a reader with JavaScript off still
+#: sees a complete, working example.
+_CRED_LINES = (
+    '<span class="cred cred-tok">'
+    '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> \\\n'
+    '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+    "</span>"
+    '<span class="cred cred-bearer">'
+    '    -H <span class="s">"Authorization: Bearer $KBC_TOKEN"</span> \\\n'
+    '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+    '    -H <span class="s">"X-Storage-Project: $KBC_PROJECT"</span> \\\n'
+    "</span>"
+)
+
+#: Same two blocks for an example whose auth headers are the last arguments,
+#: so neither block ends in a line continuation.
+_CRED_LINES_LAST = (
+    '<span class="cred cred-tok">'
+    '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> \\\n'
+    '    -H <span class="s">"X-Storage-Stack: eu"</span>'
+    "</span>"
+    '<span class="cred cred-bearer">'
+    '    -H <span class="s">"Authorization: Bearer $KBC_TOKEN"</span> \\\n'
+    '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+    '    -H <span class="s">"X-Storage-Project: $KBC_PROJECT"</span>'
+    "</span>"
+)
+
+#: Wires every credential switch on a page to one root class.
+_CREDENTIAL_JS = """
+(function () {
+  "use strict";
+
+  /* Which credential the examples are written for. A reading preference, not
+     a credential: nothing secret is involved, and it is per tab so it never
+     outlives the visit. */
+  var KEY = "hub_cred_style";
+  var root = document.documentElement;
+  var buttons = document.querySelectorAll(".credsw button");
+
+  function apply(style) {
+    var bearer = style === "bearer";
+    root.classList.toggle("auth-bearer", bearer);
+    Array.prototype.forEach.call(buttons, function (button) {
+      var pressed = (button.getAttribute("data-cred") === "bearer") === bearer;
+      button.setAttribute("aria-pressed", pressed ? "true" : "false");
+    });
+    try { window.sessionStorage.setItem(KEY, style); } catch (err) {}
+  }
+
+  Array.prototype.forEach.call(buttons, function (button) {
+    button.addEventListener("click", function () {
+      apply(button.getAttribute("data-cred"));
+    });
+  });
+
+  var stored = null;
+  try { stored = window.sessionStorage.getItem(KEY); } catch (err) {}
+  if (stored === "bearer") { apply(stored); }
+})();
+"""
 
 
 def _badge(text: str, kind: str = "") -> str:
@@ -1934,14 +2225,14 @@ def landing_page(
         "PUBLISH → PUBLIC URL",
         '<span class="p">$</span> curl -sX POST '
         f'<span class="s">"{base}/api/artifacts"</span> \\\n'
-        '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> \\\n'
-        '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+        + _CRED_LINES +
         '    -d <span class="s">\'{"markdown": "# Q3 review\\n\\nShipped."}\'</span>\n'
         '<span class="c">'
         '{"id": "aBcD3fGhIjKlMnOpQrSt", "version": 1, "head_version": 1,\n'
         f' "url": "{base}/a/aBcD3fGhIjKlMnOpQrSt"}}</span>\n'
         '<span class="p">$</span> open '
         f'<span class="k">{base}/a/aBcD3fGhIjKlMnOpQrSt</span>',
+        credential_switch=True,
     )
 
     features = "".join(
@@ -1982,7 +2273,14 @@ def landing_page(
                 f'<a href="{base}/admin">/admin</a> is an admin studio for '
                 "owners: list your artifacts, read proposals, diff them "
                 "against the head, then promote, reject, pin or delete. Your "
-                "token never leaves the tab.",
+                "credential never leaves the tab.",
+            ),
+            _card(
+                "sign in, or bring a token",
+                f'<a href="{base}/login">/login</a> gets you a credential '
+                "without finding a Storage token first — approve a short code "
+                "in your Keboola tab, or one browser hop when you run the hub "
+                "yourself. Scripts drive the same flow over JSON.",
             ),
             _card(
                 "review and comment",
@@ -2005,26 +2303,24 @@ def landing_page(
         '<span class="c"># Markdown — GFM tables, task lists, mermaid, '
         "highlighting</span>\n"
         f'<span class="p">$</span> curl -sX POST <span class="s">"{base}/api/artifacts"</span> \\\n'
-        '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> \\\n'
-        '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+        + _CRED_LINES +
         '    -H <span class="s">"Content-Type: application/json"</span> \\\n'
         '    -d <span class="s">\'{"markdown": "# Report\\n\\nBody.", '
         '"title": "Report", "accept_versions": true}\'</span>\n'
         "\n"
         '<span class="c"># A git repository (add git_token for a private one)</span>\n'
         f'<span class="p">$</span> curl -sX POST <span class="s">"{base}/api/artifacts"</span> \\\n'
-        '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> \\\n'
-        '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+        + _CRED_LINES +
         '    -d <span class="s">\'{"git_url": "https://github.com/org/repo", '
         '"git_path": "docs/report.md"}\'</span>',
+        credential_switch=True,
     )
 
     versions_term = _term(
         "VERSIONING",
         '<span class="c"># Submit a version to someone else\'s artifact</span>\n'
         f'<span class="p">$</span> curl -sX POST <span class="s">"{base}/api/artifacts/$ID/versions"</span> \\\n'
-        '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> \\\n'
-        '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+        + _CRED_LINES +
         '    -d <span class="s">\'{"markdown": "# Report\\n\\nFixed the totals.", '
         '"note": "fix Q3 totals"}\'</span>\n'
         '<span class="c">{"version": 2, "status": "proposed"}</span>\n'
@@ -2033,8 +2329,8 @@ def landing_page(
         f'<span class="p">$</span> open <span class="k">{base}/a/$ID/versions?format=html</span>\n'
         f'<span class="p">$</span> open <span class="k">{base}/a/$ID/diff/1..2</span>\n'
         f'<span class="p">$</span> curl -sX POST <span class="s">"{base}/api/artifacts/$ID/versions/2/promote"</span> \\\n'
-        '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> '
-        '-H <span class="s">"X-Storage-Stack: eu"</span>',
+        + _CRED_LINES_LAST,
+        credential_switch=True,
     )
 
     agents_term = _term(
@@ -2052,9 +2348,37 @@ def landing_page(
     # not allow backslashes inside f-string expressions (PEP 701 is 3.12+).
     headers_term = _term(
         "HEADERS",
+        '<span class="c"># A Storage API token names its own project</span>\n'
         '<span class="k">X-StorageApi-Token</span>: &lt;your Keboola Storage API token&gt;\n'
         '<span class="k">X-Storage-Stack</span>: us | gcp-us | eu | azure-eu | gcp-eu\n'
-        "                 | https://*.keboola.com",
+        "                 | https://*.keboola.com\n"
+        "\n"
+        '<span class="c"># A sign-in (kbc_at_) or a personal access token '
+        "(kbc_pat_)</span>\n"
+        '<span class="c"># is scoped to you, so it names the project too</span>\n'
+        '<span class="k">Authorization</span>: Bearer kbc_at_&hellip; | kbc_pat_&hellip;\n'
+        '<span class="k">X-Storage-Stack</span>: eu\n'
+        '<span class="k">X-Storage-Project</span>: 1234',
+    )
+
+    login_term = _term(
+        "SIGN IN FROM A TERMINAL",
+        '<span class="c"># 1. Ask for a code</span>\n'
+        f'<span class="p">$</span> curl -sX POST <span class="s">"{base}/login/device"</span> \\\n'
+        '    -H <span class="s">"Content-Type: application/json"</span> '
+        '-d <span class="s">\'{"stack": "eu"}\'</span>\n'
+        '<span class="c">{"user_code": "ABCD-EFGH", "interval": 5,\n'
+        ' "verification_uri_complete": "https://connection&hellip;/admin/auth/'
+        'device?userCode=ABCD-EFGH"}</span>\n'
+        "\n"
+        '<span class="c"># 2. Approve that URL in a browser, poll until it stops '
+        "pending</span>\n"
+        f'<span class="p">$</span> curl -sX POST <span class="s">"{base}/login/device/token"</span> \\\n'
+        '    -H <span class="s">"Content-Type: application/json"</span> '
+        '-d <span class="s">\'{"stack": "eu", "device_code": "&hellip;"}\'</span>\n'
+        '<span class="c">{"status": "ok", "credential": {"access_token": '
+        '"kbc_at_&hellip;"},\n'
+        ' "projects": [{"id": 1234, "name": "Analytics", "role": "admin"}]}</span>',
     )
 
     return _page(
@@ -2063,8 +2387,9 @@ def landing_page(
         f"""<main>
 <section class="hero">
 <h1>KBC Artifact Hub</h1>
-<p class="lead">Turn a document into a public URL with one curl call. Any
-Keboola Storage API token, on any stack, is the only credential you need.</p>
+<p class="lead">Turn a document into a public URL with one curl call. Sign in
+with your Keboola account, or bring any Storage API token from any stack —
+that is the only credential you need.</p>
 <div class="hero-meta">
 {_badge(f"kbc-artifact-hub v{service_version}", "version")}
 {_badge("no sign-up")}
@@ -2073,6 +2398,7 @@ Keboola Storage API token, on any stack, is the only credential you need.</p>
 {hero_term}
 <div class="hero-links">
 {demo_link}
+<a class="primary" href="{base}/login">Sign in</a>
 <a class="primary" href="{base}/admin">Admin studio</a>
 <a href="{repo}">GitHub repo</a>
 <a href="{base}/docs">/docs</a>
@@ -2087,15 +2413,46 @@ Keboola Storage API token, on any stack, is the only credential you need.</p>
 <div class="grid">{features}</div>
 
 <h2 class="label">authentication</h2>
-<p>Everything under <code>/api/artifacts</code> is authenticated with two
-headers. The hub verifies the token against your own stack's
-<code>/v2/storage/tokens/verify</code> endpoint and never stores it.</p>
+<p>Everything under <code>/api/artifacts</code> is authenticated with headers,
+not a session. Two credentials are accepted: a <strong>Storage API token</strong>,
+or a <strong>Keboola sign-in</strong> (a <code>kbc_at_</code> session or a
+<code>kbc_pat_</code> personal access token). A sign-in belongs to a person
+rather than to one project, so it says which project it is acting as. The hub
+verifies either against your own stack's
+<code>/v2/storage/tokens/verify</code> and never stores it.</p>
 {headers_term}
-<p>Ownership is the pair (stack, project id). Updating, deleting, promoting and
-pinning all require a token from the project that published the artifact.</p>
+<p class="note">Each kind goes in the header that kind belongs in — the same
+split a Keboola stack uses. A <code>kbc_at_</code>/<code>kbc_pat_</code> value
+in <code>X-StorageApi-Token</code> is a 400 naming the right header, and so is
+sending both at once. The examples below switch between the two.
+<a href="{base}/health/headers">/health/headers</a> reports the header names
+that actually reached the app.</p>
+<p>Ownership is the pair (stack, project id) either way. Updating, deleting,
+promoting and pinning all require a credential for the project that published
+the artifact.</p>
+
+<h2 class="label">no token? sign in</h2>
+<p><a href="{base}/login">/login</a> gets you a credential without hunting one
+down: pick your stack, approve the sign-in in your Keboola tab, pick the
+project you are publishing as. It lands in the same browser tab the
+<a href="{base}/admin">admin studio</a> reads, so a pasted token and a sign-in
+are interchangeable everywhere.</p>
+<p>Scripts and agents use the device flow, which needs no callback URL and
+works from anywhere — including a browser on a different device.</p>
+{login_term}
+<p class="note">A second flow, authorization code + PKCE, is one browser hop
+with nothing to type, but Keboola only accepts an <code>http://127.0.0.1</code>
+callback for it — so <a href="{base}/login">/login</a> offers it exactly when
+you run this hub yourself. Access tokens last an hour;
+<code>/login/refresh</code> renews one and <code>/login/signout</code> revokes
+the session on the stack. The hub relays the sign-in and keeps nothing.</p>
 
 <h2 class="label">quick start</h2>
 {publish_term}
+<p class="note">Every example that authenticates has a
+<strong>token / sign-in</strong> switch in its title bar. Flipping one flips
+them all, so the whole page reads for whichever credential you actually
+hold.</p>
 <p class="note">Add <code>"password": "secret"</code> to protect the artifact,
 or <code>"accept_versions": true</code> to let other projects submit versions
 for your review.</p>
@@ -2119,11 +2476,11 @@ machine-readable manifest of endpoints, limits and the auth model.</p>
 
 <h2 class="label">moderating in the browser</h2>
 <p>Prefer clicking to curling? <a href="{base}/admin">/admin</a> is a
-single-page admin studio for artifact owners: sign in with your Storage token,
-see every artifact your project owns with its pending proposals, read a
-proposal, diff it against the head, then promote, reject, pin or delete. The
-token stays in that browser tab — the studio is a static page that calls the
-same public API.</p>
+single-page admin studio for artifact owners: <a href="{base}/login">sign in
+with Keboola</a> or paste a Storage token, see every artifact your project owns
+with its pending proposals, read a proposal, diff it against the head, then
+promote, reject, pin or delete. The credential stays in that browser tab — the
+studio is a static page that calls the same public API.</p>
 
 <h2 class="label">reading an artifact</h2>
 <div class="table-wrap"><table>
@@ -2145,7 +2502,7 @@ same public API.</p>
 <code>X-Artifact-Password</code> header on every read;
 <code>/meta</code> stays public either way. Proposed versions are visible only
 to the artifact owner and the version's author, who authenticate with the same
-two management headers.</p>
+headers as any other management call.</p>
 
 <h2 class="label">managing your artifacts</h2>
 <div class="table-wrap"><table>
@@ -2173,7 +2530,8 @@ two management headers.</p>
 <a href="{repo}">github.com/padak/kbc_ai_artifact</a>
 <a href="{base}/health">/health</a>
 </footer>
-</main>""",
+</main>
+<script>{_CREDENTIAL_JS}</script>""",
     )
 
 
@@ -2217,6 +2575,10 @@ you can drive with curl.</p>
 <section id="login">
 <h2 class="label">sign in</h2>
 <div class="card login-card">
+<a class="btn btn-primary btn-wide" href="{base}/login">Sign in with Keboola</a>
+<p class="hint">No token to find: approve the sign-in in your Keboola tab and
+pick the project you are publishing as.</p>
+<p class="login-or">or</p>
 <form id="login-form" autocomplete="off">
 <label for="token">Storage API token</label>
 <input type="password" id="token" name="token" autocomplete="off"
@@ -2231,8 +2593,8 @@ you can drive with curl.</p>
 <button type="submit" class="btn btn-primary btn-wide" id="login-btn">Open studio</button>
 <p class="err" id="login-error" hidden></p>
 </form>
-<p class="hint">Your token stays in this browser tab. Every call goes straight
-to the same API you can use with curl.</p>
+<p class="hint">Either way the credential stays in this browser tab. Every
+call goes straight to the same API you can use with curl.</p>
 <p class="hint">It is held in <code>sessionStorage</code> only — never in a
 cookie, never in the URL, never in any storage that outlives this tab — so a
 reload keeps you signed in and closing the tab forgets the token.
@@ -2290,7 +2652,13 @@ reload keeps you signed in and closing the tab forgets the token.
     return _page(
         "Artifact Hub · Admin studio",
         _CONTROLS_CSS + _ADMIN_CSS + _LIVE_CSS,
-        body + _LIVE_JS + "</script>\n<script>" + _ADMIN_JS + "</script>",
+        body
+        + _SESSION_JS
+        + "</script>\n<script>"
+        + _LIVE_JS
+        + "</script>\n<script>"
+        + _ADMIN_JS
+        + "</script>",
     )
 
 
@@ -2641,11 +3009,11 @@ def versions_page(
                 "POST /api/artifacts/…/versions",
                 f'<span class="p">$</span> curl -sX POST '
                 f'<span class="s">"{base}/api/artifacts/{safe_id}/versions"</span> \\\n'
-                '    -H <span class="s">"X-StorageApi-Token: $KBC_TOKEN"</span> \\\n'
-                '    -H <span class="s">"X-Storage-Stack: eu"</span> \\\n'
+                + _CRED_LINES +
                 '    -H <span class="s">"Content-Type: application/json"</span> \\\n'
                 '    -d <span class="s">\'{"markdown": "# Updated\\n\\n...", '
                 '"note": "what changed"}\'</span>',
+                credential_switch=True,
             )
         )
 
@@ -2672,7 +3040,8 @@ def versions_page(
 <span class="spacer"></span>
 <a href="{base}/">hub home</a>
 </footer>
-</main>""",
+</main>
+<script>{_CREDENTIAL_JS}</script>""",
     )
 
 
@@ -3086,8 +3455,10 @@ _REVIEW_JS = """
   var ID = String(window.HUB_ARTIFACT_ID || "");
   var PATH = BASE + "/a/" + encodeURIComponent(ID);
 
-  /* Shared with /admin on purpose: one sign-in serves both pages. */
-  var AUTH_KEY = "hub_admin_auth";
+  /* Reading, renewing and revoking the credential, shared with /admin and
+     /login on purpose: one sign-in serves every page. This closure keeps the
+     record itself. */
+  var SESSION = window.hubSession;
   var auth = null;
 
   /* An invited guest's credential, taken from the URL *fragment*
@@ -3196,7 +3567,7 @@ _REVIEW_JS = """
       guest.name = data.name || "";
       guestPending = false;
     } catch (err) {
-      if (isLockError(err)) {
+      if (SESSION.locked(err)) {
         /* Locked document, not a dead invitation: /a/{id}/guest is behind the
            reader gate too. Hold on to the credential and ask again once the
            password lands. */
@@ -3229,27 +3600,13 @@ _REVIEW_JS = """
 
   /* ---------------------------------------------------------------- auth */
 
-  function loadAuth() {
-    try {
-      var raw = window.sessionStorage.getItem(AUTH_KEY);
-      if (!raw) { return null; }
-      var parsed = JSON.parse(raw);
-      if (parsed && parsed.token && parsed.stack) {
-        return { token: parsed.token, stack: parsed.stack };
-      }
-    } catch (err) {
-      /* Storage disabled or unreadable: just sign in again. */
-    }
-    return null;
-  }
-
-  function storeAuth(value) {
-    try { window.sessionStorage.setItem(AUTH_KEY, JSON.stringify(value)); }
-    catch (err) { /* Non-fatal: the session will not survive a reload. */ }
-  }
-
-  function clearAuth() {
-    try { window.sessionStorage.removeItem(AUTH_KEY); } catch (err) {}
+  /* The renewed record has to land in this closure as well as in storage,
+     which is the one thing the shared session module cannot do for us. */
+  async function renewSession() {
+    var next = await SESSION.renew(auth);
+    if (!next) { return false; }
+    auth = next;
+    return true;
   }
 
   /* Whichever credential this visitor has. A guest never has a token and a
@@ -3259,8 +3616,7 @@ _REVIEW_JS = """
   function headers(withBody) {
     var out = {};
     if (auth) {
-      out["X-StorageApi-Token"] = auth.token;
-      out["X-Storage-Stack"] = auth.stack;
+      SESSION.headers(auth, out);
     } else if (guest) {
       out["X-Artifact-Guest"] = guest.credential;
     }
@@ -3293,27 +3649,32 @@ _REVIEW_JS = """
     return err;
   }
 
-  /* The gate's own 401 body: {"error": "password required"}. A bad token or a
-     revoked invitation is a different 401 and keeps its own message. */
-  function isLockError(err) {
-    if (!err || err.status !== 401) { return false; }
-    var payload = err.payload || {};
-    return payload.error === "password required";
-  }
-
   async function api(path, options) {
     var opts = options || {};
     var hasBody = opts.body !== undefined;
-    var resp = await fetch(BASE + path, {
-      method: opts.method || "GET",
-      headers: headers(hasBody),
-      body: hasBody ? JSON.stringify(opts.body) : undefined
-    });
-    var text = await resp.text();
-    var data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
-    if (!resp.ok) { throw apiError(resp.status, data, text); }
-    return data;
+    var body = hasBody ? JSON.stringify(opts.body) : undefined;
+    async function attempt() {
+      var resp = await fetch(BASE + path, {
+        method: opts.method || "GET",
+        headers: headers(hasBody),
+        body: body
+      });
+      var text = await resp.text();
+      var data = null;
+      try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
+      return { resp: resp, text: text, data: data };
+    }
+    var out = await attempt();
+    /* One retry, and only on a 401 that is about the session: an aged-out
+       access token is the single failure this page can put right by itself.
+       The reader gate answers 401 as well \u2014 to a signed-in owner too \u2014
+       so the body is read first, and renewing is skipped for that one. */
+    if (out.resp.status === 401 && !SESSION.lockedBody(out.data)
+        && await renewSession()) {
+      out = await attempt();
+    }
+    if (!out.resp.ok) { throw apiError(out.resp.status, out.data, out.text); }
+    return out.data;
   }
 
   /* Public reads. credentials:"same-origin" carries the unlock cookie of a
@@ -3375,7 +3736,7 @@ _REVIEW_JS = """
      screen; false when it was anything else and the caller should report it
      the way it always did. */
   async function lockDown(err) {
-    if (!isLockError(err)) { return false; }
+    if (!SESSION.locked(err)) { return false; }
     if (locked) { return true; }
     if (!(await protectedArtifact())) { return false; }
     showLock();
@@ -3735,8 +4096,9 @@ _REVIEW_JS = """
   }
 
   function signedOut() {
+    SESSION.end(auth);
     auth = null;
-    clearAuth();
+    SESSION.forget();
     $("rv-token").value = "";
     /* Falls back to the guest banner when this visitor arrived through an
        invitation and signed in on top of it. */
@@ -3745,10 +4107,10 @@ _REVIEW_JS = """
   }
 
   async function signIn(token, stack) {
-    auth = { token: token, stack: stack };
+    auth = { token: token, stack: stack, project: null, refresh: null };
     try {
       var data = await api("/api/artifacts");
-      storeAuth(auth);
+      SESSION.write(auth);
       $("rv-token").value = "";
       signedIn(data.project_id);
       renderThreads();
@@ -3912,7 +4274,7 @@ _REVIEW_JS = """
   guest = readInvite();
   if (guest) { checkInvite(); }
 
-  auth = loadAuth();
+  auth = SESSION.read();
   if (auth) {
     var stacks = Array.prototype.map.call($("rv-stack").options,
       function (option) { return option.value; });
@@ -3927,11 +4289,19 @@ _REVIEW_JS = """
       signedIn(data.project_id);
       renderThreads();
     }, function (err) {
-      auth = null;
-      clearAuth();
-      renderIdentity();
+      if (SESSION.rejected(err)) {
+        auth = null;
+        SESSION.forget();
+        renderIdentity();
+        setError($("rv-signin-error"),
+          "That session is no longer valid: " + err.message);
+        return;
+      }
+      /* A hub-side failure is the same for everyone; keep the credential and
+         let the reader retry rather than making them sign in again. */
       setError($("rv-signin-error"),
-        "That session is no longer valid: " + err.message);
+        "The hub could not confirm your account just now \u2014 reload to " +
+        "try again. (" + err.message + ")");
     });
   }
 
@@ -4040,10 +4410,12 @@ document itself, so you need it as well; whoever invited you can pass it on.</p>
 <button type="submit" class="btn btn-primary btn-wide" id="rv-signin-btn">Sign in to comment</button>
 <p class="err" id="rv-signin-error" hidden></p>
 </form>
-<p class="rv-hint">Reading is public; commenting needs any Keboola Storage
-API token. The token stays in this browser tab (<code>sessionStorage</code>,
-shared with <a href="{base}/admin">/admin</a>) and is never sent anywhere but
-this hub's own API.</p>
+<p class="rv-hint">Reading is public; commenting needs a Keboola identity.
+Have no token at hand? <a href="{base}/login">Sign in with Keboola</a> and
+come back — the credential is shared with this page.</p>
+<p class="rv-hint">Either way it stays in this browser tab
+(<code>sessionStorage</code>, shared with <a href="{base}/admin">/admin</a>)
+and is never sent anywhere but this hub's own API.</p>
 <p class="rv-hint">No Keboola account? The artifact's owner can send you a
 guest invitation link, which lets you comment here without one.</p>
 </div>
@@ -4115,6 +4487,8 @@ it</button>
         + _SCROLL_REPORTER_JS
         + "</script>\n<script>"
         + _LIVE_JS
+        + "</script>\n<script>"
+        + _SESSION_JS
         + "</script>\n<script>"
         + _REVIEW_JS
         + "</script>",
@@ -4512,3 +4886,463 @@ def visual_diff_page(
         _CONTROLS_CSS + _VISUAL_DIFF_CSS,
         body,
     )
+
+
+# --------------------------------------------------------------------------
+# Sign-in page
+# --------------------------------------------------------------------------
+
+#: Sign-in styles: the method chooser, the device-code display, and the
+#: project picker. Everything else comes from :data:`_CSS`,
+#: :data:`_CONTROLS_CSS` and the login card in :data:`_ADMIN_CSS`.
+_LOGIN_CSS = """
+main { max-width: 44rem; }
+
+.methods { display: flex; flex-direction: column; gap: .5rem; margin-top: 1rem; }
+.method { display: flex; align-items: flex-start; gap: .7rem; text-align: left;
+  width: 100%; padding: .8rem .9rem; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--panel); color: var(--ink);
+  cursor: pointer; font: inherit; }
+.method:hover:not(:disabled) { border-color: var(--accent);
+  background: var(--accent-soft); }
+.method:disabled { opacity: .55; cursor: not-allowed; }
+.method-mark { font-family: var(--font-mono); color: var(--accent);
+  flex: none; padding-top: .1rem; }
+.method-body { min-width: 0; }
+.method-name { font-weight: 500; display: block; }
+.method-note { color: var(--muted); font-size: .82rem; display: block;
+  margin-top: .15rem; }
+
+.usercode { font-family: var(--font-mono); font-size: 2rem; font-weight: 700;
+  letter-spacing: .18em; color: var(--ink); background: var(--paper);
+  border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: .8rem 1rem; text-align: center; margin: .9rem 0 .6rem;
+  user-select: all; }
+.poll { font-family: var(--font-mono); font-size: .8rem; color: var(--muted); }
+
+.plist { list-style: none; margin: .8rem 0 0; padding: 0; display: flex;
+  flex-direction: column; gap: .35rem; max-height: 22rem; overflow-y: auto; }
+.pitem { display: flex; align-items: center; gap: .6rem; width: 100%;
+  padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--ink); cursor: pointer; font: inherit;
+  text-align: left; }
+.pitem:hover { border-color: var(--accent); background: var(--accent-soft); }
+.pitem-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.pitem-id { font-family: var(--font-mono); font-size: .74rem;
+  color: var(--muted); flex: none; }
+.whoami { font-family: var(--font-mono); font-size: .78rem; color: var(--muted);
+  margin: 0 0 .2rem; overflow-wrap: anywhere; }
+"""
+
+#: The sign-in page, as one IIFE. It drives the same ``/login/*`` endpoints a
+#: terminal could call with curl, and finishes by writing the credential into
+#: the very same ``sessionStorage`` entry a pasted Storage token goes into —
+#: so ``/admin`` and ``/a/{id}/review`` cannot tell the two apart.
+_LOGIN_JS = """
+(function () {
+  "use strict";
+
+  var BASE = String(window.HUB_BASE || "").replace(/\\/+$/, "");
+  var PKCE = window.HUB_PKCE === true;
+  var RESULT = window.HUB_LOGIN_RESULT || null;
+
+  /* The same record /admin and the review page read, written through the
+     module all three share. A sign-in is just another way to fill it in;
+     nothing downstream knows which way it was filled. */
+  var SESSION = window.hubSession;
+
+  /* Set once a sign-in succeeds, and cleared when a project is chosen. Holds
+     the session for exactly as long as the picker is on screen. */
+  var pending = null;
+  var pollTimer = null;
+  var deviceDeadline = 0;
+
+  /* Poll cadence, in seconds. The stack names the interval; these are what to
+     do when it does not. RFC 8628 answers slow_down with "add five seconds",
+     which matters because the hub forwards interval 0 whenever the stack
+     omits one — without the step, slow_down would only change the label. */
+  var DEFAULT_POLL_INTERVAL_S = 5;
+  var SLOW_DOWN_STEP_S = 5;
+  /* Ceiling on the doubling backoff a transient failure falls back to. */
+  var MAX_POLL_INTERVAL_S = 30;
+
+  function $(id) { return document.getElementById(id); }
+  function show(node, on) { node.hidden = !on; }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) { node.className = cls; }
+    if (text !== undefined && text !== null) { node.textContent = String(text); }
+    return node;
+  }
+
+  function setError(message) {
+    var node = $("login-error");
+    node.textContent = message || "";
+    node.hidden = !message;
+  }
+
+  function step(name) {
+    ["stack", "device", "project"].forEach(function (id) {
+      show($("step-" + id), id === name);
+    });
+  }
+
+  function chosenStack() {
+    var value = $("stack").value;
+    if (value === "__custom__") { return $("custom").value.trim(); }
+    return value;
+  }
+
+  function apiMessage(status, data, text) {
+    if (data && typeof data.detail === "string") { return data.detail; }
+    if (data && data.detail) { return JSON.stringify(data.detail); }
+    if (text) { return "HTTP " + status + ": " + text.slice(0, 300); }
+    return "HTTP " + status;
+  }
+
+  async function post(path, body) {
+    var resp = await fetch(BASE + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    var text = await resp.text();
+    var data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (err) { data = null; }
+    if (!resp.ok) {
+      /* The status travels with the error: polling has to tell a terminal
+         refusal from a failure that is worth another try. */
+      var failure = new Error(apiMessage(resp.status, data, text));
+      failure.status = resp.status;
+      throw failure;
+    }
+    return data;
+  }
+
+  /* ------------------------------------------------------------- device */
+
+  /* The approval URL comes from an allowlisted https stack, so it is already
+     an https URL. Checked anyway: it is the one stack-supplied value that
+     goes into an href and into window.open(), and neither should ever be
+     handed a javascript: URL because a stack answered oddly. */
+  function approvalUrl(raw) {
+    return /^https:\/\//.test(String(raw || "")) ? String(raw) : "";
+  }
+
+  function stopPolling() {
+    if (pollTimer) { window.clearTimeout(pollTimer); pollTimer = null; }
+  }
+
+  async function startDevice() {
+    var stack = chosenStack();
+    if (!stack) { setError("Choose a stack first."); return; }
+    setError("");
+    var button = $("m-device");
+    button.disabled = true;
+    try {
+      var start = await post("/login/device", { stack: stack });
+      var approval = approvalUrl(start.verification_uri_complete);
+      $("usercode").textContent = start.user_code;
+      $("verify-plain").textContent = start.verification_uri;
+      var link = $("verify-link");
+      if (approval) { link.href = approval; } else { link.removeAttribute("href"); }
+      show(link, !!approval);
+      deviceDeadline = Date.now() + (start.expires_in || 0) * 1000;
+      step("device");
+      /* Opened from the click that started the sign-in, so it is not a popup
+         the browser blocks. A blocked one is not fatal: the link below the
+         code does the same thing, and so does the plain URL under it. */
+      if (approval) { window.open(approval, "_blank", "noopener"); }
+      schedulePoll(start, start.interval || DEFAULT_POLL_INTERVAL_S);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function schedulePoll(start, interval) {
+    stopPolling();
+    pollTimer = window.setTimeout(function () {
+      pollDevice(start, interval);
+    }, Math.max(1, interval) * 1000);
+  }
+
+  async function pollDevice(start, interval) {
+    if (Date.now() > deviceDeadline) {
+      setError("The code expired before it was approved. Start again.");
+      step("stack");
+      return;
+    }
+    try {
+      var data = await post("/login/device/token", {
+        stack: start.stack,
+        device_code: start.device_code
+      });
+      if (data && data.status === "pending") {
+        /* The stack's own interval when it sends one, plus RFC 8628's five
+           seconds when it says slow_down. Kept for every later poll, not just
+           the next one. */
+        var next = data.interval || interval;
+        if (data.slow_down) { next = Math.max(next, interval + SLOW_DOWN_STEP_S); }
+        $("poll-note").textContent = data.slow_down
+          ? "waiting for approval (slowing down)…"
+          : "waiting for approval…";
+        schedulePoll(start, next);
+        return;
+      }
+      signedIn(data);
+    } catch (err) {
+      /* Only a terminal refusal ends the sign-in. Everything else — a network
+         blip, this hub's own 429, a stack that timed out — leaves the device
+         code valid until deviceDeadline, and starting over would cost the
+         person a second code and a second approval tab for nothing. */
+      if (err && err.status === 400) {
+        stopPolling();
+        setError(err.message);
+        step("stack");
+        return;
+      }
+      $("poll-note").textContent = "waiting for approval (retrying)…";
+      schedulePoll(start, Math.min(interval * 2, MAX_POLL_INTERVAL_S));
+    }
+  }
+
+  function cancelDevice() {
+    stopPolling();
+    setError("");
+    step("stack");
+  }
+
+  /* -------------------------------------------------------------- pkce */
+
+  function startPkce() {
+    var stack = chosenStack();
+    if (!stack) { setError("Choose a stack first."); return; }
+    window.location.href = BASE + "/login/pkce/start?stack=" +
+      encodeURIComponent(stack);
+  }
+
+  /* ------------------------------------------------------------ project */
+
+  function signedIn(data) {
+    stopPolling();
+    pending = data.credential;
+    var who = pending.user && (pending.user.email || pending.user.name);
+    $("whoami").textContent = who ? "signed in as " + who : "";
+    renderProjects(data.projects || [], data.projects_unavailable === true);
+    step("project");
+  }
+
+  function renderProjects(projects, unavailable) {
+    var list = $("projects");
+    list.textContent = "";
+    projects.forEach(function (project) {
+      var button = el("button", "pitem");
+      button.type = "button";
+      button.appendChild(el("span", "pitem-name", project.name));
+      button.appendChild(el("span", "pitem-id", project.role));
+      button.appendChild(el("span", "pitem-id", "#" + project.id));
+      button.addEventListener("click", function () { finish(project.id); });
+      list.appendChild(button);
+    });
+    var none = projects.length === 0;
+    show($("projects-empty"), none);
+    show($("manual"), none || unavailable);
+    $("projects-empty").textContent = unavailable
+      ? "This stack did not list your projects. Enter a project id instead."
+      : "Your account is not a member of any project on this stack yet.";
+  }
+
+  function finishManual() {
+    var raw = $("project-id").value.trim();
+    if (!/^[0-9]+$/.test(raw)) {
+      setError("A project id is a number, e.g. 1234.");
+      return;
+    }
+    finish(parseInt(raw, 10));
+  }
+
+  function finish(projectId) {
+    setError("");
+    var kept = SESSION.write({
+      token: pending.access_token,
+      refresh: pending.refresh_token,
+      stack: pending.stack,
+      project: projectId
+    });
+    if (!kept) {
+      /* This page has nowhere else to put the session: the next page is a
+         fresh document that reads it back out of storage. */
+      setError("This browser refused to keep the session. Enable storage " +
+        "for this site, or paste a Storage token into /admin instead.");
+      return;
+    }
+    pending = null;
+    window.location.href = BASE + "/admin";
+  }
+
+  /* --------------------------------------------------------------- boot */
+
+  $("stack").addEventListener("change", function () {
+    show($("custom-wrap"), $("stack").value === "__custom__");
+  });
+  $("m-device").addEventListener("click", startDevice);
+  $("device-cancel").addEventListener("click", cancelDevice);
+  $("project-go").addEventListener("click", finishManual);
+  if (PKCE) { $("m-pkce").addEventListener("click", startPkce); }
+
+  if (RESULT && RESULT.error) {
+    setError(RESULT.error);
+  } else if (RESULT && RESULT.credential) {
+    signedIn(RESULT);
+  }
+})();
+"""
+
+
+def login_page(
+    base_url: str,
+    service_version: str,
+    github_url: str,
+    pkce_available: bool,
+    result: dict | None,
+) -> str:
+    """Render the sign-in page served at ``/login``.
+
+    ``pkce_available`` decides whether the one-hop browser flow is offered at
+    all — a Keboola stack only accepts a loopback redirect for it. ``result``
+    is the outcome of a PKCE callback: either ``{"error": ...}`` or a
+    credential plus the projects it reaches, which boots the page straight
+    into its project-picking step.
+    """
+    base = html.escape(base_url.rstrip("/"))
+    version = html.escape(service_version)
+    repo = html.escape(github_url.rstrip("/"))
+
+    options = "".join(
+        f'<option value="{html.escape(alias)}">{html.escape(alias)}</option>'
+        for alias in _ADMIN_STACKS
+    )
+    options += '<option value="__custom__">custom URL…</option>'
+
+    pkce_attrs = "" if pkce_available else " disabled"
+    pkce_note = (
+        "One hop through your browser. Nothing to type."
+        if pkce_available
+        else "Needs a hub on http://127.0.0.1 — a stack accepts no other "
+        "callback for this flow."
+    )
+
+    # Hoisted out of the f-string: the JSON may contain a backslash escape,
+    # which a 3.11 f-string expression may not.
+    result_json = _login_result_json(result)
+
+    body = f"""<main>
+<header class="ahead">
+<div>
+<h1>Artifact Hub · Sign in</h1>
+<p class="lead">Sign in with your Keboola account instead of hunting down a
+Storage API token. Works on any stack this hub allows, and ends in the same
+place a pasted token does — a credential held in this browser tab only.</p>
+</div>
+</header>
+
+<section id="step-stack">
+<h2 class="label">where</h2>
+<div class="card login-card">
+<label for="stack">Stack</label>
+<select id="stack" name="stack">{options}</select>
+<div id="custom-wrap" hidden>
+<label for="custom">Stack URL</label>
+<input type="text" id="custom" name="custom" spellcheck="false"
+  placeholder="https://connection.keboola.com">
+</div>
+<div class="methods">
+<button type="button" class="method" id="m-pkce"{pkce_attrs}>
+<span class="method-mark">&rarr;</span>
+<span class="method-body">
+<span class="method-name">Sign in with your browser</span>
+<span class="method-note">{html.escape(pkce_note)}</span>
+</span>
+</button>
+<button type="button" class="method" id="m-device">
+<span class="method-mark">#</span>
+<span class="method-body">
+<span class="method-name">Sign in with a code</span>
+<span class="method-note">Approve a short code in your Keboola tab. Works
+from anywhere, including a browser on another device.</span>
+</span>
+</button>
+</div>
+<p class="err" id="login-error" hidden></p>
+<p class="hint">Already have a Storage API token? <a href="{base}/admin">Paste
+it into the studio</a> instead — both end up in the same place.</p>
+</div>
+</section>
+
+<section id="step-device" hidden>
+<h2 class="label">approve</h2>
+<div class="card login-card">
+<p>Enter this code in your Keboola tab:</p>
+<div class="usercode" id="usercode"></div>
+<p><a class="btn btn-primary btn-wide" id="verify-link" target="_blank"
+  rel="noopener">Open the approval page</a></p>
+<p class="hint">If that tab did not open, go to
+<code id="verify-plain"></code> and enter the code yourself.</p>
+<p class="poll" id="poll-note">waiting for approval…</p>
+<button type="button" class="btn" id="device-cancel">Cancel</button>
+</div>
+</section>
+
+<section id="step-project" hidden>
+<h2 class="label">which project</h2>
+<div class="card login-card">
+<p class="whoami" id="whoami"></p>
+<p>Artifacts are owned by a project, so pick the one you are publishing as.</p>
+<p class="hint">What this sign-in can reach was settled on Keboola's own
+screen a moment ago. This step only chooses which of those projects your
+calls act as — change it any time by signing in again.</p>
+<ul class="plist" id="projects"></ul>
+<p class="empty" id="projects-empty" hidden></p>
+<div id="manual" hidden>
+<label for="project-id">Project id</label>
+<input type="text" id="project-id" inputmode="numeric" spellcheck="false"
+  placeholder="1234">
+<button type="button" class="btn btn-primary btn-wide" id="project-go">Continue</button>
+</div>
+</div>
+</section>
+
+<footer>
+<span>kbc-artifact-hub v{version}</span>
+<span class="spacer"></span>
+<a href="{base}/">hub home</a>
+<a href="{base}/admin">/admin</a>
+<a href="{repo}">source</a>
+</footer>
+</main>
+<script>window.HUB_BASE = "{base}";
+window.HUB_PKCE = {str(pkce_available).lower()};
+window.HUB_LOGIN_RESULT = {result_json};</script>
+<script>"""
+
+    return _page(
+        "Artifact Hub · Sign in",
+        _CONTROLS_CSS + _ADMIN_CSS + _LOGIN_CSS,
+        body + _SESSION_JS + "</script>\n<script>" + _LOGIN_JS + "</script>",
+    )
+
+
+def _login_result_json(result: dict | None) -> str:
+    """Serialize a PKCE outcome for the page, safe to inline in a script.
+
+    ``<`` is escaped so no value — a project name included — can close the
+    script element it sits in. The result may carry the visitor's own session
+    tokens; the response that embeds it is ``no-store``, and it goes nowhere
+    but the tab that started the sign-in.
+    """
+    if result is None:
+        return "null"
+    return json.dumps(result).replace("<", "\\u003c")
