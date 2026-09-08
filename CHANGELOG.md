@@ -4,6 +4,18 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.14.2 — The Keboola approval tab closes itself (2026-09-08)
+
+- Signing in with the short code opened a Keboola tab that, once you
+  approved, stayed open on the stack's raw JSON answer while this page had
+  already moved on to the project picker. The sign-in page now closes that
+  tab the moment the approval lands. When it cannot — you opened the
+  approval through the link, or approved on another device — it says so
+  above the project list instead of leaving you to guess.
+- The approval tab still cannot reach or redirect the sign-in page: its
+  link back is cut the instant it opens, which is what the old `noopener`
+  flag did, minus the ability to close it.
+
 ## 0.14.1 — Owners read their own protected artifacts (2026-09-08)
 
 - The admin studio could not open a password-protected artifact at all: the
