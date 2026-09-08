@@ -4,6 +4,24 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.14.1 — Owners read their own protected artifacts (2026-09-08)
+
+- The admin studio could not open a password-protected artifact at all: the
+  panel asked its owner for the reader password and had nowhere to type it.
+  A read that carries a verified credential of the owning project now passes
+  the password gate on every reader route, exports included. The password
+  protects whoever holds the link; it was never a boundary against the owner,
+  who could already remove it.
+- Other projects, proposal authors and guest invitations still need the
+  password or a valid unlock cookie, and the bypass sets no cookie, so a
+  browser tab without auth headers still meets the unlock form.
+- The owner check runs before the password path: a stale password header
+  costs the owner nothing, records no failed attempt, and an exhausted
+  password budget cannot lock the owner out.
+- Writing a comment clears the same gate as reading, so the owner comments
+  on their protected artifact without the password too; guests and other
+  projects still need it.
+
 ## 0.14.0 — HEAD works, and /llms.txt is everywhere it should be (2026-09-02)
 
 - Every public `GET` route now answers `HEAD` with the same status and

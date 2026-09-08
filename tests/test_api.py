@@ -5797,14 +5797,23 @@ def test_guest_comment_writes_need_the_reader_password(api: Api) -> None:
     assert api.client.delete(thread, headers=unlocked).status_code == 200
 
 
-def test_comment_password_gate_grants_the_owner_no_exemption(api: Api) -> None:
-    """The write gate is the read gate, verbatim — and /a/{id}/raw exempts nobody."""
+def test_comment_password_gate_is_the_read_gate(api: Api) -> None:
+    """The write gate is the read gate, verbatim — owner exemption included.
+
+    Until 0.14.1 the read path exempted nobody, so neither did this one. Now a
+    verified credential of the owning project reads a protected artifact
+    without the password, and writing a comment follows the same rule; another
+    project still needs the password, exactly as it does to read.
+    """
     artifact_id = _publish_markdown(
         api, "# Secret\n\nBody text here.", password="hunter2"
     )
-    assert _comment(api, artifact_id, exact="Body text").status_code == 401
+    assert _comment(api, artifact_id, exact="Body text").status_code == 201
+    assert _comment(
+        api, artifact_id, exact="Body text", headers=OTHER_AUTH_HEADERS
+    ).status_code == 401
 
-    unlocked = {**AUTH_HEADERS, "X-Artifact-Password": "hunter2"}
+    unlocked = {**OTHER_AUTH_HEADERS, "X-Artifact-Password": "hunter2"}
     assert _comment(
         api, artifact_id, exact="Body text", headers=unlocked
     ).status_code == 201
