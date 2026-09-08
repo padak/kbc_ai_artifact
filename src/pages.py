@@ -5082,6 +5082,12 @@ _LOGIN_JS = """
   var pending = null;
   var pollTimer = null;
   var deviceDeadline = 0;
+  /* The stack's approval tab, when this script opened it. Kept so it can be
+     closed once the poll reports approval: the stack's approve form answers
+     with raw JSON and never sends anybody back, so without this the person
+     is left staring at {"status": "approved"} while this tab is already on
+     the project picker. */
+  var approvalWindow = null;
 
   /* Poll cadence, in seconds. The stack names the interval; these are what to
      do when it does not. RFC 8628 answers slow_down with "add five seconds",
@@ -5178,8 +5184,20 @@ _LOGIN_JS = """
       step("device");
       /* Opened from the click that started the sign-in, so it is not a popup
          the browser blocks. A blocked one is not fatal: the link below the
-         code does the same thing, and so does the plain URL under it. */
-      if (approval) { window.open(approval, "_blank", "noopener"); }
+         code does the same thing, and so does the plain URL under it.
+
+         Not "noopener": that flag would leave this page without a handle on
+         the tab, and the handle is what closes it after approval (see
+         closeApproval). The isolation noopener gave is kept by hand instead:
+         right after window.open the new window is still the same-origin
+         about:blank, so its opener can be nulled here, and once it navigates
+         to the stack it can no longer reach or redirect this tab. */
+      if (approval) {
+        approvalWindow = window.open(approval, "_blank");
+        if (approvalWindow) {
+          try { approvalWindow.opener = null; } catch (err) { /* already gone */ }
+        }
+      }
       schedulePoll(start, start.interval || DEFAULT_POLL_INTERVAL_S);
     } catch (err) {
       setError(err.message);
@@ -5252,11 +5270,36 @@ _LOGIN_JS = """
 
   /* ------------------------------------------------------------ project */
 
+  /* Close the approval tab this script opened, if it still can. close() is
+     one of the few things a page may do to a cross-origin window it opened
+     itself. Returns whether the tab is known to be gone: the fallback link and
+     a code typed into another browser both leave a tab this page never held,
+     and there the person is told to close it themselves. */
+  function closeApproval() {
+    var win = approvalWindow;
+    approvalWindow = null;
+    if (!win) { return false; }
+    try {
+      if (!win.closed) { win.close(); }
+      return win.closed;
+    } catch (err) {
+      return false;
+    }
+  }
+
   function signedIn(data) {
     stopPolling();
     pending = data.credential;
     var who = pending.user && (pending.user.email || pending.user.name);
     $("whoami").textContent = who ? "signed in as " + who : "";
+    var closed = closeApproval();
+    var note = $("approval-note");
+    if (note) {
+      note.textContent = closed
+        ? ""
+        : "You can close the Keboola tab; the approval has landed here.";
+      show(note, !closed);
+    }
     renderProjects(data.projects || [], data.projects_unavailable === true);
     step("project");
   }
@@ -5426,6 +5469,7 @@ it into the studio</a> instead — both end up in the same place.</p>
 <h2 class="label">which project</h2>
 <div class="card login-card">
 <p class="whoami" id="whoami"></p>
+<p class="hint" id="approval-note" hidden></p>
 <p>Artifacts are owned by a project, so pick the one you are publishing as.</p>
 <p class="hint">What this sign-in can reach was settled on Keboola's own
 screen a moment ago. This step only chooses which of those projects your

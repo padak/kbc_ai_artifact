@@ -655,7 +655,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.14.1 \
+  --git-branch v0.14.2 \
   --git-public
 ```
 

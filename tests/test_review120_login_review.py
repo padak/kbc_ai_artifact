@@ -763,4 +763,33 @@ class TestADevicePollSurvivesATransientFailure:
         source = pages._LOGIN_JS
         assert "function approvalUrl(raw)" in source
         assert "/^https:\\/\\//.test(String(raw" in source
-        assert 'window.open(approval, "_blank", "noopener")' in source
+        assert 'window.open(approval, "_blank")' in source
+
+    def test_the_approval_tab_is_kept_at_arms_length_but_closable(self) -> None:
+        """The tab must not be able to navigate this one, yet we must be able
+        to close it.
+
+        ``noopener`` gave the first and made the second impossible: the hub
+        held no reference to the tab, so after approval the person was left
+        looking at the stack's raw JSON answer. Opening without the flag and
+        nulling ``opener`` while the window is still the same-origin
+        ``about:blank`` keeps the isolation; ``close()`` is allowed on a window
+        this script opened even after it navigated cross-origin.
+        """
+        source = pages._LOGIN_JS
+        assert "approvalWindow = window.open(approval, \"_blank\")" in source
+        assert "approvalWindow.opener = null" in source
+        close_fn = source.split("function closeApproval()", 1)[1].split("\n  }", 1)[0]
+        assert "approvalWindow = null" in close_fn
+        assert "win.close()" in close_fn
+
+    def test_approval_is_closed_and_the_person_told_once_signed_in(self) -> None:
+        source = pages._LOGIN_JS
+        signed_in = source.split("function signedIn(data)", 1)[1].split("\n  }", 1)[0]
+        assert "closeApproval()" in signed_in
+        assert '$("approval-note")' in source
+        assert "You can close the Keboola tab" in source
+
+    def test_login_page_carries_the_approval_note_slot(self, api) -> None:
+        page = api.client.get("/login").text
+        assert 'id="approval-note"' in page
