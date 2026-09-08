@@ -2156,6 +2156,31 @@ def optional_caller(request: Request) -> Owner | None:
         return None
 
 
+#: ``request.state`` attribute under which :func:`caller_of` keeps the
+#: resolved identity for the rest of the request. A sentinel distinguishes
+#: "resolved to nobody" from "not resolved yet".
+_CALLER_STATE_ATTR = "artifact_hub_caller"
+_NO_CALLER = object()
+
+
+def caller_of(request: Request) -> Owner | None:
+    """:func:`optional_caller`, resolved at most once per request.
+
+    The reader gate (:func:`reader_allowed`) and the proposal-visibility check
+    (:func:`may_see`) both want to know who is asking, and each verification
+    is a live round-trip to the Keboola stack. Memoizing on ``request.state``
+    keeps that to one per request -- including the "no identity" answer, so a
+    rejected credential is not re-verified either. Request-local only: nothing
+    here outlives the request, so the live-verification contract is unchanged.
+    """
+    cached = getattr(request.state, _CALLER_STATE_ATTR, _NO_CALLER)
+    if cached is not _NO_CALLER:
+        return cached
+    caller = optional_caller(request)
+    setattr(request.state, _CALLER_STATE_ATTR, caller)
+    return caller
+
+
 def unlock_cookie_name(meta: ArtifactMeta) -> str:
     """Name of the unlock cookie for one artifact.
 
@@ -2190,18 +2215,36 @@ def password_scope(meta: ArtifactMeta) -> str:
 def reader_allowed(meta: ArtifactMeta, request: Request) -> bool:
     """True when the caller may read a (possibly password-protected) artifact.
 
+    Three ways past the gate, tried in this order:
+
+    1. the signed unlock cookie the HTML form sets -- a cheap HMAC, and a
+       reader who already unlocked must never be caught by the brute-force
+       throttle;
+    2. a *verified* credential of the owning project, in the management
+       headers. The password protects shared-link access; it was never a
+       boundary against the owner, who can ``clear_password`` at will and
+       keeps the canonical copy in their own Storage. Checked before the
+       password path so an owner carrying a stale ``X-Artifact-Password``
+       spends no PBKDF2, records no failure, and cannot be locked out by an
+       exhausted password budget. Another project, a proposal author or a
+       guest invitation gets nothing here; an unverifiable credential (bad
+       token, unreachable stack) is "no identity" and simply falls through.
+       Per request and stateless: no unlock cookie is minted;
+    3. the password itself in ``X-Artifact-Password``.
+
     Raises ``HTTPException`` 429 when this client has burnt its hourly budget
     of failed password attempts on this artifact — a wrong password is cheap
     to send and expensive (PBKDF2) to check.
     """
     if not meta.password:
         return True
-    # The cookie is checked first: it is a cheap HMAC, and a reader who
-    # already unlocked must never be caught by the brute-force throttle.
     cookie = request.cookies.get(unlock_cookie_name(meta))
     if cookie and request.app.state.signer.check(
         meta.id, cookie, settings.unlock_cookie_max_age_s, password_scope(meta)
     ):
+        return True
+    caller = caller_of(request)
+    if caller is not None and caller.key == meta.owner_key:
         return True
     supplied = request.headers.get("x-artifact-password")
     if not supplied:
@@ -2329,7 +2372,10 @@ def _password_required() -> JSONResponse:
         status_code=401,
         content={
             "error": "password required",
-            "hint": "send X-Artifact-Password header",
+            "hint": (
+                "send the X-Artifact-Password header, or the credential of the "
+                "owning Keboola project in the usual auth headers"
+            ),
         },
     )
 
@@ -4118,6 +4164,13 @@ def context(request: Request) -> dict:
             ),
             "token_storage": "never persisted; used only during the request",
             "reader_password_header": "X-Artifact-Password",
+            "reader_password_owner_bypass": (
+                "a verified credential of the owning project (any shape "
+                "accepted on the non-destructive owner routes) reads a "
+                "password-protected artifact without the password, on every "
+                "reader route; other projects, proposal authors and guest "
+                "invitations still need it, and no unlock cookie is minted"
+            ),
             "guest_header": (
                 "X-Artifact-Guest: '{invitation_id}.{secret}' — an alternative "
                 "to the storage token on the four comment-write routes and on "
@@ -4733,9 +4786,11 @@ def context(request: Request) -> dict:
                 "owner. Every other /api/* route takes the internal id only."
             ),
             "comment_password_gate": (
-                "On a password-protected artifact, writing a comment needs "
-                "the same X-Artifact-Password header (or unlock cookie) that "
-                "reading it does — for guests and for the owner alike."
+                "On a password-protected artifact, writing a comment clears "
+                "the same gate as reading it: the X-Artifact-Password header "
+                "or unlock cookie for guests and other projects, while a "
+                "verified credential of the owning project passes without "
+                "the password."
             ),
             "comment_rate_limit": (
                 f"{settings.max_comments_per_day} comments and replies per "
@@ -6546,7 +6601,7 @@ def read_version(
     envelope = request.app.state.store.get_version(meta.id, version)
     if envelope is None:
         return _version_not_found(public_id, version)
-    if not may_see(meta, envelope, optional_caller(request)):
+    if not may_see(meta, envelope, caller_of(request)):
         return _proposal_hidden(public_id, version)
     _record_view(request.app, meta.id, "version", request=request)
     return _framed(request, meta, envelope, pinned=True)
@@ -6792,7 +6847,7 @@ def read_diff(
             return _version_not_found(public_id, number)
         if envelope.status == STATUS_PROPOSED:
             if caller is None:
-                caller = optional_caller(request)
+                caller = caller_of(request)
             if not may_see(meta, envelope, caller):
                 return _proposal_hidden(public_id, number)
         envelopes.append(envelope)
@@ -7159,7 +7214,7 @@ def export_vault(
     # Proposals are moderated content: the public vault must not leak them.
     # Only the owner or a proposal's author (authenticated via the standard
     # token headers) gets them included in their download.
-    caller = optional_caller(request)
+    caller = caller_of(request)
     limit = settings.export_max_bytes
 
     # Refuse an oversized artifact *before* rendering, and before the load
@@ -9591,11 +9646,13 @@ def _comment_gate(request: Request, meta: ArtifactMeta) -> JSONResponse | None:
     the hole — a guest credential alone let somebody read and write the whole
     discussion of a protected document.
 
-    The policy is exactly the read policy of ``/a/{id}/raw``: the password (or
-    an unlock cookie) is required from *everyone*, with no exemption for a
-    token-authenticated owner, because the read path grants none either. It
-    answers the read path's 401, and ``reader_allowed`` itself raises the
-    read path's 429 once the failed-attempt budget is spent.
+    The policy is exactly the read policy of ``/a/{id}/raw`` -- the same
+    :func:`reader_allowed`, so the two cannot drift: the password (or an
+    unlock cookie) is required from everyone who is not the owning project,
+    guests included, and a verified credential of the owning project passes
+    without it just as it does when reading (since 0.14.1). It answers the
+    read path's 401, and ``reader_allowed`` itself raises the read path's 429
+    once the failed-attempt budget is spent.
     """
     if reader_allowed(meta, request):
         return None

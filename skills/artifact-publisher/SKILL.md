@@ -459,6 +459,16 @@ Add `"password": "secret"` to any of the publish bodies above (create or
 update). Human visitors get an unlock form in the browser; machine clients
 authenticate by sending the header `X-Artifact-Password: secret` on reads.
 
+You do not need the password for your **own** artifacts: a read that carries
+your usual auth headers (Storage token, session or personal access token of
+the owning project) passes the gate on every reader route, exports included.
+The password protects whoever holds the link; the owning project can remove
+it anyway. Another project's credential, a proposal author's and a guest
+invitation do not bypass it, proposal visibility rules still apply, and the
+bypass sets no unlock cookie — a browser tab without auth headers still sees
+the form. If the stack cannot verify your credential, the request simply
+falls back to the password path.
+
 ### Open the artifact to contributions
 
 Add `"accept_versions": true` to a publish or update body to let **other**

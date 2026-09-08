@@ -406,7 +406,9 @@ hub -X DELETE "$HUB/api/artifacts/<id>"
 
 Add `"password": "secret"` to any publish/update body to protect the
 artifact; readers then need `X-Artifact-Password: secret` (machines) or the
-web unlock form (browsers).
+web unlock form (browsers). The owning project does not: a request carrying a
+verified credential of that project in the usual auth headers reads the
+artifact without the password (see *Security model*).
 
 Publishing from a private git repo needs a `git_token` (a PAT for the git
 host), which is transient — see *Security model* below. Never splice it into
@@ -653,7 +655,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.14.0 \
+  --git-branch v0.14.1 \
   --git-public
 ```
 
@@ -777,6 +779,22 @@ the serving envelope, and unlocking one sets a signed cookie (via
 to the current password's own hash, so a cookie signed under a since-changed
 password no longer verifies, and an unlock on one artifact does not unlock
 another.
+
+**The password protects shared-link access, not the artifact from its owner.**
+Whoever holds the link needs the password too. The owning project does not: a
+request carrying a verified credential of that project — any shape the
+non-destructive owner routes accept, a read-only Storage token included —
+passes the reader gate on every reader route, exports included. Nothing new is
+granted by this: the owner can already remove the password with
+`clear_password` and keeps the canonical copy in their own Storage. The check
+runs after the unlock cookie and before the password path, so an owner
+carrying a stale password spends no PBKDF2, records no failure and cannot be
+locked out by an exhausted password budget; it is per request and mints no
+unlock cookie, so a plain browser visit by the owner, without auth headers,
+still meets the unlock form. Another project, a proposal author and a guest
+invitation get nothing from it, and a credential the stack cannot verify is
+simply "no identity": the request falls through to the password path and ends
+in the ordinary locked answer, never a 5xx.
 
 **Ownership is the project; destructive authority is configurable.**
 Every owner-only route (update, trash, restore, purge, rotate-link,

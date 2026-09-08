@@ -716,7 +716,9 @@ vault you already have.
 | `GET /llms.txt` | llmstxt.org map of the hub for an assistant handed a share link (`text/markdown`) |
 
 If password-protected, send `X-Artifact-Password: <password>` on these; a
-browser gets an HTML unlock form instead. `/a/{id}` and `/a/{id}/v/{n}` serve
+browser gets an HTML unlock form instead. Your own auth headers are enough on
+an artifact your project owns — the password gates the shared link, not the
+owner; other projects and guests still need it. `/a/{id}` and `/a/{id}/v/{n}` serve
 the document inside a sandboxed iframe rather than the hub's own origin — use
 `/a/{id}/raw` when you need the exact bytes with nothing to unwrap.
 
