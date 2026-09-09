@@ -169,10 +169,11 @@ SKILL_PATH = (
 )
 
 #: Path of the ready-to-install Claude Code subagent definition, served at
-#: ``/agent``. Resolved exactly like :data:`SKILL_PATH`.
-AGENT_PATH = (
-    Path(__file__).resolve().parent.parent / "skills/artifact-hub-agent/AGENT.md"
-)
+#: ``/agent``. Resolved exactly like :data:`SKILL_PATH`. It lives in
+#: ``agents/`` at the repository root because the repository is also a Claude
+#: Code plugin (see ``.claude-plugin/``), and the plugin loader discovers
+#: agents from that directory only; the release asset is still ``AGENT.md``.
+AGENT_PATH = Path(__file__).resolve().parent.parent / "agents/artifact-hub.md"
 
 #: Path of the repository changelog, served at ``/changelog`` (rendered) and
 #: ``/changelog.md`` (raw). Resolved exactly like :data:`SKILL_PATH`. Read
@@ -5259,7 +5260,7 @@ def _documents_manifest(base: str) -> dict[str, Any]:
     response_class=MarkdownResponse,
     summary="Ready-to-install Claude Code subagent definition",
     description=(
-        "Serves skills/artifact-hub-agent/AGENT.md verbatim as text/markdown: "
+        "Serves agents/artifact-hub.md verbatim as text/markdown: "
         "a self-contained Claude Code subagent definition (YAML front matter "
         "plus instructions) that knows how to publish, update and moderate "
         "artifacts on this hub. Install it with:\n\n"

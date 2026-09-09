@@ -227,16 +227,38 @@ class TestReleaseVersionParity:
         assert match is not None, "no `## X.Y.Z` heading in CHANGELOG.md"
         return "v" + match.group(1)
 
+    @staticmethod
+    def _plugin_tag() -> str:
+        import json
+
+        manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
+        return "v" + str(manifest["version"])
+
+    @staticmethod
+    def _marketplace_tag() -> str:
+        import json
+
+        manifest = json.loads(
+            (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text()
+        )
+        (entry,) = manifest["plugins"]
+        return "v" + str(entry["version"])
+
     def test_version_parity_of_readme_pyproject_and_changelog(self) -> None:
         readme = self._readme_deploy_tag()
         pyproject = self._pyproject_tag()
         changelog = self._changelog_tag()
-        assert readme == pyproject == changelog, (
+        plugin = self._plugin_tag()
+        marketplace = self._marketplace_tag()
+        assert readme == pyproject == changelog == plugin == marketplace, (
             "the release tag in README's production deploy command, "
-            "[project].version in pyproject.toml and the newest CHANGELOG.md "
-            f"heading must agree: README={readme} pyproject={pyproject} "
-            f"changelog={changelog}. Following a stale README deploys code "
-            "older than the release it claims to install."
+            "[project].version in pyproject.toml, the newest CHANGELOG.md "
+            "heading and the version in both Claude Code plugin manifests "
+            f"must agree: README={readme} pyproject={pyproject} "
+            f"changelog={changelog} plugin.json={plugin} "
+            f"marketplace.json={marketplace}. A stale README deploys code "
+            "older than the release it claims to install; a stale manifest "
+            "means no installed plugin ever picks the release up."
         )
 
     def test_version_parity_sources_are_each_found_exactly_once(self) -> None:
@@ -245,6 +267,8 @@ class TestReleaseVersionParity:
             self._readme_deploy_tag(),
             self._pyproject_tag(),
             self._changelog_tag(),
+            self._plugin_tag(),
+            self._marketplace_tag(),
         ):
             assert re.fullmatch(r"v\d+\.\d+\.\d+", value), value
 

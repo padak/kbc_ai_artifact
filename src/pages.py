@@ -2336,7 +2336,13 @@ def landing_page(
 
     agents_term = _term(
         "FOR AGENTS",
-        '<span class="c"># Install the ready-made Claude Code subagent</span>\n'
+        '<span class="c"># Install as a Claude Code plugin (keeps itself current)</span>\n'
+        '<span class="p">$</span> claude plugin marketplace add '
+        '<span class="s">padak/kbc_ai_artifact</span>\n'
+        '<span class="p">$</span> claude plugin install '
+        '<span class="s">artifact-hub@kbc-artifact-hub</span>\n'
+        "\n"
+        '<span class="c"># Or copy the subagent this hub runs (no updates)</span>\n'
         f'<span class="p">$</span> install -d ~/.claude/agents &amp;&amp; curl -fsSL '
         f'<span class="s">{base}/agent</span> -o <span class="k">~/.claude/agents/artifact-hub.md</span>\n'
         "\n"

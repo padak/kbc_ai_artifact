@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "kbc-artifact-hub",
+  "version": "1.0.0",
+  "description": "KBC Artifact Hub: the agent and skill that publish, version, review and moderate documents on a hub",
+  "owner": {
+    "name": "padak",
+    "url": "https://github.com/padak"
+  },
+  "plugins": [
+    {
+      "name": "artifact-hub",
+      "version": "0.15.0",
+      "source": "./",
+      "description": "Publish, version, review and moderate HTML/Markdown documents on a KBC Artifact Hub: a Claude Code subagent plus a SKILL.md for any agent runtime",
+      "category": "productivity"
+    }
+  ]
+}
