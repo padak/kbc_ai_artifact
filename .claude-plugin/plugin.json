@@ -1,0 +1,20 @@
+{
+  "name": "artifact-hub",
+  "version": "0.15.0",
+  "description": "Publish, version, review and moderate HTML/Markdown documents on a KBC Artifact Hub: a Claude Code subagent plus a SKILL.md for any agent runtime",
+  "author": {
+    "name": "padak",
+    "url": "https://github.com/padak"
+  },
+  "homepage": "https://github.com/padak/kbc_ai_artifact",
+  "repository": "https://github.com/padak/kbc_ai_artifact",
+  "keywords": [
+    "keboola",
+    "artifact-hub",
+    "publishing",
+    "review"
+  ],
+  "skills": [
+    "./skills/artifact-publisher"
+  ]
+}

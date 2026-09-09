@@ -4,6 +4,23 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.15.0 — Install the agent as a Claude Code plugin (2026-09-09)
+
+- This repository is now a Claude Code marketplace. Two commands,
+  `claude plugin marketplace add padak/kbc_ai_artifact` and
+  `claude plugin install artifact-hub@kbc-artifact-hub`, install the
+  `artifact-hub` subagent and the `artifact-publisher` skill into every
+  project, and Claude Code keeps them current on its own after each release.
+  The attested-release install path stays for anyone who wants provenance
+  rather than convenience.
+- The agent definition moved to `agents/artifact-hub.md`, where the plugin
+  loader looks for it; `/agent` and the `AGENT.md` release asset are
+  unchanged. The plugin's version is the project's version, and the release
+  gate refuses a tag whose manifests lag behind.
+- The landing page and the README now say how to install, and where to keep
+  `HUB_URL`, `KBC_STACK` and `KBC_TOKEN` so an agent never needs a token
+  pasted into a chat.
+
 ## 0.14.2 — The Keboola approval tab closes itself (2026-09-08)
 
 - Signing in with the short code opened a Keboola tab that, once you

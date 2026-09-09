@@ -65,8 +65,12 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           PKG="v$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
           LOG="v$(grep -m1 -E '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | sed -E 's/^## ([0-9.]+).*/\1/')"
-          echo "tag=$TAG pyproject=$PKG changelog=$LOG"
-          test "$TAG" = "$PKG" -a "$TAG" = "$LOG"
+          # The Claude Code plugin manifests: an installed plugin only updates
+          # when this version moves, so a release that forgets them is invisible.
+          PLUGIN="v$(jq -r .version .claude-plugin/plugin.json)"
+          MARKET="v$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)"
+          echo "tag=$TAG pyproject=$PKG changelog=$LOG plugin=$PLUGIN marketplace=$MARKET"
+          test "$TAG" = "$PKG" -a "$TAG" = "$LOG" -a "$TAG" = "$PLUGIN" -a "$TAG" = "$MARKET"
 
       - name: Test suite
         run: uv run pytest tests/ -q
@@ -84,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp skills/artifact-hub-agent/AGENT.md dist/AGENT.md
+          cp agents/artifact-hub.md dist/AGENT.md
           cp skills/artifact-publisher/SKILL.md dist/SKILL.md
           (cd dist && sha256sum AGENT.md SKILL.md > SHA256SUMS && cat SHA256SUMS)
 

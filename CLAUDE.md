@@ -211,7 +211,11 @@ and keep the README/comment cross-references intact.
 - The pre-commit checks in this file are pre-*PR* checks too: `uv run pytest
   tests/ -q` fully green and `python3.11 -m py_compile src/*.py` clean before
   you open it.
-- A release still means bumping `[project].version`, tagging the **merge
+- A release still means bumping `[project].version` **and the same version
+  in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`**
+  (the repository is a Claude Code marketplace; an installed plugin only
+  updates when that version moves, and the release gate and
+  `tests/test_review100_release_controls.py` refuse a mismatch), tagging the **merge
   commit on `main`**, cutting the GitHub release and deploying — in that
   order, after the PR is merged. Never tag a branch.
 

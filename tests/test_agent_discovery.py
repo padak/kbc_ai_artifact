@@ -203,3 +203,12 @@ def test_landing_page_mentions_llms_txt_for_agents(api: Api) -> None:
     page = api.client.get("/").text
     # Card, hero link row, the "for agents" section and the footer.
     assert page.count(f'href="{BASE}/llms.txt"') == 4
+
+
+def test_landing_page_shows_the_plugin_install_commands(api: Api) -> None:
+    import re
+
+    # The terminal block colors tokens with <span>s; compare what a reader sees.
+    text = re.sub(r"<[^>]+>", "", api.client.get("/").text)
+    assert "claude plugin marketplace add padak/kbc_ai_artifact" in text
+    assert "claude plugin install artifact-hub@kbc-artifact-hub" in text

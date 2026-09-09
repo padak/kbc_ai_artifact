@@ -371,7 +371,7 @@ def test_skill_returns_markdown(api: Api) -> None:
 
 
 def test_agent_serves_the_agent_definition_file(api: Api) -> None:
-    """/agent must serve skills/artifact-hub-agent/AGENT.md verbatim.
+    """/agent must serve agents/artifact-hub.md verbatim.
 
     The expectation is read from disk rather than hard-coded so the test keeps
     passing while the definition itself is rewritten.

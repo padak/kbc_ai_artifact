@@ -519,13 +519,47 @@ artifact is ever placed in it.
 
 ## Install the agent / skill
 
-Two files teach an AI agent this API: the Claude Code subagent (`AGENT.md`,
-self-contained) and the skill (`SKILL.md`). The hub serves the copies it runs
-at `/agent` and `/skill` — those are for *reading*. **Install from the
-release**, whose copies are attested: `gh attestation verify` proves a file
-was built by this repository's release workflow from the tagged commit, which
-no download from the hub itself can prove. The installed subagent grants
-Bash/Read/WebFetch authority, so that proof is the point.
+Two files teach an AI agent this API: the Claude Code subagent
+(`agents/artifact-hub.md`, released as `AGENT.md`, self-contained) and the
+skill (`skills/artifact-publisher/SKILL.md`). The hub serves the copies it
+runs at `/agent` and `/skill` — those are for *reading*. There are two ways
+to install them.
+
+### As a Claude Code plugin (updates itself)
+
+This repository is a Claude Code marketplace (`.claude-plugin/`) carrying one
+plugin, `artifact-hub`, with the subagent and the skill:
+
+```bash
+claude plugin marketplace add padak/kbc_ai_artifact
+claude plugin install artifact-hub@kbc-artifact-hub
+```
+
+Restart Claude Code once; the `artifact-hub` subagent and the
+`artifact-publisher` skill are then available in every project. Claude Code
+refreshes marketplaces and updates installed plugins in the background after a
+session starts, so each release of this repository reaches you on its own
+(the toggle is in `/plugin`, Marketplaces tab). The plugin's version is the
+project's version — CI refuses a release tag whose manifests lag behind.
+
+Give the agent its credentials once, in the `env` block of
+`~/.claude/settings.json`, and you never paste them into a chat: `HUB_URL`
+(this hub's address), `KBC_STACK` (`us`, `eu`, … or a full stack URL) and
+`KBC_TOKEN` (a Storage API token of your project — make a dedicated one so it
+can be revoked alone). Claude Code exports that block into every Bash call,
+subagents included. The token is stored in plain text there; the macOS
+Keychain plus an `export` in your shell profile is the stricter alternative.
+
+Trust model of this path: you trust the integrity of this GitHub repository
+and the tag Claude Code clones. The path below gives cryptographic provenance
+instead.
+
+### From the attested release (provenance)
+
+**Install from the release**, whose copies are attested: `gh attestation
+verify` proves a file was built by this repository's release workflow from the
+tagged commit, which no download from the hub itself can prove. The installed
+subagent grants Bash/Read/WebFetch authority, so that proof is the point.
 
 ```bash
 V=$(curl -fsSL "$HUB/health" | jq -r .version)          # the release this hub runs
@@ -655,7 +689,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.14.2 \
+  --git-branch v0.15.0 \
   --git-public
 ```
 

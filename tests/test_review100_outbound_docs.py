@@ -13,7 +13,7 @@ and src/webhooks.py are owned by other agents in this review round):
   pin that the documentation actually says so, in the places a contributor or
   operator would look.
 - DOC-100-002: none of the private-git curl examples in README.md,
-  skills/artifact-hub-agent/AGENT.md or skills/artifact-publisher/SKILL.md may
+  agents/artifact-hub.md or skills/artifact-publisher/SKILL.md may
   put a git PAT into any process's argv (jq ``--arg``, or the token spliced
   directly into a curl ``-d``/``--data`` body).
 - SEC-075-011: any Storage token that resolves to the artifact's owning
@@ -233,7 +233,7 @@ _PAT_PREFIXES = ("ghp_", "github_pat_", "glpat-")
 
 _DOC_PATHS = (
     "README.md",
-    "skills/artifact-hub-agent/AGENT.md",
+    "agents/artifact-hub.md",
     "skills/artifact-publisher/SKILL.md",
 )
 
