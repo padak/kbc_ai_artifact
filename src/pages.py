@@ -5035,9 +5035,7 @@ main { max-width: 44rem; }
   width: 100%; padding: .8rem .9rem; border: 1px solid var(--line);
   border-radius: var(--radius); background: var(--panel); color: var(--ink);
   cursor: pointer; font: inherit; }
-.method:hover:not(:disabled) { border-color: var(--accent);
-  background: var(--accent-soft); }
-.method:disabled { opacity: .55; cursor: not-allowed; }
+.method:hover { border-color: var(--accent); background: var(--accent-soft); }
 .method-mark { font-family: var(--font-mono); color: var(--accent);
   flex: none; padding-top: .1rem; }
 .method-body { min-width: 0; }
@@ -5402,12 +5400,17 @@ def login_page(
     )
     options += '<option value="__custom__">custom URL…</option>'
 
-    pkce_attrs = "" if pkce_available else " disabled"
-    pkce_note = (
-        "One hop through your browser. Nothing to type."
+    pkce_button = (
+        """<button type="button" class="method" id="m-pkce">
+<span class="method-mark">&rarr;</span>
+<span class="method-body">
+<span class="method-name">Sign in with your browser</span>
+<span class="method-note">One hop through your browser. Nothing to
+type.</span>
+</span>
+</button>"""
         if pkce_available
-        else "Needs a hub on http://127.0.0.1 — a stack accepts no other "
-        "callback for this flow."
+        else ""
     )
 
     # Hoisted out of the f-string: the JSON may contain a backslash escape,
@@ -5435,13 +5438,7 @@ place a pasted token does — a credential held in this browser tab only.</p>
   placeholder="https://connection.keboola.com">
 </div>
 <div class="methods">
-<button type="button" class="method" id="m-pkce"{pkce_attrs}>
-<span class="method-mark">&rarr;</span>
-<span class="method-body">
-<span class="method-name">Sign in with your browser</span>
-<span class="method-note">{html.escape(pkce_note)}</span>
-</span>
-</button>
+{pkce_button}
 <button type="button" class="method" id="m-device">
 <span class="method-mark">#</span>
 <span class="method-body">
