@@ -4,6 +4,15 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.15.1 — The agent trusts your configured token, not its memory (2026-09-09)
+
+- When the stack refuses a token, the agent now re-reads `KBC_TOKEN` from the
+  environment before it offers a sign-in or asks you for anything. A token it
+  remembered from earlier in the conversation may have been rotated and is
+  never the source of truth; the one you configured is. It also says plainly
+  when a session predates the variable and needs a restart to see it, instead
+  of starting a device sign-in nobody asked for. Same rule in the SKILL.md.
+
 ## 0.15.0 — Install the agent as a Claude Code plugin (2026-09-09)
 
 - This repository is now a Claude Code marketplace. Two commands,

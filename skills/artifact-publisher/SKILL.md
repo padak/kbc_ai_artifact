@@ -125,6 +125,17 @@ for one call, prefix the environment: `KBC_TOKEN="$CONTRIBUTOR_TOKEN" hub …`.
 only ever belongs in a request header — `X-StorageApi-Token` for a Storage API
 token, `Authorization: Bearer` for a sign-in (see below).
 
+**Token rejected? Re-read the environment first.** A 401 from the hub or the
+stack means the token you *sent* was refused, not that the user has no valid
+token. Check `$KBC_TOKEN` again in the shell you run commands in and use it if
+it is set, even when it differs from a token you remembered from earlier in
+the conversation — a remembered token may have been rotated and is never the
+source of truth; the environment is. Only when the environment has nothing
+offer the sign-in below or ask the user to export a token. (Claude Code puts
+the `env` block of `~/.claude/settings.json` into every command's environment;
+a session started before the variable was added does not see it until it is
+restarted — say that, rather than starting a sign-in nobody asked for.)
+
 **Ownership is the project, not the individual token.** The hub authorizes
 owner-only operations (update, trash, restore, purge, rotate-link,
 invitations, stats, promote, head) by checking that a token verifies to the

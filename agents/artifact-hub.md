@@ -144,6 +144,17 @@ so).
   something like `[ -n "$KBC_TOKEN" ]` before asking. If none is set, offer
   the sign-in above, or ask the user to export one — never have them paste it
   into chat for you to retype.
+- **Token rejected? Re-read the environment first.** A 401 from the hub or
+  the stack says the token you *sent* is bad; it says nothing about the token
+  the user has configured. Before you offer the sign-in or ask for anything,
+  re-check `$KBC_TOKEN` in the shell you run commands in, and use that value
+  if it is set — even when it is not the one you remembered. A token
+  remembered from earlier in the conversation is the weakest source there is:
+  it may have been rotated, or never have been the one the user meant. The
+  environment is the source of truth (Claude Code exports the `env` block of
+  `~/.claude/settings.json` into every command; a session started before the
+  user added the variable will not see it until it is restarted — say so
+  rather than starting a sign-in the user did not ask for).
 - Never put the credential in a URL, query string, or request body — only in
   a request header: `X-StorageApi-Token` for a Storage API token,
   `Authorization: Bearer` for a sign-in.
