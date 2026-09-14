@@ -116,6 +116,14 @@ def test_components_rules(settings):
     assert "64" not in _err(good(), small)[0]["message"] and _err(good(), small)[0]["path"] == "/bundle/components/0"
 
 
+def test_component_css_may_not_close_the_style_block(settings):
+    # The starter splices this css verbatim into a <style> block, so a closing
+    # tag inside it would end the block and let the rest render as markup.
+    raw = good(); raw["components"][0]["css"] = ".x{}</STYLE ><script>1</script>"
+    assert _err(raw, settings) == [{"path": "/bundle/components/0/css",
+                                    "message": "css may not contain '</style'"}]
+
+
 def test_charts_diagrams_fonts(settings):
     raw = good(); raw["charts"] = {"library": "d3"}
     assert _err(raw, settings) == [{"path": "/bundle/charts/library",

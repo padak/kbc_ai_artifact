@@ -47,6 +47,12 @@ ROLE_TYPES: dict[str, str] = {
     "font_body": "fontFamily", "font_heading": "fontFamily", "font_mono": "fontFamily",
     "radius": "dimension", "chart_palette": "color",
 }
+#: A closing ``</style`` inside a component's css. The starter splices css
+#: verbatim into one ``<style>`` block, so this would end the block early and
+#: let whatever follows render as markup -- rejected at submit time, where the
+#: author can still fix it, rather than escaped at render time in one of the
+#: several places the css is emitted.
+STYLE_CLOSE_RE = re.compile(r"</\s*style", re.IGNORECASE)
 CHART_LIBRARIES = ("chart.js", "inline-svg", "none")
 DIAGRAM_LIBRARIES = ("mermaid", "none")
 
@@ -215,6 +221,8 @@ def validate_bundle(raw: Any, *, settings: Settings) -> tuple[dict, list[dict[st
         if not isinstance(css, str):
             findings.append(_f(f"{p}/css", "must be a string"))
             css = ""
+        elif STYLE_CLOSE_RE.search(css):
+            findings.append(_f(f"{p}/css", "css may not contain '</style'"))
         if len(html_.encode("utf-8")) + len(css.encode("utf-8")) > settings.ds_max_component_bytes:
             findings.append(_f(p, f"html + css exceed {settings.ds_max_component_bytes} bytes"))
         norm_comps.append({
