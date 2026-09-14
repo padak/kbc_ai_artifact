@@ -9,6 +9,10 @@ import ipaddress
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard, see token_limits()
+    from src.tokens import TokenLimits
 
 REQUIRED_ENV = ["HUB_STORAGE_TOKEN", "HUB_STACK_URL", "HUB_SECRET_KEY"]
 
@@ -97,6 +101,13 @@ def _token_ids_env(name: str) -> tuple[str, ...]:
         if entry and entry not in seen:
             seen.append(entry)
     return tuple(seen)
+
+
+def _hosts_env(name: str, default: str) -> tuple[str, ...]:
+    """Parse a comma-separated host allowlist, order-preserving, blanks dropped."""
+    raw = os.environ.get(name)
+    source = raw if raw is not None and raw.strip() else default
+    return tuple(h.strip() for h in source.split(",") if h.strip())
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -339,6 +350,73 @@ class Settings:
     # often one capability-URL holder can ask for that work.
     max_exports_per_hour: int = 20
 
+    # --- design systems (spec 2026-09-14, Key decision 12) ---------------
+    # Every design-system limit is a setting so no number lives in a route.
+    # Largest normalised bundle one version may hold (HUB_DS_MAX_BUNDLE_BYTES).
+    ds_max_bundle_bytes: int = 2 * 1024 * 1024
+    # Design systems one project may own at once (HUB_DS_MAX_PER_PROJECT).
+    ds_max_per_project: int = 20
+    # Versions one design system may hold; an append past this is 409, never a
+    # prune -- a version is immutable and only an explicit delete removes one
+    # (HUB_DS_MAX_VERSIONS).
+    ds_max_versions: int = 50
+    # Per-owner cap on submitted versions per rolling day
+    # (HUB_DS_MAX_VERSIONS_PER_DAY).
+    ds_max_versions_per_day: int = 20
+    # Token leaves one document may declare (HUB_DS_MAX_TOKENS).
+    ds_max_tokens: int = 5000
+    # Deepest DTCG group nesting accepted (HUB_DS_MAX_TOKEN_DEPTH).
+    ds_max_token_depth: int = 16
+    # Longest {alias} chain followed before the document is rejected
+    # (HUB_DS_MAX_ALIAS_DEPTH).
+    ds_max_alias_depth: int = 32
+    # Components one bundle may carry (HUB_DS_MAX_COMPONENTS).
+    ds_max_components: int = 100
+    # html + css of a single component (HUB_DS_MAX_COMPONENT_BYTES).
+    ds_max_component_bytes: int = 64 * 1024
+    # The Markdown guide an agent reads (HUB_DS_MAX_GUIDANCE_BYTES).
+    ds_max_guidance_bytes: int = 256 * 1024
+    # Colors the chart_palette role may list (HUB_DS_MAX_PALETTE).
+    ds_max_palette: int = 12
+    # Stylesheet links one bundle may declare (HUB_DS_MAX_FONT_LINKS).
+    ds_max_font_links: int = 4
+    # Hosts a font link may point at (HUB_DS_FONT_HOSTS, comma-separated). A
+    # bundle emits no user markup, only <link> elements at these hosts, so this
+    # is the whole allowlist for third-party resources a design system pulls.
+    ds_font_hosts: tuple[str, ...] = ("fonts.googleapis.com",)
+    # Trimmed length of a design system's name (HUB_DS_MAX_NAME_CHARS).
+    ds_max_name_chars: int = 80
+    # Trimmed length of a description, component blurb or chart/diagram note
+    # (HUB_DS_MAX_DESCRIPTION_CHARS).
+    ds_max_description_chars: int = 500
+    # Trimmed length of a version note (HUB_DS_MAX_NOTE_CHARS).
+    ds_max_note_chars: int = 500
+    # Derived CSS/starter renders kept in the bounded LRU, keyed by
+    # (id, version, mode) (HUB_DS_DERIVED_CACHE_ENTRIES).
+    ds_derived_cache_entries: int = 64
+
+    @property
+    def ds_content_request_bytes(self) -> int:
+        """Inbound body ceiling for the routes that carry a design bundle.
+
+        Derived like :attr:`max_content_request_bytes`, so it can never drift
+        below the bundle the hub already promises to accept.
+        """
+        return self.ds_max_bundle_bytes + REQUEST_ENVELOPE_SLACK_BYTES
+
+    def token_limits(self) -> "TokenLimits":
+        """The three bounds ``src.tokens`` validates a document under."""
+        # Local import: src.tokens is a leaf module, but config is imported by
+        # everything, and keeping the dependency one-directional at import time
+        # means no module cycle can ever form here.
+        from src.tokens import TokenLimits
+
+        return TokenLimits(
+            max_depth=self.ds_max_token_depth,
+            max_tokens=self.ds_max_tokens,
+            max_alias_depth=self.ds_max_alias_depth,
+        )
+
     @property
     def max_content_request_bytes(self) -> int:
         """Inbound body ceiling for the routes that carry a document.
@@ -448,6 +526,23 @@ def load_settings() -> Settings:
         ),
         export_max_bytes=_int_env("HUB_EXPORT_MAX_BYTES", 64 * 1024 * 1024),
         max_exports_per_hour=_int_env("HUB_MAX_EXPORTS_PER_HOUR", 20),
+        ds_max_bundle_bytes=_int_env("HUB_DS_MAX_BUNDLE_BYTES", 2 * 1024 * 1024),
+        ds_max_per_project=_int_env("HUB_DS_MAX_PER_PROJECT", 20),
+        ds_max_versions=_int_env("HUB_DS_MAX_VERSIONS", 50),
+        ds_max_versions_per_day=_int_env("HUB_DS_MAX_VERSIONS_PER_DAY", 20),
+        ds_max_tokens=_int_env("HUB_DS_MAX_TOKENS", 5000),
+        ds_max_token_depth=_int_env("HUB_DS_MAX_TOKEN_DEPTH", 16),
+        ds_max_alias_depth=_int_env("HUB_DS_MAX_ALIAS_DEPTH", 32),
+        ds_max_components=_int_env("HUB_DS_MAX_COMPONENTS", 100),
+        ds_max_component_bytes=_int_env("HUB_DS_MAX_COMPONENT_BYTES", 64 * 1024),
+        ds_max_guidance_bytes=_int_env("HUB_DS_MAX_GUIDANCE_BYTES", 256 * 1024),
+        ds_max_palette=_int_env("HUB_DS_MAX_PALETTE", 12),
+        ds_max_font_links=_int_env("HUB_DS_MAX_FONT_LINKS", 4),
+        ds_font_hosts=_hosts_env("HUB_DS_FONT_HOSTS", "fonts.googleapis.com"),
+        ds_max_name_chars=_int_env("HUB_DS_MAX_NAME_CHARS", 80),
+        ds_max_description_chars=_int_env("HUB_DS_MAX_DESCRIPTION_CHARS", 500),
+        ds_max_note_chars=_int_env("HUB_DS_MAX_NOTE_CHARS", 500),
+        ds_derived_cache_entries=_int_env("HUB_DS_DERIVED_CACHE_ENTRIES", 64),
         login_client_id=(
             os.environ.get("HUB_LOGIN_CLIENT_ID", "").strip() or "kbc-artifact-hub"
         ),
