@@ -2,9 +2,11 @@ import pytest
 
 from src.tokens import (
     EMITTED_TYPES,
+    TokenError,
     TokenLimits,
     TokenSet,
     TokenValidationError,
+    _scalar,
     concrete_value,
     css_value,
     to_css,
@@ -261,3 +263,99 @@ def test_validate_document_returns_warnings_for_preserved_types():
         {"c": {"$value": "#111"}}, limits=LIMITS)
     assert dark is not None
     assert warnings == [{"path": "/tokens/g", "message": "type 'gradient' is preserved but not emitted as CSS"}]
+
+
+# --- review fix round 1 ---------------------------------------------------
+
+_TYPO = {"fontFamily": "Inter", "fontSize": "2rem", "fontWeight": 700,
+         "lineHeight": 1.2, "letterSpacing": "0"}
+
+
+def test_mutually_aliasing_typography_subfields_are_a_finding_not_a_crash():
+    # Before the fix this recursed forever (RecursionError escaping as a 500).
+    doc = {"a": {"$type": "typography", "$value": {**_TYPO, "fontSize": "{b}"}},
+           "b": {"$type": "typography", "$value": {**_TYPO, "fontSize": "{a}"}}}
+    with pytest.raises(TokenValidationError) as exc:
+        validate_document(doc, None, limits=LIMITS)
+    assert exc.value.findings[0]["path"] == "/tokens/a"
+    assert "a dimension token aliases a typography token" in exc.value.findings[0]["message"]
+
+
+def test_subfield_alias_revisit_is_reported_as_a_cycle():
+    # Defense in depth: the sub-field type check (below) makes a reachable
+    # sub-field cycle impossible, so drive the visited set directly.
+    ts = _parsed({"d": {"$type": "dimension", "$value": "16px"}})
+    with pytest.raises(TokenError) as exc:
+        _scalar(ts, "dimension", "{d}", ("h",), LIMITS, (("d",),))
+    assert "alias cycle through d" in exc.value.message
+
+
+def test_subfield_alias_descent_is_bounded_by_max_alias_depth():
+    doc = {"d": {"$type": "dimension", "$value": "16px"},
+           "h": {"$type": "typography", "$value": {**_TYPO, "fontSize": "{d}"}}}
+    with pytest.raises(TokenValidationError) as exc:
+        validate_document(doc, None, limits=TokenLimits(16, 5000, 0))
+    assert "alias chain longer than 0" in exc.value.findings[0]["message"]
+    base, _, _ = validate_document(doc, None, limits=TokenLimits(16, 5000, 1))
+    assert ("--h-font-size", "16px") in css_value(base.by_dotted("h"), base)
+
+
+def test_shadow_and_border_subfield_aliases_resolve():
+    ts = _parsed({"c": {"$type": "color", "$value": "#0003"},
+                  "w": {"$type": "dimension", "$value": "1px"},
+                  "s": {"$type": "shadow", "$value": {"color": "{c}", "offsetX": "0px",
+                        "offsetY": "2px", "blur": "4px", "spread": "0px"}},
+                  "b": {"$type": "border", "$value": {"width": "{w}", "style": "solid",
+                        "color": "{c}"}}})
+    assert css_value(ts.by_dotted("s"), ts) == [("--s", "0px 2px 4px 0px #0003")]
+    assert css_value(ts.by_dotted("b"), ts) == [("--b", "1px solid #0003")]
+
+
+def test_subfield_alias_type_is_checked():
+    ts = _parsed({"c": {"$type": "color", "$value": "#000"},
+                  "h": {"$type": "typography", "$value": {**_TYPO, "fontSize": "{c}"}}})
+    with pytest.raises(TokenValidationError) as exc:
+        css_value(ts.by_dotted("h"), ts)
+    assert "a dimension token aliases a color token (c)" in exc.value.findings[0]["message"]
+    ts2 = _parsed({"d": {"$type": "dimension", "$value": "1px"},
+                   "s": {"$type": "shadow", "$value": {"color": "{d}", "offsetX": "0px",
+                         "offsetY": "0px", "blur": "0px"}}})
+    with pytest.raises(TokenValidationError) as exc:
+        css_value(ts2.by_dotted("s"), ts2)
+    assert "a color token aliases a dimension token (d)" in exc.value.findings[0]["message"]
+
+
+def test_token_may_not_also_carry_child_groups():
+    with pytest.raises(TokenValidationError) as exc:
+        TokenSet.parse({"a": {"$type": "color", "$value": "#000",
+                              "nested": {"$type": "color", "$value": "#fff"}}}, limits=LIMITS)
+    assert exc.value.findings[0] == {"path": "/tokens/a",
+                                     "message": "a token may not also contain child groups"}
+
+
+def test_duration_unit_must_be_ms_or_s():
+    assert _one({"t": {"$type": "duration", "$value": {"value": 1, "unit": "s"}}}, "t") == [("--t", "1s")]
+    with pytest.raises(TokenValidationError) as exc:
+        _one({"t": {"$type": "duration", "$value": {"value": 2, "unit": "fortnights"}}}, "t")
+    assert "unsupported duration" in exc.value.findings[0]["message"]
+
+
+def test_to_css_dark_without_a_dark_set_raises():
+    base = _parsed({"c": {"$type": "color", "$value": "#fff"}})
+    with pytest.raises(ValueError, match="no dark mode"):
+        to_css(base, None, mode="dark")
+
+
+def test_numbers_never_emit_scientific_notation():
+    assert _one({"n": {"$type": "number", "$value": 1e-7}}, "n") == [("--n", "0")]
+    assert _one({"n": {"$type": "number", "$value": 0.000123}}, "n") == [("--n", "0.000123")]
+    assert _one({"n": {"$type": "number", "$value": 1e21}}, "n") == [("--n", "1" + "0" * 21)]
+
+
+def test_override_omitting_type_is_allowed_but_base_still_requires_one():
+    # require_type=False on the override walk, True (the default) on a base parse.
+    base = _parsed({"c": {"$type": "color", "$value": "#fff"}})
+    assert base.merged({"c": {"$value": "#000"}}, limits=LIMITS).by_dotted("c").type == "color"
+    with pytest.raises(TokenValidationError) as exc:
+        TokenSet.parse({"c": {"$value": "#fff"}}, limits=LIMITS)
+    assert exc.value.findings[0]["message"] == "token has no resolved $type"

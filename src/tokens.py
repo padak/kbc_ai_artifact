@@ -101,8 +101,12 @@ def alias_target(value: str) -> tuple[str, ...]:
 class TokenSet:
     """An ordered set of tokens keyed by path tuple."""
 
-    def __init__(self, tokens: dict[tuple[str, ...], Token]) -> None:
+    def __init__(self, tokens: dict[tuple[str, ...], Token],
+                 limits: TokenLimits | None = None) -> None:
         self.tokens = tokens
+        #: The limits this set was validated under, so emission can bound its
+        #: own alias descent without every caller having to thread them through.
+        self.limits = limits
 
     @classmethod
     def parse(cls, document: dict, *, limits: TokenLimits, pointer: str = "/tokens") -> "TokenSet":
@@ -129,11 +133,12 @@ class TokenSet:
             findings.append(TokenError(pointer, f"more than {limits.max_tokens} tokens"))
         if findings:
             raise TokenValidationError([f.as_dict() for f in findings])
-        return cls(tokens)
+        return cls(tokens, limits)
 
     @classmethod
     def _walk(cls, node: dict, path: tuple[str, ...], inherited: str | None, ptr: str,
-              depth: int, limits: TokenLimits, out: dict, findings: list[TokenError]) -> None:
+              depth: int, limits: TokenLimits, out: dict, findings: list[TokenError],
+              *, require_type: bool = True) -> None:
         if depth > limits.max_depth:
             findings.append(TokenError(ptr, f"nested deeper than {limits.max_depth} levels"))
             return
@@ -146,8 +151,12 @@ class TokenSet:
             node_type = None
         if "$value" in node:
             value = node["$value"]
-            if node_type is None and not is_alias(value):
+            if require_type and node_type is None and not is_alias(value):
                 findings.append(TokenError(ptr, "token has no resolved $type"))
+            # A leaf is a leaf: children hanging off a token would be dropped
+            # silently, so reject the document instead of losing them.
+            if any(not key.startswith("$") for key in node):
+                findings.append(TokenError(ptr, "a token may not also contain child groups"))
             desc = node.get("$description")
             if desc is not None and not isinstance(desc, str):
                 findings.append(TokenError(_pointer(ptr, "$description"), "must be a string"))
@@ -160,12 +169,14 @@ class TokenSet:
             if not isinstance(child, dict):
                 findings.append(TokenError(_pointer(ptr, key), "must be a group or a token object"))
                 continue
-            cls._walk(child, path + (key,), node_type, _pointer(ptr, key), depth + 1, limits, out, findings)
+            cls._walk(child, path + (key,), node_type, _pointer(ptr, key), depth + 1, limits, out,
+                      findings, require_type=require_type)
 
     # --- resolution -------------------------------------------------------
     def resolve(self, *, limits: TokenLimits, pointer: str = "/tokens") -> None:
         """Fill alias types, reject cycles, dangling ends, chains too long and
         type mismatches. Idempotent."""
+        self.limits = limits
         findings: list[TokenError] = []
         for tok in list(self.tokens.values()):
             if not is_alias(tok.value):
@@ -224,8 +235,7 @@ class TokenSet:
         parsed: dict[tuple[str, ...], Token] = {}
         # Types may be omitted in an override, so walk without the type check:
         # _walk records type None for those, and we fill it from the base.
-        self._walk(overrides, (), None, pointer, 0, limits, parsed, findings)
-        findings = [f for f in findings if f.message != "token has no resolved $type"]
+        self._walk(overrides, (), None, pointer, 0, limits, parsed, findings, require_type=False)
         merged = dict(self.tokens)
         for path, over in parsed.items():
             base_tok = self.tokens.get(path)
@@ -240,7 +250,7 @@ class TokenSet:
                                  over.description if over.description is not None else base_tok.description)
         if findings:
             raise TokenValidationError([f.as_dict() for f in findings])
-        out = TokenSet(merged)
+        out = TokenSet(merged, limits)
         out.resolve(limits=limits, pointer=pointer)
         return out
 
@@ -282,7 +292,11 @@ def _quote_family(name: str) -> str:
 def _num(x: Any) -> str:
     if isinstance(x, bool) or not isinstance(x, (int, float)):
         raise TokenError("", f"expected a number, got {x!r}")
-    return str(int(x)) if float(x).is_integer() else repr(float(x))
+    if float(x).is_integer():
+        return str(int(x))
+    # Fixed notation only: repr() would emit 1e-07, which CSS parses as a
+    # <number> in some positions and as nothing at all in others.
+    return f"{float(x):.6f}".rstrip("0").rstrip(".") or "0"
 
 
 def _dim(v: Any) -> str:
@@ -311,22 +325,87 @@ def _color(v: Any) -> str:
     return f"rgb({r} {g} {b} / {_num(alpha)})" if alpha != 1 else f"rgb({r} {g} {b})"
 
 
-def _shadow(v: Any) -> str:
+def _duration(v: Any) -> str:
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict) and v.get("unit") in ("ms", "s"):
+        return _num(v["value"]) + v["unit"]
+    raise TokenError("", f"unsupported duration {v!r}")
+
+
+#: The token type each composite sub-field must have when it is an alias.
+_SHADOW_FIELD_TYPES = {"offsetX": "dimension", "offsetY": "dimension", "blur": "dimension",
+                       "spread": "dimension", "color": "color"}
+_BORDER_FIELD_TYPES = {"width": "dimension", "color": "color"}
+_TYPO_FIELD_TYPES = {"fontFamily": "fontFamily", "fontSize": "dimension", "fontWeight": "fontWeight",
+                     "lineHeight": "number", "letterSpacing": "dimension"}
+
+_Seen = tuple[tuple[str, ...], ...]
+
+
+def _alias_budget(tokenset: TokenSet, limits: TokenLimits | None) -> int:
+    """How many composite sub-field hops one emission may descend."""
+    if limits is not None:
+        return limits.max_alias_depth
+    if tokenset.limits is not None:
+        return tokenset.limits.max_alias_depth
+    return len(tokenset) + 1      # structural bound; the visited set is what terminates
+
+
+def _subfield_alias(tokenset: TokenSet, expected_type: str | None, value: str,
+                    limits: TokenLimits | None, seen: _Seen) -> str:
+    """Resolve one alias sitting inside a composite value.
+
+    ``resolve()`` only follows whole-``$value`` aliases, so this descent is the
+    only thing standing between a self-referential composite and a
+    RecursionError: it is bounded by ``max_alias_depth``, remembers the tokens
+    already entered, and checks the target's type against the field's.
+    """
+    target = alias_target(value)
+    if target in seen:
+        raise TokenError("", f"alias cycle through {'.'.join(target)}")
+    budget = _alias_budget(tokenset, limits)
+    if len(seen) >= budget:
+        raise TokenError("", f"alias chain longer than {budget}")
+    if target not in tokenset.tokens:
+        raise TokenError("", f"unknown token '{'.'.join(target)}'")
+    end = tokenset.resolved(target)
+    if expected_type is not None and end.type is not None and end.type != expected_type:
+        raise TokenError("", f"a {expected_type} token aliases a {end.type} token "
+                             f"({'.'.join(end.path)})")
+    return _concrete(tokenset, target, limits, seen + (target,))
+
+
+def _shadow(tokenset: TokenSet, v: Any, path: tuple[str, ...],
+            limits: TokenLimits | None, seen: _Seen) -> str:
     items = v if isinstance(v, list) else [v]
     parts = []
     for s in items:
         if not isinstance(s, dict):
             raise TokenError("", "shadow must be an object or a list of objects")
+
+        def field(name: str, default: Any = None) -> str:
+            raw = s.get(name, default) if default is not None else s[name]
+            return _scalar(tokenset, _SHADOW_FIELD_TYPES[name], raw, path, limits, seen)
+
         inset = "inset " if s.get("inset") else ""
-        parts.append(f"{inset}{_dim(s['offsetX'])} {_dim(s['offsetY'])} {_dim(s['blur'])} "
-                     f"{_dim(s.get('spread', '0px'))} {_color(s['color'])}")
+        parts.append(f"{inset}{field('offsetX')} {field('offsetY')} {field('blur')} "
+                     f"{field('spread', '0px')} {field('color')}")
     return ", ".join(parts)
 
 
-def _scalar(tokenset: TokenSet, tok_type: str, value: Any, path: tuple[str, ...]) -> str:
-    """Concrete CSS text for a non-typography value (aliases already followed)."""
+def _border(tokenset: TokenSet, v: Any, path: tuple[str, ...],
+            limits: TokenLimits | None, seen: _Seen) -> str:
+    width = _scalar(tokenset, _BORDER_FIELD_TYPES["width"], v["width"], path, limits, seen)
+    color = _scalar(tokenset, _BORDER_FIELD_TYPES["color"], v["color"], path, limits, seen)
+    return f"{width} {v['style']} {color}"
+
+
+def _scalar(tokenset: TokenSet, tok_type: str | None, value: Any, path: tuple[str, ...],
+            limits: TokenLimits | None = None, seen: _Seen = ()) -> str:
+    """Concrete CSS text for a non-typography value; nested aliases are followed."""
     if is_alias(value):                       # nested alias inside a composite
-        return concrete_value(tokenset, alias_target(value))
+        return _subfield_alias(tokenset, tok_type, value, limits, seen)
     if tok_type == "color":
         out = _color(value)
     elif tok_type == "dimension":
@@ -336,28 +415,27 @@ def _scalar(tokenset: TokenSet, tok_type: str, value: Any, path: tuple[str, ...]
     elif tok_type in ("fontWeight", "number"):
         out = str(value) if isinstance(value, str) else _num(value)
     elif tok_type == "duration":
-        out = value if isinstance(value, str) else _num(value["value"]) + str(value["unit"])
+        out = _duration(value)
     elif tok_type == "cubicBezier":
         out = "cubic-bezier(" + ", ".join(_num(x) for x in value) + ")"
     elif tok_type == "shadow":
-        out = _shadow(value)
+        out = _shadow(tokenset, value, path, limits, seen)
     elif tok_type == "border":
-        out = f"{_dim(value['width'])} {value['style']} {_color(value['color'])}"
+        out = _border(tokenset, value, path, limits, seen)
     else:
         raise TokenError("", f"type '{tok_type}' is not emitted")
     return _check_css_text(out, path)
 
 
-_TYPO_FIELD_TYPES = {"fontFamily": "fontFamily", "fontSize": "dimension", "fontWeight": "fontWeight",
-                     "lineHeight": "number", "letterSpacing": "dimension"}
-
-
-def _typography_parts(tokenset: TokenSet, value: dict, path: tuple[str, ...]) -> list[tuple[str, str]]:
+def _typography_parts(tokenset: TokenSet, value: dict, path: tuple[str, ...],
+                      limits: TokenLimits | None = None,
+                      seen: _Seen = ()) -> list[tuple[str, str]]:
     out = []
     for field, suffix in TYPOGRAPHY_SUBS:
         if field not in value:
             raise TokenError("", f"typography value lacks '{field}'")
-        out.append((suffix, _scalar(tokenset, _TYPO_FIELD_TYPES[field], value[field], path)))
+        out.append((suffix, _scalar(tokenset, _TYPO_FIELD_TYPES[field], value[field],
+                                    path, limits, seen)))
     return out
 
 
@@ -386,13 +464,19 @@ def css_value(token: Token, tokenset: TokenSet) -> list[tuple[str, str]]:
                                      "message": f"malformed {token.type} value: {err}"}]) from err
 
 
-def concrete_value(tokenset: TokenSet, path: tuple[str, ...]) -> str:
+def concrete_value(tokenset: TokenSet, path: tuple[str, ...], *,
+                   limits: TokenLimits | None = None) -> str:
     """Alias-followed concrete CSS value; typography collapses to a ``font`` shorthand."""
+    return _concrete(tokenset, path, limits, ())
+
+
+def _concrete(tokenset: TokenSet, path: tuple[str, ...], limits: TokenLimits | None,
+              seen: _Seen) -> str:
     tok = tokenset.resolved(path)
     if tok.type == "typography":
-        parts = dict(_typography_parts(tokenset, tok.value, tok.path))
+        parts = dict(_typography_parts(tokenset, tok.value, tok.path, limits, seen))
         return f"{parts['font-weight']} {parts['font-size']}/{parts['line-height']} {parts['font-family']}"
-    return _scalar(tokenset, tok.type, tok.value, tok.path)
+    return _scalar(tokenset, tok.type, tok.value, tok.path, limits, seen)
 
 
 def _block(selector: str, pairs: list[tuple[str, str]], indent: str = "") -> str:
@@ -411,7 +495,13 @@ def _pairs(ts: TokenSet) -> list[tuple[str, str]]:
 
 def to_css(base: TokenSet, dark: TokenSet | None, *, mode: Literal["all", "light", "dark"]) -> str:
     """The stylesheet for one bundle: ``all`` adds the two dark blocks, the
-    flat modes emit every token under ``:root``."""
+    flat modes emit every token under ``:root``.
+
+    ``mode="dark"`` on a bundle without a dark mode raises rather than quietly
+    handing back the light set — the route turns that into a 404.
+    """
+    if mode == "dark" and dark is None:
+        raise ValueError("no dark mode")
     if mode == "light" or dark is None:
         return _block(":root", _pairs(base))
     if mode == "dark":
