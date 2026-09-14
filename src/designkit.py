@@ -4,17 +4,39 @@ style-guide page body. Pure functions of (bundle, token sets); no I/O.
 Both outputs are *user content*: they are only ever served through
 ``main._sandboxed_html`` or inside the sandboxed ``srcdoc`` iframe. Nothing
 here is safe to place on the hub's own origin.
+
+This module relies on upstream validation (``src.designs.validate_bundle``,
+Track 2) for the shape and safety of ``bundle["tokens"]``, ``bundle["roles"]``
+and friends — it does not re-validate those. The one thing it *does* check
+itself, defensively, is the boundary of the single unescaped ``<style>``
+block ``starter_html`` builds: component ``css`` (and the tokens/role CSS,
+for good measure) is scanned for a case-insensitive ``</style`` before being
+spliced in, and refused with ``ValueError`` if found, even though the
+upstream validator is expected to reject such a component at submit time
+(422) already — belt and suspenders around the one place raw text is placed
+inside an unescaped HTML block.
 """
 from __future__ import annotations
 
 import html
 import json
+import re
 from urllib.parse import urlsplit
 
 from src.tokens import TokenSet, alias_target, concrete_value, to_css, variable_name
 
 TITLE_SLOT = "{{TITLE}}"
 BODY_SLOT = "{{BODY}}"
+
+#: Case-insensitive, whitespace-tolerant match for a closing </style> tag —
+#: the one sequence that would let component/role/token CSS break out of the
+#: starter's single unescaped <style> block.
+_STYLE_BREAKOUT_RE = re.compile(r"</\s*style", re.IGNORECASE)
+
+
+def _refuse_style_breakout(css_text: str, *, where: str) -> None:
+    if _STYLE_BREAKOUT_RE.search(css_text):
+        raise ValueError(f"component css may not contain '</style' ({where})")
 
 _ROLE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (
@@ -135,8 +157,17 @@ def _mermaid_script(bundle: dict, base: TokenSet, dark: TokenSet | None, url: st
 
 
 def starter_html(bundle: dict, base: TokenSet, dark: TokenSet | None, *, chartjs_url: str, mermaid_url: str) -> str:
-    css_parts = [to_css(base, dark, mode="all"), _role_css(bundle, base)]
-    css_parts.extend(c["css"] for c in bundle.get("components") or [] if c.get("css"))
+    tokens_css = to_css(base, dark, mode="all")
+    role_css = _role_css(bundle, base)
+    _refuse_style_breakout(tokens_css, where="tokens css")
+    _refuse_style_breakout(role_css, where="role css")
+    css_parts = [tokens_css, role_css]
+    for component in bundle.get("components") or []:
+        comp_css = component.get("css")
+        if not comp_css:
+            continue
+        _refuse_style_breakout(comp_css, where=f"component {component.get('name')!r}")
+        css_parts.append(comp_css)
     css = "\n".join(p for p in css_parts if p)
     head = _font_links(bundle)
     scripts = []

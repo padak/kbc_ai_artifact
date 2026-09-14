@@ -1,8 +1,10 @@
 """Tests for src.designkit: the starter skeleton and the style-guide document
 derived from a design-system bundle."""
 
+import pytest
+
 from src.designkit import BODY_SLOT, TITLE_SLOT, fill_starter, role_values, starter_html, style_guide_html
-from src.tokens import TokenLimits, validate_document
+from src.tokens import TokenLimits, to_css, validate_document
 
 LIMITS = TokenLimits(16, 5000, 32)
 TOKENS = {
@@ -97,6 +99,60 @@ def test_role_values_resolve_per_mode():
     assert role_values(BUNDLE, base)["background"] == "#ffffff"
     assert role_values(BUNDLE, dark)["background"] == "#000000"
     assert role_values(BUNDLE, base)["chart_palette"] == ["#ff0000"]
+
+
+def test_component_css_style_breakout_is_refused():
+    """A component whose css contains '</style' (any case, optional whitespace) would
+    break out of the starter's single unescaped <style> block and inject markup.
+    Track 2's bundle validator is expected to reject this at submit time (422), but
+    designkit refuses defensively too, as the last line before the unescaped <style>."""
+    evil = {
+        **BUNDLE,
+        "components": [
+            {
+                "name": "evil-widget",
+                "description": "",
+                "when_to_use": "",
+                "html": "<div></div>",
+                "css": ".x{}</style><script>1</script>",
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="evil-widget"):
+        starter_html(evil, *_sets(evil), chartjs_url="u", mermaid_url="m")
+
+
+def test_component_css_style_breakout_is_refused_case_and_whitespace_insensitive():
+    evil = {
+        **BUNDLE,
+        "components": [
+            {
+                "name": "evil2",
+                "description": "",
+                "when_to_use": "",
+                "html": "<div></div>",
+                "css": ".x{}</\t\tSTYLE  ><script>1</script>",
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="evil2"):
+        starter_html(evil, *_sets(evil), chartjs_url="u", mermaid_url="m")
+
+
+def test_chart_and_mermaid_scripts_fall_back_to_light_without_dark_mode():
+    """No dark mode declared at all (validate_document called with overrides=None):
+    both branches of the ``dark ?`` expressions in the chart and mermaid scripts must
+    fall back to the light values, and the emitted stylesheet must carry no @media
+    block (there is nothing to diverge to)."""
+    base, dark, _ = validate_document(BUNDLE["tokens"], None, limits=LIMITS)
+    assert dark is None
+    s = starter_html(BUNDLE, base, dark, chartjs_url="https://cdn/x.js", mermaid_url="https://cdn/m.mjs")
+    assert 'window.DS_PALETTE = (dark ? ["#ff0000"] : ["#ff0000"])' in s
+    assert '"primaryColor": "#1442e0"' in s and 'import mermaid from "https://cdn/m.mjs"' in s
+    scripts = s.split("<script", 1)[1]
+    assert "var(--" not in scripts
+    css = to_css(base, dark, mode="all")
+    assert "@media" not in css
 
 
 META = {"name": "Corp <b>", "slug": "corp", "owner": {"project_name": "Mkt & co", "project_id": 1, "stack_host": "h"}}
