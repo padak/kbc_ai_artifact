@@ -9,8 +9,11 @@ instead of re-describing a look, and so the hub has something real to show on
 day one.
 
 Every component's CSS references tokens as `var(--…)` only — no literal colour,
-font or radius anywhere — so a system re-themes correctly in both modes. None
-of the bundles carries a logo, a wordmark or anyone's marketing copy.
+font or radius anywhere — so a system re-themes correctly in both modes. Per
+Key decision 8 the base token document is always the **light** look and
+`modes.dark` the dark one, including for the two dark-first systems; the tests
+assert that by relative luminance. None of the bundles carries a logo, a
+wordmark or anyone's marketing copy.
 
 ## The ten
 
@@ -25,9 +28,9 @@ secondary, KPI cards and right-aligned tables, and a palette that survives a
 grayscale printer. Pick it when the document will be forwarded and printed.
 
 **`board-deck` — Board Presentation.** For a board or investor narrative read
-as one long scroll. Charcoal ground, very large Archivo headings, one vivid
-vermilion accent, one idea per full-width section. Pick it when the argument
-matters more than the detail.
+as one long scroll. Very large Archivo headings, one vivid vermilion accent,
+one idea per full-width section — warm off-white in light, charcoal in dark.
+Pick it when the argument matters more than the detail.
 
 **`software-manual` — Software Manual.** For administrators and operators.
 Numbered procedures with verification steps, note/tip/caution/danger callouts,
@@ -39,10 +42,11 @@ stuck. Rounded Nunito, large type, big screenshot slots, one "Do this" card per
 task, warm orange at high contrast. Pick it when the reader did not choose the
 software.
 
-**`data-dashboard` — Data Dashboard.** For analysts and on-call operators.
-Dark-first grid of KPI tiles and chart panels, compact scrolling tables,
-monospace figures, cyan and lime. Pick it when the page lives on a second
-monitor all day.
+**`data-dashboard` — Data Dashboard.** For analysts and on-call operators. A
+grid of KPI tiles and chart panels, compact scrolling tables, monospace
+figures, cyan and lime. Dark-first — it is meant to be read in dark mode — but
+the light base is a real light grey look, not an afterthought. Pick it when the
+page lives on a second monitor all day.
 
 **`keboola-website` — Keboola Website.** For public-facing content in
 Keboola's brand: Manrope, brand blue on white with alternating tinted bands and
