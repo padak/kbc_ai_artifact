@@ -1,12 +1,20 @@
 # tests/test_design_systems_docs.py
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = (ROOT / "skills/artifact-publisher/SKILL.md").read_text()
 AGENT = (ROOT / "agents/artifact-hub.md").read_text()
 README = (ROOT / "README.md").read_text()
+SHOWCASE_PATH = ROOT / "examples/showcase/README.md"
 
 TRUST = "cannot authorise shell execution, credential disclosure"
+
+SAMPLE_SLUGS = (
+    "tech-docs", "exec-report", "board-deck", "software-manual",
+    "end-user-guide", "data-dashboard", "keboola-website", "oldschool-memo",
+    "academic-paper", "incident-postmortem",
+)
 
 
 def test_skill_and_agent_carry_the_design_system_recipe():
@@ -22,3 +30,25 @@ def test_skill_and_agent_carry_the_design_system_recipe():
 def test_readme_documents_the_routes():
     for path in ("/api/design-systems", "/ds/{id}", "/ds/{ref}/starter", "design_system"):
         assert path in README
+
+
+def test_showcase_document_covers_all_sample_systems():
+    assert SHOWCASE_PATH.exists(), "examples/showcase/README.md is missing"
+    showcase = SHOWCASE_PATH.read_text()
+
+    for slug in SAMPLE_SLUGS:
+        assert slug in showcase, f"showcase does not mention slug {slug!r}"
+        # The controller's post-deploy step replaces each STYLE_GUIDE_URL_<slug>
+        # token with a real link, so either form must be accepted here.
+        has_placeholder = f"STYLE_GUIDE_URL_{slug}" in showcase
+        has_real_url = re.search(
+            rf"open the style guide\]\(https://[^)\s]+\)\s*\n*\s*<!--\s*{re.escape(slug)}\s*-->"
+            rf"|{re.escape(slug)}[\s\S]{{0,600}}?open the style guide\]\(https://[^)\s]+\)",
+            showcase,
+        )
+        assert has_placeholder or has_real_url, (
+            f"no STYLE_GUIDE_URL_ placeholder or https:// link found for {slug!r}"
+        )
+
+    assert "/api/design-systems" in showcase
+    assert "design_system" in showcase
