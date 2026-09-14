@@ -128,6 +128,13 @@ MERMAID_ESM = (
     "/dist/mermaid.esm.min.mjs"
 )
 
+# Chart.js is not used by the Markdown template; design-system starters and
+# style guides (src/designkit.py) load it when a bundle declares
+# ``charts.library == "chart.js"``. Same exact-patch pinning, same deliberate
+# no-SRI stance as above: the boundary is the sandbox those documents run in.
+CHARTJS_VERSION = "4.4.1"
+CHARTJS_JS = f"https://cdn.jsdelivr.net/npm/chart.js@{CHARTJS_VERSION}/dist/chart.umd.min.js"
+
 #: Placeholders substituted into PAGE_TEMPLATE (plain replace — the template
 #: contains CSS/JS braces, so str.format() is not usable here).
 _TITLE_SLOT = "{{ARTIFACT_TITLE}}"

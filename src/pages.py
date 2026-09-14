@@ -3178,6 +3178,65 @@ def versions_page(
 
 
 # --------------------------------------------------------------------------
+# Design systems (/ds/{id})
+# --------------------------------------------------------------------------
+
+_DS_CSS = """
+.ds-frame{width:100%;height:78vh;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+.ds-picker a{margin-right:.6rem}.ds-picker a[aria-current]{font-weight:700;text-decoration:underline}
+.ds-machine code{display:block;margin:.2rem 0;word-break:break-all}
+"""
+
+
+def design_system_page(
+    base_url: str,
+    projection: dict,
+    version_rows: list[dict],
+    selected: int,
+    srcdoc: str,
+    hub_version: str,
+) -> str:
+    """Render the hub chrome around one design system's sandboxed style guide.
+
+    ``srcdoc`` is the fully-rendered ``style_guide_html`` output for the
+    selected version; it is user content and only ever reaches the browser
+    inside the sandboxed iframe below (no ``allow-same-origin``).
+    """
+    ds_id = projection["id"]
+    root = f"{base_url}/ds/{ds_id}"
+    picker = " ".join(
+        f'<a href="{html.escape(root, quote=True)}?v={r["version"]}"'
+        + (' aria-current="true"' if r["version"] == selected else "")
+        + f'>v{r["version"]}</a>'
+        for r in sorted(version_rows, key=lambda r: r["version"])
+    )
+    machine = "".join(
+        f"<code>{html.escape(root + suffix, quote=True)}?v={selected}</code>"
+        for suffix in ("/bundle", "/tokens", "/css", "/starter", "/guidance")
+    )
+    owner = projection.get("owner") or {}
+    body = (
+        "<main>"
+        f"<h1>{html.escape(projection['name'])}</h1>"
+        f"<p><code>{html.escape(projection['slug'])}</code> · {_badge(f'v{selected}')} · "
+        f"owned by {html.escape(str(owner.get('project_name') or ''))}"
+        + (f" · {html.escape(projection.get('description') or '')}" if projection.get("description") else "")
+        + "</p>"
+        f'<p class="ds-picker">Versions: {picker}</p>'
+        f'<iframe class="ds-frame" title="Design system style guide" '
+        f'sandbox="allow-scripts allow-popups allow-forms allow-downloads" '
+        f'srcdoc="{html.escape(srcdoc, quote=True)}"></iframe>'
+        "<h2>// machine access</h2>"
+        f'<div class="ds-machine">{machine}</div>'
+        "<p>Owners manage a design system through <code>PUT/POST /api/design-systems/{id}</code>; "
+        f'see <a href="{html.escape(base_url, quote=True)}/skill">/skill</a>.</p>'
+        f"<p><small>KBC Artifact Hub {html.escape(hub_version)}</small></p>"
+        "</main>"
+    )
+    return _page(f"{projection['name']} — design system", _DS_CSS, body)
+
+
+# --------------------------------------------------------------------------
 # Review UI (/a/{id}/review)
 # --------------------------------------------------------------------------
 
