@@ -277,3 +277,83 @@ def test_destructive_policy_applies_to_ds_deletes(api, monkeypatch):
 def test_create_is_502_when_not_hydrated(api):
     api.client.app.state.designs.hydrated = False
     assert _register(api.client).status_code == 502
+
+
+# --------------------------------------------------------------------------
+# Reader routes under /ds/{ref}
+# --------------------------------------------------------------------------
+
+
+def test_id_is_public_slug_needs_credential_and_never_leaks_existence(api):
+    ds_id = _register(api.client).json()["id"]
+    assert api.client.get(f"/ds/{ds_id}/bundle").status_code == 200
+    assert api.client.get("/ds/corp/bundle").status_code == 401
+    # identical answer for a slug that does not exist
+    assert api.client.get("/ds/does-not-exist/bundle").status_code == 401
+    assert api.client.get("/ds/corp/bundle", headers=AUTH_HEADERS).status_code == 200
+    assert (
+        api.client.get("/ds/does-not-exist/bundle", headers=AUTH_HEADERS).status_code
+        == 404
+    )
+    assert api.client.get("/ds/ds_unknown/bundle").status_code == 404
+    assert (
+        api.client.get("/ds/corp/bundle", headers=AUTH_HEADERS).headers["Cache-Control"]
+        == "private, no-store"
+    )
+
+
+def test_bundle_tokens_css_starter_guidance(api):
+    ds_id = _register(api.client).json()["id"]
+    b = api.client.get(f"/ds/{ds_id}/bundle").json()
+    assert b["version"] == 1
+    assert b["bundle"]["guidance"] == "# Corp\n\nUse bars."
+    assert "variables" in b
+    assert b["variables"]["color.accent"] == "--color-accent"
+    assert b["urls"]["starter"].endswith(f"/ds/{ds_id}/starter?v=1")
+    t = api.client.get(f"/ds/{ds_id}/tokens").json()
+    assert set(t) == {"tokens", "modes"}
+    css = api.client.get(f"/ds/{ds_id}/css")
+    assert css.headers["content-type"].startswith("text/css")
+    assert "--color-bg: #ffffff" in css.text
+    assert "--color-bg: #000000" in api.client.get(f"/ds/{ds_id}/css?mode=dark").text
+    assert api.client.get(f"/ds/{ds_id}/css?mode=sepia").status_code == 422
+    s = api.client.get(f"/ds/{ds_id}/starter")
+    assert s.headers["Content-Security-Policy"].startswith("sandbox")
+    assert s.headers["X-Content-Type-Options"] == "nosniff"
+    assert "{{BODY}}" in s.text
+    g = api.client.get(f"/ds/{ds_id}/guidance")
+    assert g.headers["content-type"].startswith("text/markdown")
+    assert g.text.startswith("# Corp")
+
+
+def test_version_selection(api):
+    ds_id = _register(api.client).json()["id"]
+    api.client.post(
+        f"/api/design-systems/{ds_id}/versions",
+        json={"bundle": {**good_bundle(), "guidance": "# v2"}},
+        headers=AUTH_HEADERS,
+    )
+    assert api.client.get(f"/ds/{ds_id}/guidance").text.startswith("# v2")
+    assert api.client.get(f"/ds/{ds_id}/guidance?v=1").text.startswith("# Corp")
+    assert api.client.get(f"/ds/{ds_id}/guidance?v=9").status_code == 404
+    assert api.client.get(f"/ds/{ds_id}/guidance?v=zero").status_code == 422
+    assert api.client.get(f"/ds/{ds_id}/guidance?v=0").status_code == 422
+    rows = api.client.get(f"/ds/{ds_id}/versions").json()
+    assert rows["head_version"] == 2
+    assert [r["version"] for r in rows["versions"]] == [1, 2]
+
+
+def test_style_guide_page(api):
+    ds_id = _register(api.client).json()["id"]
+    page = api.client.get(f"/ds/{ds_id}")
+    assert page.status_code == 200 and "srcdoc=" in page.text and "sandbox=" in page.text
+    assert f"/ds/{ds_id}/starter?v=1" in page.text
+    assert api.client.get(f"/ds/{ds_id}/css?mode=dark").status_code == 200
+    b = {**good_bundle()}
+    del b["modes"]
+    other = api.client.post(
+        "/api/design-systems",
+        json={"slug": "nodark", "name": "N", "bundle": b},
+        headers=AUTH_HEADERS,
+    ).json()["id"]
+    assert api.client.get(f"/ds/{other}/css?mode=dark").status_code == 404
