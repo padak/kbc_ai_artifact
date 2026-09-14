@@ -114,3 +114,64 @@ def test_variables_map_lists_typography_subnames():
         "heading/line-height": "--heading-line-height",
         "heading/letter-spacing": "--heading-letter-spacing",
     }
+
+
+def _parsed(doc):
+    ts = TokenSet.parse(doc, limits=LIMITS)
+    ts.resolve(limits=LIMITS)
+    return ts
+
+
+def test_alias_inherits_type_and_resolves():
+    ts = _parsed({"color": {"$type": "color", "a": {"$value": "#000"}, "b": {"$value": "{color.a}"}}})
+    assert ts.by_dotted("color.b").type == "color"
+    assert ts.resolved(("color", "b")).value == "#000"
+
+
+def test_alias_cycle_and_dangling_are_findings():
+    with pytest.raises(TokenValidationError) as exc:
+        _parsed({"a": {"$type": "color", "$value": "{b}"}, "b": {"$type": "color", "$value": "{a}"}})
+    assert "cycle" in exc.value.findings[0]["message"]
+    with pytest.raises(TokenValidationError) as exc:
+        _parsed({"a": {"$type": "color", "$value": "{nope}"}})
+    assert "unknown token 'nope'" in exc.value.findings[0]["message"]
+
+
+def test_alias_type_mismatch_is_a_finding():
+    with pytest.raises(TokenValidationError) as exc:
+        _parsed({"a": {"$type": "color", "$value": "#000"}, "b": {"$type": "dimension", "$value": "{a}"}})
+    assert "aliases a color token" in exc.value.findings[0]["message"]
+
+
+def test_alias_chain_depth_limit():
+    doc = {"t0": {"$type": "number", "$value": 1}}
+    for i in range(1, 40):
+        doc[f"t{i}"] = {"$value": f"{{t{i - 1}}}"}
+    with pytest.raises(TokenValidationError) as exc:
+        _parsed(doc)
+    assert "alias chain longer than 32" in exc.value.findings[0]["message"]
+
+
+def test_merge_dark_overrides():
+    base = _parsed({"color": {"$type": "color", "bg": {"$value": "#fff"}, "fg": {"$value": "#000"}}})
+    dark = base.merged({"color": {"bg": {"$value": "#000"}}}, limits=LIMITS)
+    assert dark.by_dotted("color.bg").value == "#000"
+    assert dark.by_dotted("color.fg").value == "#000"      # untouched tokens carried over
+    assert dark.by_dotted("color.bg").type == "color"      # type inherited from base
+
+
+def test_merge_rejects_unknown_path_and_type_change():
+    base = _parsed({"color": {"$type": "color", "bg": {"$value": "#fff"}}})
+    with pytest.raises(TokenValidationError) as exc:
+        base.merged({"color": {"other": {"$value": "#000"}}}, limits=LIMITS)
+    assert exc.value.findings == [{"path": "/modes/dark/color/other",
+                                   "message": "override of a token absent from the base"}]
+    with pytest.raises(TokenValidationError) as exc:
+        base.merged({"color": {"bg": {"$type": "dimension", "$value": "1px"}}}, limits=LIMITS)
+    assert "may not change the type" in exc.value.findings[0]["message"]
+
+
+def test_merge_detects_cycle_introduced_by_override():
+    base = _parsed({"a": {"$type": "color", "$value": "#000"}, "b": {"$type": "color", "$value": "{a}"}})
+    with pytest.raises(TokenValidationError):
+        base.merged({"a": {"$value": "{b}"}}, limits=LIMITS)

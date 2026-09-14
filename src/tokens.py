@@ -162,6 +162,88 @@ class TokenSet:
                 continue
             cls._walk(child, path + (key,), node_type, _pointer(ptr, key), depth + 1, limits, out, findings)
 
+    # --- resolution -------------------------------------------------------
+    def resolve(self, *, limits: TokenLimits, pointer: str = "/tokens") -> None:
+        """Fill alias types, reject cycles, dangling ends, chains too long and
+        type mismatches. Idempotent."""
+        findings: list[TokenError] = []
+        for tok in list(self.tokens.values()):
+            if not is_alias(tok.value):
+                continue
+            try:
+                target = self._follow(tok, limits.max_alias_depth)
+            except TokenError as err:
+                findings.append(TokenError(_pointer(pointer, *tok.path), err.message))
+                continue
+            if tok.type is None:
+                self.tokens[tok.path] = tok._replace(type=target.type)
+            elif target.type is not None and target.type != tok.type:
+                findings.append(TokenError(_pointer(pointer, *tok.path),
+                    f"a {tok.type} token aliases a {target.type} token ({'.'.join(target.path)})"))
+        for tok in self.tokens.values():
+            if tok.type is None:
+                findings.append(TokenError(_pointer(pointer, *tok.path), "token has no resolved $type"))
+        if findings:
+            raise TokenValidationError([f.as_dict() for f in findings])
+        # typography aliases now emit five names: re-run the collision check
+        seen: dict[str, tuple[str, ...]] = {}
+        for tok in self.tokens.values():
+            for _, name in emitted_names(tok):
+                other = seen.setdefault(name, tok.path)
+                if other != tok.path:
+                    findings.append(TokenError(_pointer(pointer, *tok.path),
+                        f"CSS variable {name} collides with token {'.'.join(other)}"))
+        if findings:
+            raise TokenValidationError([f.as_dict() for f in findings])
+
+    def _follow(self, tok: Token, max_depth: int) -> Token:
+        seen: list[tuple[str, ...]] = [tok.path]
+        cur = tok
+        while is_alias(cur.value):
+            if len(seen) > max_depth:
+                raise TokenError("", f"alias chain longer than {max_depth}")
+            target_path = alias_target(cur.value)
+            nxt = self.tokens.get(target_path)
+            if nxt is None:
+                raise TokenError("", f"unknown token '{'.'.join(target_path)}'")
+            if target_path in seen:
+                raise TokenError("", f"alias cycle through {'.'.join(target_path)}")
+            seen.append(target_path)
+            cur = nxt
+        return cur
+
+    def resolved(self, path: tuple[str, ...]) -> Token:
+        """The concrete, non-alias token at the end of ``path``'s alias chain."""
+        tok = self.tokens[path]
+        return self._follow(tok, len(self.tokens) + 1) if is_alias(tok.value) else tok
+
+    # --- modes ------------------------------------------------------------
+    def merged(self, overrides: dict, *, limits: TokenLimits, pointer: str = "/modes/dark") -> "TokenSet":
+        """This set with ``overrides`` (a DTCG document) applied by path."""
+        findings: list[TokenError] = []
+        parsed: dict[tuple[str, ...], Token] = {}
+        # Types may be omitted in an override, so walk without the type check:
+        # _walk records type None for those, and we fill it from the base.
+        self._walk(overrides, (), None, pointer, 0, limits, parsed, findings)
+        findings = [f for f in findings if f.message != "token has no resolved $type"]
+        merged = dict(self.tokens)
+        for path, over in parsed.items():
+            base_tok = self.tokens.get(path)
+            if base_tok is None:
+                findings.append(TokenError(_pointer(pointer, *path), "override of a token absent from the base"))
+                continue
+            if over.type is not None and over.type != base_tok.type:
+                findings.append(TokenError(_pointer(pointer, *path),
+                    f"override may not change the type ({base_tok.type} -> {over.type})"))
+                continue
+            merged[path] = Token(path, base_tok.type, over.value,
+                                 over.description if over.description is not None else base_tok.description)
+        if findings:
+            raise TokenValidationError([f.as_dict() for f in findings])
+        out = TokenSet(merged)
+        out.resolve(limits=limits, pointer=pointer)
+        return out
+
     def variables(self) -> dict[str, str]:
         """``"path.to.token" -> "--variable"``; typography maps its five sub-names."""
         out: dict[str, str] = {}
