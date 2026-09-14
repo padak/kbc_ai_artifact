@@ -5,6 +5,7 @@ from src.tokens import (
     TokenLimits,
     TokenSet,
     TokenValidationError,
+    variable_name,
 )
 
 LIMITS = TokenLimits(max_depth=16, max_tokens=5000, max_alias_depth=32)
@@ -68,3 +69,48 @@ def test_all_findings_are_collected_not_just_the_first():
 def test_emitted_types_match_profile():
     assert EMITTED_TYPES == frozenset({"color", "dimension", "fontFamily", "fontWeight",
         "number", "duration", "cubicBezier", "shadow", "border", "typography"})
+
+
+def test_variable_name_normalisation():
+    assert variable_name(("color", "Brand Primary")) == "--color-brand-primary"
+    assert variable_name(("Font/Size", "XL")) == "--font-size-xl"
+    assert variable_name(("a", "--b--")) == "--a-b"
+
+
+def test_empty_variable_name_is_a_finding():
+    with pytest.raises(TokenValidationError) as exc:
+        TokenSet.parse({"***": {"$type": "number", "$value": 1}}, limits=LIMITS)
+    assert exc.value.findings[0]["message"] == "path normalises to an empty CSS variable name"
+
+
+def test_collision_after_normalisation_is_a_finding():
+    doc = {"a": {"b": {"$type": "number", "$value": 1}}, "A": {"B": {"$type": "number", "$value": 2}}}
+    with pytest.raises(TokenValidationError) as exc:
+        TokenSet.parse(doc, limits=LIMITS)
+    assert "collides with" in exc.value.findings[0]["message"]
+
+
+def test_typography_subnames_take_part_in_collisions():
+    doc = {
+        "heading": {"$type": "typography", "$value": {"fontFamily": "Inter", "fontSize": "2rem",
+                    "fontWeight": 700, "lineHeight": 1.2, "letterSpacing": "0"}},
+        "heading-font-size": {"$type": "dimension", "$value": "1px"},
+    }
+    with pytest.raises(TokenValidationError) as exc:
+        TokenSet.parse(doc, limits=LIMITS)
+    assert "--heading-font-size" in exc.value.findings[0]["message"]
+
+
+def test_variables_map_lists_typography_subnames():
+    doc = {"heading": {"$type": "typography", "$value": {"fontFamily": "Inter", "fontSize": "2rem",
+           "fontWeight": 700, "lineHeight": 1.2, "letterSpacing": "0"}},
+           "accent": {"$type": "color", "$value": "#fff"}}
+    ts = TokenSet.parse(doc, limits=LIMITS)
+    assert ts.variables() == {
+        "accent": "--accent",
+        "heading/font-family": "--heading-font-family",
+        "heading/font-size": "--heading-font-size",
+        "heading/font-weight": "--heading-font-weight",
+        "heading/line-height": "--heading-line-height",
+        "heading/letter-spacing": "--heading-letter-spacing",
+    }

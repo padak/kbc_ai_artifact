@@ -71,6 +71,25 @@ def _pointer(base: str, *segments: str) -> str:
     return base + "".join("/" + s for s in escaped)
 
 
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def variable_name(path: tuple[str, ...]) -> str:
+    """The CSS custom-property name a token path emits, or "" when it normalises away."""
+    joined = "-".join(path).lower()
+    collapsed = _NON_ALNUM.sub("-", joined).strip("-")
+    return "--" + collapsed if collapsed else ""
+
+
+def emitted_names(token: Token) -> list[tuple[str, str]]:
+    """(variables()-key, --name) pairs a token emits; five for typography."""
+    base = variable_name(token.path)
+    dotted = ".".join(token.path)
+    if token.type == "typography":
+        return [(f"{dotted}/{suffix}", f"{base}-{suffix}") for _, suffix in TYPOGRAPHY_SUBS]
+    return [(dotted, base)]
+
+
 def is_alias(value: Any) -> bool:
     return isinstance(value, str) and ALIAS_RE.match(value) is not None
 
@@ -94,6 +113,18 @@ class TokenSet:
         cls._walk(document, (), None, pointer, 0, limits, tokens, findings)
         if not tokens and not findings:
             findings.append(TokenError(pointer, "document holds no tokens"))
+        seen: dict[str, tuple[str, ...]] = {}
+        for tok in tokens.values():
+            if variable_name(tok.path) == "":
+                findings.append(TokenError(_pointer(pointer, *tok.path),
+                                           "path normalises to an empty CSS variable name"))
+                continue
+            for _, name in emitted_names(tok):
+                other = seen.get(name)
+                if other is not None and other != tok.path:
+                    findings.append(TokenError(_pointer(pointer, *tok.path),
+                        f"CSS variable {name} collides with token {'.'.join(other)}"))
+                seen.setdefault(name, tok.path)
         if len(tokens) > limits.max_tokens:
             findings.append(TokenError(pointer, f"more than {limits.max_tokens} tokens"))
         if findings:
@@ -130,6 +161,14 @@ class TokenSet:
                 findings.append(TokenError(_pointer(ptr, key), "must be a group or a token object"))
                 continue
             cls._walk(child, path + (key,), node_type, _pointer(ptr, key), depth + 1, limits, out, findings)
+
+    def variables(self) -> dict[str, str]:
+        """``"path.to.token" -> "--variable"``; typography maps its five sub-names."""
+        out: dict[str, str] = {}
+        for tok in self.tokens.values():
+            for key, name in emitted_names(tok):
+                out[key] = name
+        return dict(sorted(out.items()))
 
     def by_dotted(self, dotted: str) -> Token | None:
         return self.tokens.get(tuple(dotted.split(".")))
