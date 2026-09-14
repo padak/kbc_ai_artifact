@@ -3746,3 +3746,43 @@ Texts:
 - Spec coverage: Key decisions 1–12 → Tasks 2.3/2.4 (1–5), 4.4 (6), 1.x (7–8), 2.2 (9), 4.5 (10), 3.3/3.4/4.4 (11), 2.1 (12). Data model → 2.3. Derived outputs → 1.4, 3.2, 3.3. Endpoints → 4.3, 4.4. Discovery → 4.6, 5.x. Error table → 4.3–4.5. Testing list → every task's tests plus 4.7.
 - Known simplifications called out to reviewers: the derived-output cache key does not include meta (the style-guide page is rendered per request, only CSS/starter/token sets are cached, and those depend on the version alone); `list_owner` downloads metas lazily (tens of records at most).
 - Placeholder scan: none. Type consistency: `DesignSystemStore` method names match between Tasks 2.3, 2.4 and 4.x; `validate_document` signature matches between 1.4, 2.2, 3.2 and 4.4; `fill_starter`/`starter_html`/`style_guide_html` match between 3.2, 3.3 and 4.4.
+
+---
+
+## Track 6 — ten sample design systems (added 2026-09-15 by the user's goal)
+
+**Goal:** ship ten ready-made design systems as reproducible bundle files plus a registration script, register them on the production hub, and cover them with a test that every bundle validates.
+
+**Files:**
+- Create: `examples/design-systems/<slug>.json` (ten files; each is the full `POST /api/design-systems` body: `slug`, `name`, `description`, `note`, `bundle`)
+- Create: `scripts/register_design_systems.py` — reads `HUB_URL`, `KBC_STACK`, `KBC_TOKEN` from the environment (fail fast if missing), for every file: `GET /api/design-systems` → if the slug exists, `POST /api/design-systems/{slug}/versions` with the bundle and note, else `POST /api/design-systems`; prints slug, id, version, style-guide URL. `--only <slug>` and `--dry-run` (validate locally with `src.designs.validate_bundle`, no network). Uses `httpx`. Never prints the token.
+- Create: `tests/test_example_design_systems.py` — every file loads, `validate_bundle(...)` passes with zero fatal findings, slugs are unique and match `SLUG_RE`, each has ≥ 3 components, a `dark` mode, roles including `chart_palette`, guidance ≥ 800 characters, and the ten slugs are exactly the list below.
+- Create: `examples/design-systems/README.md` — one paragraph per system (audience, look, when to pick it) and the registration command.
+
+The ten systems (slug — name — audience — look):
+1. `tech-docs` — Technical Documentation — engineers reading API/architecture docs — clean, dense, monospace headings, sidebar-less single column, code-first, blue accent.
+2. `exec-report` — Executive Report — management monthly/quarterly report — generous whitespace, serif headings, KPI cards, restrained navy + gold palette, print-friendly.
+3. `board-deck` — Board Presentation — board/investor narrative — slide-like full-width sections, very large type, one idea per section, dark charcoal with a single vivid accent.
+4. `software-manual` — Software Manual — admins/operators of a software system — numbered procedures, callout boxes (note/warning/tip components), step tables, teal accent.
+5. `end-user-guide` — End-User Guide — non-technical users — friendly rounded type, big screenshots slots, "Do this" cards, warm orange accent, high contrast.
+6. `data-dashboard` — Data Dashboard — analysts and ops — dark-first, grid of KPI tiles and charts, compact tables, cyan/lime palette (chart.js).
+7. `keboola-website` — Keboola Website — public-facing content in Keboola's brand — inspired by https://www.keboola.com/ (fetch it; derive the palette, typography feel and section rhythm; do not copy text or logos); chart.js + mermaid.
+8. `oldschool-memo` — Old-School Memo — internal memos with a 1990s corporate feel — Times/Georgia, black on cream, underlined links, ruled tables, no rounded corners, no shadows.
+9. `academic-paper` — Academic Paper — research notes and whitepapers — two-column-feeling single column, Computer-Modern-like serif, numbered sections, footnote component, figure captions.
+10. `incident-postmortem` — Incident Post-mortem — SRE/on-call — timeline component, severity badges, impact table, red/amber/green status tokens, mermaid sequence/timeline diagrams.
+
+Each bundle follows the spec's *Bundle* section exactly (DTCG base light tokens + `modes.dark`, typed `roles`, `guidance` as a real brand brief with the recommended outline, 3–6 `components` with html+css using only `var(--…)` from the tokens, `charts`/`diagrams` declared where sensible, Google Fonts links only). Tokens use the KBC DTCG profile (see `src/tokens.py` docstring): every leaf has `$type`; aliases `{path}`; colours as hex; dimensions as `px`/`rem` strings; families as arrays.
+
+Steps: write the ten files → `uv run python scripts/register_design_systems.py --dry-run` (needs `src/designs.py`, so after Track 2 merges) → the test above → commit `examples: ten sample design systems and a registration script`. Registration on production happens in the release step of the Integration section (after deploy), never against the live hub before 0.16.0 is deployed (the routes do not exist there yet).
+
+## Track 7 — landing page "See the demo" and a showcase artifact (added 2026-09-15)
+
+**Goal:** the landing page's "See the demo" button opens a published showcase artifact that explains, with screenshots, how design systems are used; the landing page itself gets a short "Design systems" section.
+
+**Files:**
+- Modify: `src/pages.py` `landing_page` — add a `// design systems` card row (what they are, `GET /api/design-systems`, `/ds/{id}`, the agent sentence "use the corporate design, version 1") next to the existing feature cards; reuse `_card`; keep `demo_url` as the single "See the demo" target.
+- Create: `examples/showcase/design-systems-demo.md` — the showcase document source (Markdown): what a design system is, the 10 sample systems with a screenshot of each style guide, the fresh-session agent flow (transcript-style), the publish call with `design_system`, and links to every sample's `/ds/{id}` page. Screenshots are PNGs captured from the deployed hub's `/ds/{id}` pages (browser tool, viewport 1280×800), stored under `examples/showcase/screenshots/<slug>.png` and inlined as data URIs when publishing (the hub's git publish path inlines relative images automatically — so publish this via `git_url` pointing at the repo's `examples/showcase` after merge, or via `markdown` with pre-inlined images).
+- Set `HUB_DEMO_URL` on the deployed app to the published showcase URL (`kbagent data-app secrets-set`); it is a non-secret setting but lives in the same env block.
+- Test: `tests/test_agent_discovery.py` gains an assertion that the landing page mentions design systems and `/api/design-systems`.
+
+Steps: after 0.16.0 is deployed and Track 6 registered → capture screenshots → write the showcase → publish it (owner project) → set `HUB_DEMO_URL` → redeploy → verify the landing button.
