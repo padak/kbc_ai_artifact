@@ -284,11 +284,18 @@ def test_health_shape(api: Api) -> None:
     resp = api.client.get("/health")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) == {"status", "version", "artifacts", "hydrated"}
+    assert set(body) == {
+        "status",
+        "version",
+        "artifacts",
+        "design_systems",
+        "hydrated",
+    }
     assert body["status"] == "ok"
     assert body["version"] == main.SERVICE_VERSION
     assert body["version"]
     assert isinstance(body["artifacts"], int)
+    assert isinstance(body["design_systems"], int)
     assert isinstance(body["hydrated"], bool)
     assert body["hydrated"] is True
     assert body["artifacts"] == 0

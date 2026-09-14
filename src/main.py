@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import threading
+import time
 import tomllib
 from collections import OrderedDict
 from contextlib import asynccontextmanager, contextmanager
@@ -60,7 +61,7 @@ from fastapi.responses import (
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from src import builder, export
+from src import builder, designkit, export, pages
 from src.auth import (
     STACK_ALIASES,
     AuthError,
@@ -84,6 +85,19 @@ from src.comments import (
     guest_author,
 )
 from src.config import Settings, load_settings
+from src.designs import (
+    ROLE_TYPES,
+    SLUG_RE,
+    BundleError,
+    DesignSystemMeta,
+    DesignSystemStore,
+    DesignSystemVersion,
+    LastVersion,
+    NotHydrated,
+    SlugTaken,
+    VersionLimit,
+    validate_bundle,
+)
 from src.diff import DiffError, compute_diff
 from src.kbc import BackendError, KbcFilesBackend
 from src.kbclogin import (
@@ -125,6 +139,7 @@ from src.security import (
     new_artifact_id,
 )
 from src.statedb import StateDB, foreign_writer_detected
+from src.tokens import EMITTED_TYPES, PRESERVED_TYPES, TokenSet, to_css, validate_document
 from src.store import (
     ACCEPT_ALLOWLIST,
     ACCEPT_ANYONE,
@@ -1315,6 +1330,14 @@ async def lifespan(app: FastAPI):
         settings.cache_dir,
         settings.cache_max_entries,
     )
+    app.state.designs = DesignSystemStore(
+        backend,
+        settings.cache_dir,
+        cache_max_entries=settings.cache_max_entries,
+        max_versions=settings.ds_max_versions,
+        max_envelope_bytes=settings.max_envelope_bytes,
+        reap_aborted_after_s=settings.reap_aborted_publish_after_s,
+    )
     # Neither consumer of the master secret ever sees it raw: each gets its own
     # key derived under a distinct label (see security.derive_key). A webhook
     # receiver necessarily learns the key it verifies signatures with, and must
@@ -1353,12 +1376,14 @@ async def lifespan(app: FastAPI):
     webhooks.configure_key_overlap_s(settings.webhook_key_overlap_s)
     app.state.webhooks = webhooks
     try:
-        artifacts, threads = _hydrate(app)
+        artifacts, threads, designs = _hydrate(app)
         app.state.hydrated = True
         logger.info(
-            "Startup hydration complete: %d artifact(s), %d comment thread(s)",
+            "Startup hydration complete: %d artifact(s), %d comment thread(s), "
+            "%d design system(s)",
             artifacts,
             threads,
+            designs,
         )
     except BackendError as exc:
         logger.error(
@@ -1385,11 +1410,22 @@ async def lifespan(app: FastAPI):
         app.state.instance_lock = None
 
 
-def _hydrate(app_obj: FastAPI) -> tuple[int, int]:
-    """Rebuild both indexes from Storage; returns (artifacts, threads)."""
+def _hydrate(app_obj: FastAPI) -> tuple[int, int, int]:
+    """Rebuild every index from Storage; returns (artifacts, threads, designs)."""
     artifacts = app_obj.state.store.hydrate()
     threads = app_obj.state.comments.hydrate()
-    return artifacts, threads
+    designs = app_obj.state.designs.hydrate()
+    # ArtifactStore.hydrate() reaps its own aborted publishes inline; the
+    # design store keeps reaping separate, so it is triggered here — at the
+    # same moment, for the same reason. Housekeeping must never turn a
+    # successful hydration into a failed request, hence the broad catch.
+    try:
+        reaped = app_obj.state.designs.reap_aborted(now_ts=time.time())
+        if reaped:
+            logger.info("Reaped %d aborted design-system registration(s)", reaped)
+    except Exception as exc:  # noqa: BLE001 - housekeeping is best-effort
+        logger.warning("Could not reap aborted design-system registrations: %s", exc)
+    return artifacts, threads, designs
 
 
 #: Markdown shown at the top of the interactive docs (Swagger UI) and in the
@@ -1578,15 +1614,17 @@ def ensure_hydrated(app_obj: FastAPI) -> None:
         if getattr(app_obj.state, "hydrated", False):
             return
         try:
-            artifacts, threads = _hydrate(app_obj)
+            artifacts, threads, designs = _hydrate(app_obj)
         except BackendError as exc:
             logger.warning("Deferred hydration attempt failed: %s", exc)
             return
         app_obj.state.hydrated = True
         logger.info(
-            "Deferred hydration complete: %d artifact(s), %d comment thread(s)",
+            "Deferred hydration complete: %d artifact(s), %d comment thread(s), "
+            "%d design system(s)",
             artifacts,
             threads,
+            designs,
         )
 
 
@@ -1720,18 +1758,27 @@ _BODILESS_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE", "TRACE"})
 #: ``HUB_MAX_SMALL_REQUEST_BYTES``. The list is deliberately an allowlist:
 #: a route added later is bounded tightly until somebody decides otherwise,
 #: which is the safe direction to be wrong in.
-_CONTENT_REQUEST_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("POST", re.compile(r"^/api/artifacts/?$")),
-    ("PUT", re.compile(r"^/api/artifacts/[^/]+/?$")),
-    ("POST", re.compile(r"^/api/artifacts/[^/]+/versions/?$")),
+#: A design-system bundle has its own, separate budget
+#: (``HUB_DS_MAX_BUNDLE_BYTES`` plus envelope slack), so the third element of
+#: each row names which budget the route draws on.
+_CONTENT_REQUEST_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("POST", re.compile(r"^/api/artifacts/?$"), "artifact"),
+    ("PUT", re.compile(r"^/api/artifacts/[^/]+/?$"), "artifact"),
+    ("POST", re.compile(r"^/api/artifacts/[^/]+/versions/?$"), "artifact"),
+    ("POST", re.compile(r"^/api/design-systems/?$"), "design_system"),
+    ("POST", re.compile(r"^/api/design-systems/[^/]+/versions/?$"), "design_system"),
 )
 
 
 def _request_body_limit(method: str, path: str) -> int:
     """Largest request body this method and path may send, in bytes."""
-    for route_method, pattern in _CONTENT_REQUEST_ROUTES:
+    for route_method, pattern, budget in _CONTENT_REQUEST_ROUTES:
         if method == route_method and pattern.match(path):
-            return settings.max_content_request_bytes
+            return (
+                settings.max_content_request_bytes
+                if budget == "artifact"
+                else settings.ds_content_request_bytes
+            )
     return settings.max_small_request_bytes
 
 
@@ -1870,7 +1917,7 @@ async def artifact_headers(request: Request, call_next):
     # nothing this service does needs a Referer: its own fetches are
     # same-origin and authenticate with headers, not with where they came from.
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    if request.url.path.startswith("/a/"):
+    if request.url.path.startswith("/a/") or request.url.path.startswith("/ds/"):
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
         # Orientation for a machine that was handed a share link and reads
         # headers (curl -I, an agent's HEAD probe): where this service
@@ -4021,6 +4068,7 @@ def health(request: Request) -> JSONResponse:
         "status": "ok",
         "version": SERVICE_VERSION,
         "artifacts": request.app.state.store.count(),
+        "design_systems": request.app.state.designs.count(),
         "hydrated": bool(getattr(request.app.state, "hydrated", False)),
     }
     foreign = foreign_writer_detected()
