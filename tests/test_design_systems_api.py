@@ -428,3 +428,47 @@ def test_provenance_errors(api):
     ]["share_id"]
     # untouched by the delete
     assert api.client.get(f"/a/{share}/meta").json()["design_system"]["slug"] == "corp"
+
+
+# --------------------------------------------------------------------------
+# Discovery: /context, /llms.txt, OpenAPI
+# --------------------------------------------------------------------------
+
+
+def test_context_documents_design_systems(api):
+    ctx = api.client.get("/context").json()
+    paths = {(e["method"], e["path"]) for e in ctx["endpoints"]}
+    for m, path in [
+        ("GET", "/api/design-systems"),
+        ("POST", "/api/design-systems"),
+        ("GET", "/api/design-systems/{ref}"),
+        ("PUT", "/api/design-systems/{ref}"),
+        ("POST", "/api/design-systems/{ref}/versions"),
+        ("DELETE", "/api/design-systems/{ref}/versions/{n}"),
+        ("DELETE", "/api/design-systems/{ref}"),
+        ("GET", "/ds/{ref}"),
+        ("GET", "/ds/{ref}/versions"),
+        ("GET", "/ds/{ref}/bundle"),
+        ("GET", "/ds/{ref}/tokens"),
+        ("GET", "/ds/{ref}/css"),
+        ("GET", "/ds/{ref}/starter"),
+        ("GET", "/ds/{ref}/guidance"),
+    ]:
+        assert (m, path) in paths, (m, path)
+    ds = ctx["design_systems"]
+    assert ds["roles"]["accent"] == "color" and ds["ref"]["id_prefix"] == "ds_"
+    assert [step[:1] for step in ds["agent_recipe"]] == [str(i) for i in range(1, 10)]
+    assert "design_system" in ctx["publish_body"]
+    for key in (
+        "ds_max_bundle_bytes",
+        "ds_max_per_project",
+        "ds_max_versions",
+        "ds_max_versions_per_day",
+        "ds_max_tokens",
+        "ds_max_components",
+        "ds_max_palette",
+        "ds_max_font_links",
+        "ds_font_hosts",
+    ):
+        assert key in ctx["limits"], key
+    assert "/api/design-systems" in api.client.get("/llms.txt").text

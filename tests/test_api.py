@@ -365,6 +365,20 @@ def test_context_lists_all_endpoints_and_stack_aliases(api: Api) -> None:
         ("POST", "/api/artifacts/{id}/comments/{tid}/replies"),
         ("POST", "/api/artifacts/{id}/comments/{tid}/resolve"),
         ("DELETE", "/api/artifacts/{id}/comments/{tid}"),
+        ("GET", "/api/design-systems"),
+        ("POST", "/api/design-systems"),
+        ("GET", "/api/design-systems/{ref}"),
+        ("PUT", "/api/design-systems/{ref}"),
+        ("POST", "/api/design-systems/{ref}/versions"),
+        ("DELETE", "/api/design-systems/{ref}/versions/{n}"),
+        ("DELETE", "/api/design-systems/{ref}"),
+        ("GET", "/ds/{ref}"),
+        ("GET", "/ds/{ref}/versions"),
+        ("GET", "/ds/{ref}/bundle"),
+        ("GET", "/ds/{ref}/tokens"),
+        ("GET", "/ds/{ref}/css"),
+        ("GET", "/ds/{ref}/starter"),
+        ("GET", "/ds/{ref}/guidance"),
     }
     assert paths == expected
     assert len(body["endpoints"]) == len(expected)
