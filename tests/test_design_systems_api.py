@@ -357,3 +357,74 @@ def test_style_guide_page(api):
         headers=AUTH_HEADERS,
     ).json()["id"]
     assert api.client.get(f"/ds/{other}/css?mode=dark").status_code == 404
+
+
+# --------------------------------------------------------------------------
+# Provenance on artifact writes
+# --------------------------------------------------------------------------
+
+
+def _publish(client, **body):
+    return client.post(
+        "/api/artifacts", json={"html": "<h1>x</h1>", **body}, headers=AUTH_HEADERS
+    )
+
+
+def test_provenance_is_resolved_stored_and_echoed(api):
+    ds_id = _register(api.client).json()["id"]
+    api.client.post(
+        f"/api/design-systems/{ds_id}/versions",
+        json={"bundle": good_bundle()},
+        headers=AUTH_HEADERS,
+    )
+    r = _publish(api.client, design_system="corp@1")
+    assert r.status_code == 201
+    assert r.json()["design_system"] == {"id": ds_id, "slug": "corp", "version": 1}
+    share = r.json()["share_id"]
+    assert api.client.get(f"/a/{share}/meta").json()["design_system"] == {
+        "id": ds_id,
+        "slug": "corp",
+        "version": 1,
+    }
+    r2 = _publish(api.client, design_system=ds_id)  # head
+    assert r2.json()["design_system"]["version"] == 2
+    assert _publish(api.client).json()["design_system"] is None
+    v = api.client.post(
+        f"/api/artifacts/{r.json()['id']}/versions",
+        json={"html": "<h1>y</h1>", "design_system": f"{ds_id}@2"},
+        headers=AUTH_HEADERS,
+    )
+    assert v.status_code == 201 and v.json()["design_system"]["version"] == 2
+    # The history is newest-first, so sort by version to read the provenance
+    # of v1 and v2 in order.
+    rows = sorted(
+        api.client.get(f"/a/{share}/versions").json()["versions"],
+        key=lambda row: row["version"],
+    )
+    assert [row["design_system"]["version"] for row in rows] == [1, 2]
+
+
+def test_provenance_errors(api):
+    ds_id = _register(api.client).json()["id"]
+    assert _publish(api.client, design_system="corp@9").status_code == 422
+    assert _publish(api.client, design_system="nope").status_code == 422
+    assert _publish(api.client, design_system="corp@0").status_code == 422
+    assert _publish(api.client, design_system="corp@1@2").status_code == 422
+    art = _publish(api.client).json()["id"]
+    # metadata-only PUT: provenance describes content, so it needs content
+    r = api.client.put(
+        f"/api/artifacts/{art}", json={"design_system": "corp"}, headers=AUTH_HEADERS
+    )
+    assert r.status_code == 422
+    r = api.client.put(
+        f"/api/artifacts/{art}",
+        json={"html": "<p>z</p>", "design_system": "corp"},
+        headers=AUTH_HEADERS,
+    )
+    assert r.status_code == 200 and r.json()["design_system"]["slug"] == "corp"
+    api.client.delete(f"/api/design-systems/{ds_id}", headers=AUTH_HEADERS)
+    share = api.client.get("/api/artifacts", headers=AUTH_HEADERS).json()["artifacts"][
+        0
+    ]["share_id"]
+    # untouched by the delete
+    assert api.client.get(f"/a/{share}/meta").json()["design_system"]["slug"] == "corp"

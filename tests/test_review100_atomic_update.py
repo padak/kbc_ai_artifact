@@ -522,6 +522,9 @@ def test_successful_mixed_update_returns_the_unchanged_response_body(
         "head_version",
         "owner_project_id",
         "canonical_file_id",
+        # Added with hosted design systems: the provenance this version
+        # claims, or null. Still not a contract change to the ordering.
+        "design_system",
         *main.artifact_urls("https://testserver", artifact_id),
     }
 

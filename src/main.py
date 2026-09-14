@@ -3029,6 +3029,18 @@ class PublishBody(BaseModel):
             "only the owning project may add versions."
         ),
     )
+    design_system: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "A design system this content was authored against, as 'ref' or "
+            "'ref@n' (id or slug, optionally a version; head when omitted). "
+            "The hub resolves it once and records {id, slug, version} on the "
+            "version. It is a claim of what was used, not a proof of "
+            "conformity, and it is never rewritten or cleared when the design "
+            "system itself changes or is deleted."
+        ),
+    )
 
 
 class UpdateBody(BaseModel):
@@ -3191,6 +3203,18 @@ class UpdateBody(BaseModel):
             "link-local or metadata address. Treated as semi-secret: they are "
             "returned in this response only, never in GET /api/artifacts, "
             "which reports 'webhooks_count' instead."
+        ),
+    )
+    design_system: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "A design system the new content was authored against, as 'ref' "
+            "or 'ref@n' (id or slug, optionally a version; head when "
+            "omitted). Provenance lives on a version, so this is only valid "
+            "together with a content field (422 otherwise). It is a claim of "
+            "what was used, not a proof of conformity, and it is never "
+            "rewritten when the design system itself changes or is deleted."
         ),
     )
 
@@ -3384,6 +3408,18 @@ class VersionBody(BaseModel):
             "no longer the head is flagged 'outdated': true — so a reviewer "
             "can see that the document moved on while the proposal was being "
             "written. Omit when you did not start from a specific version."
+        ),
+    )
+    design_system: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "A design system this content was authored against, as 'ref' or "
+            "'ref@n' (id or slug, optionally a version; head when omitted). "
+            "The hub resolves it once and records {id, slug, version} on the "
+            "version. It is a claim of what was used, not a proof of "
+            "conformity, and it is never rewritten or cleared when the design "
+            "system itself changes or is deleted."
         ),
     )
 
@@ -3969,6 +4005,9 @@ def _artifact_response(
         "head_version": _head_version_of(request, meta.id),
         "owner_project_id": meta.owner.get("project_id"),
         "canonical_file_id": envelope.canonical_file_id,
+        # The design system this version claims it was authored against, or
+        # null. Echoed so a follow-up revision can pin the same version.
+        "design_system": envelope.design_system,
         **artifact_urls(base_url(request), meta.share_id),
     }
     return JSONResponse(status_code=status_code, content=payload)
@@ -7545,6 +7584,7 @@ def publish_artifact(
     _require_exactly_one_content(body)
 
     built, source = _build(body)
+    provenance = _resolve_provenance(request, body.design_system)
     artifact_id = new_artifact_id()
 
     now = _now()
@@ -7606,6 +7646,7 @@ def publish_artifact(
         status=STATUS_LIVE,
         canonical_file_id=canonical_file_id,
         created_at=now,
+        design_system=provenance,
     )
     try:
         store.add_version(envelope)
@@ -7749,6 +7790,11 @@ def update_artifact(
                 "together with new content ('html', 'markdown' or 'git_url')"
             ),
         )
+    if body.design_system is not None and not present:
+        raise HTTPException(
+            status_code=422,
+            detail="design_system is valid only together with new content",
+        )
 
     # A frozen artifact takes no new content. "final" has an escape hatch: the
     # owner may reopen it in this very call by sending status="draft" alongside
@@ -7773,8 +7819,10 @@ def update_artifact(
     # failed but which had half happened. Nothing is persisted until the new
     # content actually exists.
     built = source = None
+    provenance = None
     if present:
         built, source = _build(body)
+        provenance = _resolve_provenance(request, body.design_system)
 
     # Fail-closed write ordering (SEC-100-001, the regressed REL-075-004).
     #
@@ -7862,6 +7910,7 @@ def update_artifact(
                 status=STATUS_LIVE,
                 canonical_file_id=canonical_file_id,
                 created_at=now,
+                design_system=provenance,
             )
             try:
                 envelope.version = store.add_version_next(envelope)
@@ -9187,6 +9236,7 @@ def submit_version(
         return _version_rate_limited()
 
     built, source = _build(body)
+    provenance = _resolve_provenance(request, body.design_system)
     # The canonical copy always goes to the *submitter's* project: whoever
     # wrote a version keeps its source of truth.
     canonical_file_id = _store_canonical(caller, token, artifact_id, built.html)
@@ -9206,6 +9256,7 @@ def submit_version(
         base_version=body.base_version,
         canonical_file_id=canonical_file_id,
         created_at=_now(),
+        design_system=provenance,
     )
     envelope.version = store.add_version_next(envelope)
     # A proposal is news for the owner; an owner's own live version is news for
@@ -9250,6 +9301,9 @@ def submit_version(
             "status": envelope.status,
             "note": envelope.note,
             "base_version": envelope.base_version,
+            # Echoed so a follow-up revision can pin the same design-system
+            # version rather than re-resolving head.
+            "design_system": envelope.design_system,
             # Built from the share id: the version has to be readable at the
             # artifact's *public* address, not its internal handle.
             "url": (
@@ -10278,6 +10332,44 @@ DS_QUERY_MODE_DESC = (
     "Which CSS to emit: 'all' (light plus a dark media query), 'light', or "
     "'dark'. 'dark' is 404 when the design system declares no dark mode."
 )
+
+
+#: ``ref`` or ``ref@n`` — an id or a slug, optionally pinned to a version.
+_PROVENANCE_RE = re.compile(r"^([A-Za-z0-9_-]{2,64})(?:@([1-9][0-9]{0,5}))?$")
+
+
+def _resolve_provenance(request: Request, ref: str | None) -> dict[str, Any] | None:
+    """Turn a ``design_system`` claim into the record stored on a version.
+
+    Resolved once, at write time, so the artifact keeps naming the exact
+    version it was authored against even after the design system moves on or
+    is deleted. Unknown or malformed references are refused (422) rather than
+    stored as-is: a provenance record nobody can resolve is worse than none.
+    """
+    if ref is None:
+        return None
+    m = _PROVENANCE_RE.match(ref.strip())
+    if not m:
+        raise HTTPException(
+            status_code=422,
+            detail="design_system must be 'slug', 'slug@n', 'id' or 'id@n'",
+        )
+    ensure_hydrated(request.app)
+    designs: DesignSystemStore = request.app.state.designs
+    ds_id = designs.resolve_ref(m.group(1))
+    meta = designs.get_meta(ds_id) if ds_id else None
+    if meta is None or designs.head_version(meta.id) is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"design_system '{m.group(1)}' is not registered on this hub",
+        )
+    version = designs.get_version(meta.id, int(m.group(2)) if m.group(2) else None)
+    if version is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"design_system '{ref}' names a version that does not exist",
+        )
+    return {"id": meta.id, "slug": meta.slug, "version": version.version}
 
 
 def _ds_urls(base: str, ds_id: str, version: int | None) -> dict[str, str]:
