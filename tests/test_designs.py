@@ -10,7 +10,17 @@ import dataclasses
 import pytest
 
 from src.config import load_settings
-from src.designs import BundleError, validate_bundle
+from src.designs import (
+    TAG_DS_ALL,
+    BundleError,
+    DesignSystemMeta,
+    DesignSystemStore,
+    DesignSystemVersion,
+    NotHydrated,
+    SlugTaken,
+    validate_bundle,
+)
+from src.kbc import InMemoryFilesBackend
 
 TOKENS = {
     "color": {"$type": "color", "bg": {"$value": "#ffffff"}, "fg": {"$value": "#111111"},
@@ -135,3 +145,88 @@ def test_defaults_and_trimming(settings):
     assert bundle["diagrams"] == {"library": "none", "notes": ""}
     assert bundle["fonts"] == [] and bundle["components"] == [] and bundle["roles"] == {} and bundle["modes"] == {}
     assert bundle["guidance"] == "# x"
+
+
+# --------------------------------------------------------------- the store
+
+OWNER = {"stack_url": "https://connection.keboola.com", "project_id": 123, "project_name": "Test",
+         "key": "123@connection.keboola.com"}
+
+
+def _meta(ds_id="ds_abc", slug="corp", created_at="2026-09-15T00:00:00Z", **kw):
+    return DesignSystemMeta(id=ds_id, slug=slug, name="Corp", description="", owner=OWNER,
+                            created_at=created_at, updated_at="2026-09-15T00:00:00Z", **kw)
+
+
+def _version(ds_id="ds_abc", n=1, bundle=None):
+    return DesignSystemVersion(id=ds_id, version=n, note="", author=OWNER,
+                               created_at="2026-09-15T00:00:00Z",
+                               bundle=bundle or {"tokens": {"c": {"$type": "color", "$value": "#000"}},
+                                                 "guidance": "x"},
+                               warnings=[])
+
+
+@pytest.fixture
+def ds_store(tmp_path):
+    backend = InMemoryFilesBackend()
+    store = DesignSystemStore(backend, tmp_path / "cache", cache_max_entries=8, max_versions=3,
+                              max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
+    store.hydrate()
+    return store, backend
+
+
+def _names_in_write_order(backend):
+    # search_by_tag answers newest-first (id descending); sorting back by id is
+    # what shows the order the store actually wrote the files in.
+    return [f.name for f in sorted(backend.search_by_tag(TAG_DS_ALL), key=lambda f: f.id)]
+
+
+def test_create_writes_meta_then_v1_with_tags(ds_store):
+    store, backend = ds_store
+    store.create(_meta(), _version())
+    assert _names_in_write_order(backend) == ["ds-ds_abc-meta.json", "ds-ds_abc-v1.json"]
+    meta_info = next(f for f in backend.search_by_tag("ds-meta"))
+    assert set(meta_info.tags) == {TAG_DS_ALL, "ds-id-ds_abc", "ds-meta",
+                                   "ds-owner-123@connection.keboola.com", "ds-slug-corp"}
+    v1 = next(f for f in backend.search_by_tag("ds-ver-1"))
+    assert set(v1.tags) == {TAG_DS_ALL, "ds-id-ds_abc", "ds-ver-1"}
+    assert store.resolve_ref("corp") == "ds_abc" and store.resolve_ref("ds_abc") == "ds_abc"
+    assert store.resolve_ref("nope") is None
+    assert store.head_version("ds_abc") == 1
+    assert store.get_version("ds_abc", None).bundle["guidance"] == "x"
+
+
+def test_slug_taken_and_slug_equal_to_id_rejected(ds_store):
+    store, _ = ds_store
+    store.create(_meta(), _version())
+    with pytest.raises(SlugTaken):
+        store.create(_meta(ds_id="ds_other"), _version("ds_other"))
+
+
+def test_hydrate_from_tags_alone_rebuilds_slug_and_owner_index(ds_store, tmp_path):
+    store, backend = ds_store
+    store.create(_meta(), _version())
+    fresh = DesignSystemStore(backend, tmp_path / "cache2", cache_max_entries=8, max_versions=3,
+                              max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
+    assert fresh.hydrate() == 1
+    assert fresh.resolve_ref("corp") == "ds_abc"
+    assert fresh.count_owner("123@connection.keboola.com") == 1
+    assert [m.slug for m in fresh.list_all()] == ["corp"]   # downloads the meta lazily here, not in hydrate
+
+
+def test_meta_only_record_is_inert_publicly_but_owner_visible(ds_store):
+    store, backend = ds_store
+    backend.upload("ds-ds_x-meta.json", _meta("ds_x", "x").to_json(),
+                   [TAG_DS_ALL, "ds-id-ds_x", "ds-meta", "ds-owner-123@connection.keboola.com", "ds-slug-x"])
+    store.hydrate()
+    assert store.list_all() == []
+    assert [m.id for m in store.list_owner("123@connection.keboola.com")] == ["ds_x"]
+    assert store.head_version("ds_x") is None
+    assert store.count() == 0
+
+
+def test_not_hydrated_store_refuses_to_create(tmp_path):
+    store = DesignSystemStore(InMemoryFilesBackend(), tmp_path, cache_max_entries=8, max_versions=3,
+                              max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
+    with pytest.raises(NotHydrated):
+        store.create(_meta(), _version())

@@ -9,11 +9,18 @@ ever sees them.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from src.config import Settings
+from src.kbc import BackendError, FilesBackend
 from src.tokens import (
     EMITTED_TYPES,
     TokenSet,
@@ -23,9 +30,14 @@ from src.tokens import (
     validate_document,
 )
 
+logger = logging.getLogger(__name__)
+
 #: A slug is chosen by the owner and must never collide with an ``ds_``-shaped
 #: id (Key decision 1); the same pattern names a component inside a bundle.
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,39}$")
+#: Every design-system id starts with this, and no slug can (the slug pattern
+#: has no ``_``), so a ``{ref}`` is classified by syntax alone.
+ID_PREFIX = "ds_"
 
 #: Role -> the token type it must point at (Key decision 9). ``chart_palette``
 #: is the one list-valued role; every entry in it is a ``color``.
@@ -263,3 +275,414 @@ def validate_bundle(raw: Any, *, settings: Settings) -> tuple[dict, list[dict[st
             _f("/bundle", f"bundle exceeds {settings.ds_max_bundle_bytes} bytes after normalisation")
         ])
     return out, warnings
+
+
+# ===================================================== records and the store
+
+#: Namespace tag every design-system file carries. ``ArtifactStore.hydrate``
+#: searches ``artifact-hub`` and never sees these; this store searches only
+#: this tag and never sees an artifact.
+TAG_DS_ALL = "artifact-hub-ds"
+TAG_DS_META = "ds-meta"
+_TAG_ID = "ds-id-"
+_TAG_OWNER = "ds-owner-"
+_TAG_SLUG = "ds-slug-"
+_TAG_VER = "ds-ver-"
+SCHEMA_VERSION = 1
+_CACHE_PREFIX = "ds."
+#: Ids safe to build a cache file name from; anything else skips the disk
+#: cache rather than letting a name escape the cache directory.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+CACHE_DIR_MODE = 0o700
+CACHE_FILE_MODE = 0o600
+
+
+def tag_ds_id(ds_id: str) -> str:
+    return _TAG_ID + ds_id
+
+
+def tag_ds_owner(key: str) -> str:
+    return _TAG_OWNER + key
+
+
+def tag_ds_slug(slug: str) -> str:
+    return _TAG_SLUG + slug
+
+
+def tag_ds_version(n: int) -> str:
+    return f"{_TAG_VER}{n}"
+
+
+def _tag_value(tags: list[str], prefix: str) -> str | None:
+    for tag in tags or []:
+        if tag.startswith(prefix):
+            return tag[len(prefix):]
+    return None
+
+
+def _stack_host(url: str) -> str:
+    return urlsplit(url).hostname or ""
+
+
+def _ts(iso: str) -> float:
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+class SlugTaken(ValueError):
+    """The requested slug already names a live registration."""
+
+
+class VersionLimit(ValueError):
+    """The design system already holds the maximum number of versions (409)."""
+
+
+class LastVersion(ValueError):
+    """The only version of a design system may not be deleted (409)."""
+
+
+class NotHydrated(RuntimeError):
+    """The index has not been rebuilt, so uniqueness cannot be established."""
+
+
+@dataclass
+class DesignSystemMeta:
+    id: str
+    slug: str
+    name: str
+    description: str
+    owner: dict
+    created_at: str
+    updated_at: str
+    #: The highest version number ever allocated, persisted before the newest
+    #: version file is deleted so that number is never handed out again.
+    version_high_water: int = 0
+    schema: int = SCHEMA_VERSION
+
+    @property
+    def owner_key(self) -> str:
+        return str(self.owner.get("key", ""))
+
+    def to_json(self) -> bytes:
+        return json.dumps({
+            "schema": self.schema, "id": self.id, "slug": self.slug, "name": self.name,
+            "description": self.description, "owner": self.owner, "created_at": self.created_at,
+            "updated_at": self.updated_at, "version_high_water": self.version_high_water,
+        }, ensure_ascii=False).encode("utf-8")
+
+    @classmethod
+    def from_json(cls, raw: bytes) -> "DesignSystemMeta":
+        d = json.loads(raw.decode("utf-8"))
+        hw = d.get("version_high_water", 0)
+        return cls(
+            id=str(d["id"]), slug=str(d["slug"]), name=str(d.get("name", "")),
+            description=str(d.get("description", "")), owner=dict(d.get("owner") or {}),
+            created_at=str(d.get("created_at", "")), updated_at=str(d.get("updated_at", "")),
+            # Defensive: a truncated or hand-edited record must degrade to "no
+            # high water known", never to a bool or a negative number that
+            # would let the allocator hand out a number already used.
+            version_high_water=(
+                hw if isinstance(hw, int) and not isinstance(hw, bool) and hw > 0 else 0
+            ),
+            schema=int(d.get("schema", SCHEMA_VERSION)),
+        )
+
+    def projection(self, *, head_version: int | None, versions_count: int, mine: bool,
+                   urls: dict) -> dict:
+        """The public catalogue/detail row.
+
+        Owner identity is reduced to project id, project name and stack host:
+        nothing here is a credential, and no stack URL path is exposed.
+        """
+        return {
+            "id": self.id, "slug": self.slug, "name": self.name,
+            "description": self.description,
+            "owner": {"project_id": self.owner.get("project_id"),
+                      "project_name": self.owner.get("project_name"),
+                      "stack_host": _stack_host(str(self.owner.get("stack_url") or ""))},
+            "head_version": head_version, "versions_count": versions_count,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+            "mine": mine, "urls": urls,
+        }
+
+
+@dataclass
+class DesignSystemVersion:
+    id: str
+    version: int
+    note: str
+    author: dict
+    created_at: str
+    bundle: dict
+    warnings: list = field(default_factory=list)
+    schema: int = SCHEMA_VERSION
+
+    def to_json(self) -> bytes:
+        return json.dumps({
+            "schema": self.schema, "id": self.id, "version": self.version, "note": self.note,
+            "author": self.author, "created_at": self.created_at, "bundle": self.bundle,
+            "warnings": self.warnings,
+        }, ensure_ascii=False).encode("utf-8")
+
+    @classmethod
+    def from_json(cls, raw: bytes) -> "DesignSystemVersion":
+        d = json.loads(raw.decode("utf-8"))
+        return cls(id=str(d["id"]), version=int(d["version"]), note=str(d.get("note") or ""),
+                   author=dict(d.get("author") or {}), created_at=str(d.get("created_at", "")),
+                   bundle=dict(d["bundle"]), warnings=list(d.get("warnings") or []),
+                   schema=int(d.get("schema", SCHEMA_VERSION)))
+
+    def public_row(self) -> dict:
+        return {
+            "version": self.version, "note": self.note, "created_at": self.created_at,
+            "author": {"project_id": self.author.get("project_id"),
+                       "project_name": self.author.get("project_name"),
+                       "stack_host": _stack_host(str(self.author.get("stack_url") or ""))},
+            "size_bytes": len(self.to_json()), "warnings_count": len(self.warnings),
+        }
+
+
+@dataclass
+class _Entry:
+    """One logical design system as the index knows it: file pointers only, so
+    hydrate never downloads an envelope."""
+
+    meta_file_id: int = -1
+    #: Superseded meta files still in Storage, retired on the next write.
+    stale_meta_file_ids: set[int] = field(default_factory=set)
+    slug: str = ""
+    owner_key: str = ""
+    versions: dict[int, int] = field(default_factory=dict)   # version -> file id
+    high_water: int = 0                                      # seeded from meta when loaded
+
+    def head(self) -> int | None:
+        return max(self.versions) if self.versions else None
+
+
+class DesignSystemStore:
+    """Storage-Files-backed catalogue of design systems.
+
+    Correct only under this deployment's "exactly one instance, ever"
+    invariant (CLAUDE.md): the index, the version-number allocator and every
+    check-then-act guard below are serialized by a process-local lock and
+    nothing else.
+    """
+
+    def __init__(self, backend: FilesBackend, cache_dir: Path, *, cache_max_entries: int,
+                 max_versions: int, max_envelope_bytes: int,
+                 reap_aborted_after_s: int) -> None:
+        self._backend = backend
+        self._cache_dir = Path(cache_dir)
+        self._cache_max = cache_max_entries
+        self._max_versions = max_versions
+        self._max_bytes = max_envelope_bytes
+        self._reap_after = reap_aborted_after_s
+        self._index: dict[str, _Entry] = {}
+        self._slugs: dict[str, str] = {}
+        self._meta_memory: OrderedDict[tuple[str, int], DesignSystemMeta] = OrderedDict()
+        self._version_memory: OrderedDict[tuple[str, int], DesignSystemVersion] = OrderedDict()
+        self._lock = threading.Lock()
+        self.hydrated = False
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self._cache_dir.chmod(CACHE_DIR_MODE)
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------- hydrate
+    def hydrate(self) -> int:
+        """Rebuild the whole index from Storage tags alone. Downloads nothing."""
+        files = self._backend.search_by_tag(TAG_DS_ALL)
+        index: dict[str, _Entry] = {}
+        for info in files:
+            ds_id = _tag_value(info.tags, _TAG_ID)
+            if not ds_id:
+                logger.warning("Skipping design-system file %s: no ds-id tag", info.name)
+                continue
+            entry = index.setdefault(ds_id, _Entry())
+            if TAG_DS_META in info.tags:
+                # Highest file id wins: a meta update uploads a new file, so an
+                # older one must never resurrect a slug or a high-water mark.
+                if info.id > entry.meta_file_id:
+                    if entry.meta_file_id >= 0:
+                        entry.stale_meta_file_ids.add(entry.meta_file_id)
+                    entry.meta_file_id = info.id
+                    entry.slug = _tag_value(info.tags, _TAG_SLUG) or ""
+                    entry.owner_key = _tag_value(info.tags, _TAG_OWNER) or ""
+                else:
+                    entry.stale_meta_file_ids.add(info.id)
+                continue
+            ver = _tag_value(info.tags, _TAG_VER)
+            if ver and ver.isdigit():
+                n = int(ver)
+                if entry.versions.get(n, -1) < info.id:
+                    entry.versions[n] = info.id
+        # A version with no meta is unreachable: the meta file is what proves
+        # ownership, so without it nobody could read or delete the version.
+        index = {k: v for k, v in index.items() if v.meta_file_id >= 0}
+        with self._lock:
+            self._index = index
+            self._slugs = {e.slug: ds_id for ds_id, e in index.items() if e.slug}
+            self._meta_memory.clear()
+            self._version_memory.clear()
+            self.hydrated = True
+        count = sum(1 for e in index.values() if e.versions)
+        logger.info("Hydrated design-system index: %d system(s)", count)
+        return count
+
+    def count(self) -> int:
+        """Publicly visible systems: a meta with no version does not count."""
+        with self._lock:
+            return sum(1 for e in self._index.values() if e.versions)
+
+    # ------------------------------------------------------------- lookups
+    @staticmethod
+    def is_id_shaped(ref: str) -> bool:
+        return ref.startswith(ID_PREFIX) and _SAFE_ID.match(ref) is not None
+
+    def resolve_ref(self, ref: str) -> str | None:
+        with self._lock:
+            if self.is_id_shaped(ref):
+                return ref if ref in self._index else None
+            return self._slugs.get(ref)
+
+    def head_version(self, ds_id: str) -> int | None:
+        with self._lock:
+            e = self._index.get(ds_id)
+            return e.head() if e else None
+
+    def get_meta(self, ds_id: str) -> DesignSystemMeta | None:
+        with self._lock:
+            e = self._index.get(ds_id)
+            if e is None:
+                return None
+            fid = e.meta_file_id
+            cached = self._meta_memory.get((ds_id, fid))
+        if cached is not None:
+            return cached
+        meta = DesignSystemMeta.from_json(self._read(ds_id, fid))
+        with self._lock:
+            self._meta_memory[(ds_id, fid)] = meta
+            self._trim(self._meta_memory)
+            e = self._index.get(ds_id)
+            # Reading the winning meta is what seeds the allocator after a
+            # restart, so a retired number is never handed out again.
+            if e is not None and meta.version_high_water > e.high_water:
+                e.high_water = meta.version_high_water
+        return meta
+
+    def list_all(self) -> list[DesignSystemMeta]:
+        """The public catalogue: newest change first, slug as the tie-break."""
+        with self._lock:
+            ids = [k for k, e in self._index.items() if e.versions]
+        metas = [m for m in (self.get_meta(i) for i in ids) if m is not None]
+        return sorted(metas, key=lambda m: (-_ts(m.updated_at), m.slug))
+
+    def list_owner(self, owner_key: str) -> list[DesignSystemMeta]:
+        """Everything this project owns, inert meta-only records included."""
+        with self._lock:
+            ids = [k for k, e in self._index.items() if e.owner_key == owner_key]
+        return [m for m in (self.get_meta(i) for i in ids) if m is not None]
+
+    def count_owner(self, owner_key: str) -> int:
+        with self._lock:
+            return sum(1 for e in self._index.values() if e.owner_key == owner_key)
+
+    def get_version(self, ds_id: str, version: int | None) -> DesignSystemVersion | None:
+        with self._lock:
+            e = self._index.get(ds_id)
+            if e is None or not e.versions:
+                return None
+            n = e.head() if version is None else version
+            fid = e.versions.get(n)
+            if fid is None:
+                return None
+            cached = self._version_memory.get((ds_id, fid))
+        if cached is not None:
+            return cached
+        v = DesignSystemVersion.from_json(self._read(ds_id, fid))
+        with self._lock:
+            self._version_memory[(ds_id, fid)] = v
+            self._trim(self._version_memory)
+        return v
+
+    def list_versions(self, ds_id: str) -> list[DesignSystemVersion]:
+        with self._lock:
+            e = self._index.get(ds_id)
+            numbers = sorted(e.versions) if e else []
+        return [v for v in (self.get_version(ds_id, n) for n in numbers) if v is not None]
+
+    # ------------------------------------------------------------- create
+    def create(self, meta: DesignSystemMeta, first: DesignSystemVersion) -> None:
+        """Register a new design system: meta first, then v1 (Key decision 5).
+
+        The gap between the two writes is a legitimate, temporary state -- a
+        meta with no version is inert publicly, still owner-addressable, and
+        :meth:`reap_aborted` clears it once it is too old to be a create still
+        in flight.
+        """
+        if not self.hydrated:
+            raise NotHydrated("design-system index is not hydrated")
+        if not SLUG_RE.match(meta.slug):
+            raise ValueError("malformed slug")
+        with self._lock:
+            if meta.slug in self._slugs or meta.slug in self._index or meta.id in self._index:
+                raise SlugTaken(meta.slug)
+        meta_fid = self._upload_meta(meta)
+        with self._lock:
+            self._index[meta.id] = _Entry(meta_file_id=meta_fid, slug=meta.slug,
+                                          owner_key=meta.owner_key,
+                                          high_water=meta.version_high_water)
+            self._slugs[meta.slug] = meta.id
+        fid = self._backend.upload(f"ds-{meta.id}-v{first.version}.json", first.to_json(),
+                                   [TAG_DS_ALL, tag_ds_id(meta.id), tag_ds_version(first.version)])
+        with self._lock:
+            self._index[meta.id].versions[first.version] = fid
+            self._version_memory[(meta.id, fid)] = first
+            self._trim(self._version_memory)
+
+    # ------------------------------------------------------------- helpers
+    def _upload_meta(self, meta: DesignSystemMeta) -> int:
+        return self._backend.upload(
+            f"ds-{meta.id}-meta.json", meta.to_json(),
+            [TAG_DS_ALL, tag_ds_id(meta.id), TAG_DS_META,
+             tag_ds_owner(meta.owner_key), tag_ds_slug(meta.slug)],
+        )
+
+    def _trim(self, memory: OrderedDict) -> None:
+        while len(memory) > self._cache_max:
+            memory.popitem(last=False)
+
+    def _cache_path(self, ds_id: str, fid: int) -> Path | None:
+        if _SAFE_ID.match(ds_id) is None:
+            return None
+        return self._cache_dir / f"{_CACHE_PREFIX}{ds_id}-{fid}.json"
+
+    def _read(self, ds_id: str, fid: int) -> bytes:
+        """Raw bytes of one immutable file, disk-cached.
+
+        Storage file ids are never reused and a version file is never
+        rewritten, so a cache hit needs no revalidation.
+        """
+        path = self._cache_path(ds_id, fid)
+        if path is not None and path.exists():
+            try:
+                raw = path.read_bytes()
+                if len(raw) <= self._max_bytes:
+                    return raw
+            except OSError:
+                pass
+        raw = self._backend.download(fid)
+        if len(raw) > self._max_bytes:
+            raise BackendError(f"design-system file {fid} exceeds {self._max_bytes} bytes")
+        if path is not None:
+            tmp = path.with_suffix(".tmp")
+            try:
+                tmp.write_bytes(raw)
+                tmp.chmod(CACHE_FILE_MODE)
+                tmp.replace(path)
+            except OSError:
+                pass
+        return raw
