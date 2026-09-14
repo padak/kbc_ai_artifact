@@ -6,6 +6,8 @@ no live Keboola call anywhere.
 """
 
 import dataclasses
+import threading
+import time
 
 import pytest
 
@@ -288,23 +290,30 @@ def test_delete_persists_high_water_first_and_removes_children_before_meta(ds_st
     store, backend = ds_store
     store.create(_meta(), _version())
     store.add_version("ds_abc", lambda n: _version(n=n))
-    order: list[str] = []
+    order: list[tuple[int, str, int]] = []
     real_delete = backend.delete
 
     def spy(fid):
-        order.append(next(f.name for f in backend.search_by_tag(TAG_DS_ALL) if f.id == fid))
+        # The winning meta is the highest-id meta file alive at this moment;
+        # recording it per call is what lets the assertions below tell the
+        # authorizing meta apart from a superseded one (they share a name).
+        winning = max((f.id for f in backend.search_by_tag("ds-meta")), default=-1)
+        name = next(f.name for f in backend.search_by_tag(TAG_DS_ALL) if f.id == fid)
+        order.append((fid, name, winning))
         real_delete(fid)
 
     backend.delete = spy
     store.delete("ds_abc", now="2026-09-15T03:00:00Z")
-    # Every meta file of one system shares a single name, so "children first,
-    # the authorizing meta strictly last" is checked as: the last delete is a
-    # meta, and no version file is deleted after any meta -- superseded metas
-    # are retired next to the winner, never ahead of the children.
-    assert order[-1].endswith("-meta.json")
-    first_meta = min(i for i, n in enumerate(order) if n.endswith("-meta.json"))
-    assert all(not n.endswith("-meta.json") for n in order[:first_meta])
-    assert all(n.endswith("-meta.json") for n in order[first_meta:])
+    # Children first, the authorizing meta strictly last: the final delete is
+    # the file that was still the winning meta when it happened, no version
+    # file is deleted after any meta, and every earlier delete spared the
+    # winner (so a crash part-way always leaves proof of ownership behind).
+    last_fid, last_name, winning_at_last = order[-1]
+    assert last_name.endswith("-meta.json") and last_fid == winning_at_last
+    assert all(fid != winning for fid, _, winning in order[:-1])
+    first_meta = min(i for i, (_, n, _) in enumerate(order) if n.endswith("-meta.json"))
+    assert all(not n.endswith("-meta.json") for _, n, _ in order[:first_meta])
+    assert all(n.endswith("-meta.json") for _, n, _ in order[first_meta:])
     assert backend.search_by_tag(TAG_DS_ALL) == [] and store.resolve_ref("corp") is None
 
 
@@ -331,6 +340,75 @@ def test_partial_delete_keeps_meta_and_never_reuses_numbers(ds_store, tmp_path):
     fresh.hydrate()
     v = fresh.add_version("ds_abc", lambda n: _version(n=n))
     assert v.version == 3
+
+
+def test_add_version_survives_a_failed_meta_refresh(ds_store):
+    store, backend = ds_store
+    store.create(_meta(), _version())
+    real_upload = backend.upload
+
+    def flaky(name, content, tags):
+        # The version file lands; only the trailing updated_at refresh fails.
+        if name.endswith("-meta.json"):
+            raise BackendError("boom")
+        return real_upload(name, content, tags)
+
+    backend.upload = flaky
+    v = store.add_version("ds_abc", lambda n: _version(n=n))
+    backend.upload = real_upload
+    # The append is durable, so the caller must not be told it failed -- an
+    # error here would make an honest retry write a duplicate version.
+    assert v.version == 2
+    assert store.get_version("ds_abc", 2).version == 2
+    assert store.head_version("ds_abc") == 2
+
+
+def test_concurrent_meta_writes_cannot_lose_the_high_water_mark(tmp_path):
+    backend = InMemoryFilesBackend()
+    store = DesignSystemStore(backend, tmp_path / "c", cache_max_entries=8, max_versions=10,
+                              max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
+    store.hydrate()
+    store.create(_meta(), _version())
+    store.add_version("ds_abc", lambda n: _version(n=n))
+    store.add_version("ds_abc", lambda n: _version(n=n))          # versions 1, 2, 3
+
+    entered, release = threading.Event(), threading.Event()
+    real_upload = backend.upload
+    armed = {"yes": True}
+
+    def gated_upload(name, content, tags):
+        # Hold the first meta write open, so the read-modify-write window of
+        # the thread doing it is a certainty rather than a lucky interleaving.
+        if armed["yes"] and name.endswith("-meta.json"):
+            armed["yes"] = False
+            entered.set()
+            release.wait(5)
+        return real_upload(name, content, tags)
+
+    backend.upload = gated_upload
+    renamer = threading.Thread(
+        target=store.update_meta, args=("ds_abc",),
+        kwargs={"name": "Renamed", "description": None, "now": "2026-09-15T04:00:00Z"})
+    renamer.start()
+    assert entered.wait(5)
+    deleter = threading.Thread(
+        target=store.delete_version, args=("ds_abc", 3),
+        kwargs={"now": "2026-09-15T04:00:01Z"})
+    deleter.start()
+    time.sleep(0.05)          # let the deleter reach the point it must wait at
+    release.set()
+    renamer.join(5)
+    deleter.join(5)
+    assert not renamer.is_alive() and not deleter.is_alive()
+
+    # Unserialized, the renamer's meta (read before the deleter persisted the
+    # high water) lands last and reverts it to 0 -- and version 3's file is
+    # already gone, so nothing else records that the number was ever used.
+    fresh = DesignSystemStore(backend, tmp_path / "c2", cache_max_entries=8, max_versions=10,
+                              max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
+    fresh.hydrate()
+    assert fresh.get_meta("ds_abc").version_high_water == 3
+    assert fresh.add_version("ds_abc", lambda n: _version(n=n)).version == 4
 
 
 def test_reap_removes_old_meta_only_records_and_stale_metas(ds_store):
