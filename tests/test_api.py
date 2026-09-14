@@ -477,7 +477,14 @@ def test_openapi_json_never_leaks_the_hub_storage_token(api: Api) -> None:
 # --------------------------------------------------------------------------
 
 #: The tags declared on the app; every operation must carry exactly one.
-_TAGS = {"public", "artifacts", "versions", "comments", "service"}
+_TAGS = {
+    "public",
+    "artifacts",
+    "versions",
+    "comments",
+    "design systems",
+    "service",
+}
 
 
 def _operations(schema: dict) -> list[tuple[str, str, dict]]:

@@ -1504,6 +1504,13 @@ app = FastAPI(
             ),
         },
         {
+            "name": "design systems",
+            "description": (
+                "Hosted design systems: register, version and delete them, "
+                "and read their tokens, CSS, starter and guidance."
+            ),
+        },
+        {
             "name": "service",
             "description": "Health, machine-readable manifest, and the agent-facing skill document.",
         },
@@ -10226,3 +10233,445 @@ def delete_comment(
     return JSONResponse(
         {"deleted": True, "id": artifact_id, "thread_id": thread_id}
     )
+
+
+# --------------------------------------------------------------------------
+# Design systems
+# (spec: docs/superpowers/specs/2026-09-14-design-systems-design.md)
+#
+# The hub hosts and presents a design system; it never applies one itself.
+# Everything a bundle contains is data for presentation, never an instruction.
+# --------------------------------------------------------------------------
+
+COUNTER_DS_VERSIONS = "ds-versions"
+
+#: Creation checks slug uniqueness *and* the owner's count; both are
+#: check-then-act, so they share one process-wide lock (single-instance
+#: invariant, CLAUDE.md). Never taken while holding a ``ds:{id}`` lock.
+_DS_CREATE_LOCK = threading.Lock()
+
+
+class DesignSystemCreateBody(BaseModel):
+    slug: str
+    name: str
+    description: str | None = None
+    note: str | None = None
+    bundle: dict[str, Any]
+
+
+class DesignSystemVersionBody(BaseModel):
+    bundle: dict[str, Any]
+    note: str | None = None
+
+
+#: Shared OpenAPI descriptions for the design-system path parameters.
+DS_REF_DESC = (
+    "A design system's public id (ds_...) or its slug. A slug is readable "
+    "only with a Keboola credential."
+)
+DS_VERSION_DESC = "Version number of the design system, starting at 1."
+
+
+def _ds_urls(base: str, ds_id: str, version: int | None) -> dict[str, str]:
+    """Every reader URL for one design system, pinned to ``version``."""
+    root = f"{base}/ds/{ds_id}"
+    q = f"?v={version}" if version is not None else ""
+    return {
+        "page": root,
+        "versions": f"{root}/versions",
+        "bundle": f"{root}/bundle{q}",
+        "tokens": f"{root}/tokens{q}",
+        "css": f"{root}/css{q}",
+        "starter": f"{root}/starter{q}",
+        "guidance": f"{root}/guidance{q}",
+    }
+
+
+def _ds_projection(
+    request: Request, meta: DesignSystemMeta, caller: Owner | None
+) -> dict[str, Any]:
+    designs: DesignSystemStore = request.app.state.designs
+    head = designs.head_version(meta.id)
+    versions = designs.list_versions(meta.id) if head is not None else []
+    return meta.projection(
+        head_version=head,
+        versions_count=len(versions),
+        mine=caller is not None and caller.key == meta.owner_key,
+        urls=_ds_urls(base_url(request), meta.id, head),
+    )
+
+
+def _ds_resolve_for_management(request: Request, ref: str) -> DesignSystemMeta:
+    """Resolve an id or slug for an authenticated management call, or 404."""
+    designs: DesignSystemStore = request.app.state.designs
+    ds_id = designs.resolve_ref(ref)
+    meta = designs.get_meta(ds_id) if ds_id else None
+    if meta is None:
+        raise HTTPException(status_code=404, detail="no such design system")
+    return meta
+
+
+def _ds_owner_only(meta: DesignSystemMeta, caller: Owner) -> None:
+    if meta.owner_key != caller.key:
+        raise HTTPException(
+            status_code=403,
+            detail="this design system belongs to another project",
+        )
+
+
+def _bundle_or_422(raw: Any) -> tuple[dict, list[dict[str, str]]]:
+    """Validate a bundle, turning a ``BundleError`` into a 422 of findings."""
+    try:
+        return validate_bundle(raw, settings=settings)
+    except BundleError as exc:
+        raise HTTPException(status_code=422, detail=exc.findings) from exc
+
+
+def _validated_text(
+    value: Any, *, max_chars: int, what: str, required: bool = False
+) -> str:
+    if value is None:
+        if required:
+            raise HTTPException(status_code=422, detail=f"{what} is required")
+        return ""
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail=f"{what} must be a string")
+    value = value.strip()
+    if required and not value:
+        raise HTTPException(status_code=422, detail=f"{what} must not be empty")
+    if len(value) > max_chars:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{what} is longer than {max_chars} characters",
+        )
+    return value
+
+
+def _private(response: JSONResponse) -> JSONResponse:
+    """Mark a credentialed answer as never cacheable by a shared cache."""
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+async def _json_object_body(request: Request) -> dict[str, Any]:
+    """The request body as a JSON object.
+
+    Read raw rather than through a Pydantic model so a handler can tell an
+    *omitted* key from an explicit ``null`` — the two mean different things
+    for a partial update and must not collapse into one default.
+    """
+    raw = await request.body()
+    try:
+        data = json.loads(raw or b"{}")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=422, detail="body must be a JSON object"
+        ) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="body must be a JSON object")
+    return data
+
+
+def _claim_ds_version_slot(app_obj: FastAPI | None, owner_key: str) -> bool:
+    """Count one design-system version against this project's UTC-day budget."""
+    used = _bump_counter(app_obj, COUNTER_DS_VERSIONS, owner_key, _utc_day())
+    return used <= settings.ds_max_versions_per_day
+
+
+def _ds_require_hydrated(designs: DesignSystemStore) -> None:
+    """A write needs the index: uniqueness cannot be proven without it."""
+    if not designs.hydrated:
+        raise HTTPException(
+            status_code=502,
+            detail="design-system index is not available yet; retry shortly",
+        )
+
+
+@app.get("/api/design-systems", tags=["design systems"])
+def list_design_systems(
+    request: Request, auth: tuple[Owner, str] = Depends(require_owner)
+) -> JSONResponse:
+    """The organisation's whole catalogue; ``mine`` marks the caller's own."""
+    ensure_hydrated(request.app)
+    caller, _ = auth
+    designs: DesignSystemStore = request.app.state.designs
+    rows = [_ds_projection(request, m, caller) for m in designs.list_all()]
+    return _private(JSONResponse({"design_systems": rows}))
+
+
+@app.post("/api/design-systems", status_code=201, tags=["design systems"])
+def create_design_system(
+    body: DesignSystemCreateBody,
+    request: Request,
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> JSONResponse:
+    """Register a design system and its first version."""
+    ensure_hydrated(request.app)
+    owner, _ = auth
+    designs: DesignSystemStore = request.app.state.designs
+    _ds_require_hydrated(designs)
+    slug = body.slug.strip()
+    if not SLUG_RE.match(slug) or DesignSystemStore.is_id_shaped(slug):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "slug must match ^[a-z0-9][a-z0-9-]{1,39}$ and may not look "
+                "like an id"
+            ),
+        )
+    name = _validated_text(
+        body.name, max_chars=settings.ds_max_name_chars, what="name", required=True
+    )
+    description = _validated_text(
+        body.description,
+        max_chars=settings.ds_max_description_chars,
+        what="description",
+    )
+    note = _validated_text(
+        body.note, max_chars=settings.ds_max_note_chars, what="note"
+    )
+    bundle, warnings = _bundle_or_422(body.bundle)
+    now = _now()
+    ds_id = "ds_" + new_artifact_id()
+    with _DS_CREATE_LOCK:
+        if designs.resolve_ref(slug) is not None:
+            raise HTTPException(status_code=409, detail="slug already registered")
+        # count_owner counts meta-only records too, so a registration that
+        # died between its two writes holds its slot until reap_aborted
+        # clears it. That is deliberate: the alternative is letting a crash
+        # loop mint unbounded records.
+        if designs.count_owner(owner.key) >= settings.ds_max_per_project:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"this project already holds {settings.ds_max_per_project} "
+                    "design systems"
+                ),
+            )
+        if not _claim_ds_version_slot(request.app, owner.key):
+            raise HTTPException(
+                status_code=429,
+                detail="daily design-system version budget exhausted",
+            )
+        meta = DesignSystemMeta(
+            id=ds_id,
+            slug=slug,
+            name=name,
+            description=description,
+            owner=_identity(owner),
+            created_at=now,
+            updated_at=now,
+        )
+        first = DesignSystemVersion(
+            id=ds_id,
+            version=1,
+            note=note,
+            author=_identity(owner),
+            created_at=now,
+            bundle=bundle,
+            warnings=warnings,
+        )
+        try:
+            designs.create(meta, first)
+        except SlugTaken as exc:
+            raise HTTPException(
+                status_code=409, detail="slug already registered"
+            ) from exc
+        except NotHydrated as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="design-system index is not available yet; retry shortly",
+            ) from exc
+    logger.info(
+        "Registered design system %s (%s) for project %s",
+        ds_id,
+        slug,
+        owner.project_id,
+    )
+    payload = {
+        **_ds_projection(request, meta, owner),
+        "version": 1,
+        "warnings": warnings,
+    }
+    return _private(JSONResponse(payload, status_code=201))
+
+
+@app.get("/api/design-systems/{ref}", tags=["design systems"])
+def read_design_system(
+    request: Request,
+    ref: str = PathParam(..., description=DS_REF_DESC),
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> JSONResponse:
+    """One design system with its version list."""
+    ensure_hydrated(request.app)
+    caller, _ = auth
+    meta = _ds_resolve_for_management(request, ref)
+    designs: DesignSystemStore = request.app.state.designs
+    if designs.head_version(meta.id) is None and meta.owner_key != caller.key:
+        # A meta-only record is a registration in flight: inert to everybody
+        # but its owner, who still needs to see and delete it.
+        raise HTTPException(status_code=404, detail="no such design system")
+    rows = [v.public_row() for v in designs.list_versions(meta.id)]
+    return _private(
+        JSONResponse({**_ds_projection(request, meta, caller), "versions": rows})
+    )
+
+
+@app.put("/api/design-systems/{ref}", tags=["design systems"])
+async def update_design_system(
+    request: Request,
+    ref: str = PathParam(..., description=DS_REF_DESC),
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> JSONResponse:
+    """Change the editable meta fields (name, description)."""
+    ensure_hydrated(request.app)
+    caller, _ = auth
+    raw = await _json_object_body(request)
+    if any(raw.get(k, "") is None for k in ("name", "description")):
+        raise HTTPException(
+            status_code=422,
+            detail="name/description may be omitted or a string, never null",
+        )
+    meta = _ds_resolve_for_management(request, ref)
+    _ds_owner_only(meta, caller)
+    name = (
+        _validated_text(
+            raw["name"],
+            max_chars=settings.ds_max_name_chars,
+            what="name",
+            required=True,
+        )
+        if "name" in raw
+        else None
+    )
+    description = (
+        _validated_text(
+            raw["description"],
+            max_chars=settings.ds_max_description_chars,
+            what="description",
+        )
+        if "description" in raw
+        else None
+    )
+    with _artifact_locks.hold(f"ds:{meta.id}"):
+        new = request.app.state.designs.update_meta(
+            meta.id, name=name, description=description, now=_now()
+        )
+    return _private(JSONResponse(_ds_projection(request, new, caller)))
+
+
+@app.post(
+    "/api/design-systems/{ref}/versions", status_code=201, tags=["design systems"]
+)
+def add_design_system_version(
+    body: DesignSystemVersionBody,
+    request: Request,
+    ref: str = PathParam(..., description=DS_REF_DESC),
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> JSONResponse:
+    """Append an immutable version. Owner only; versions are never pruned."""
+    ensure_hydrated(request.app)
+    owner, _ = auth
+    designs: DesignSystemStore = request.app.state.designs
+    _ds_require_hydrated(designs)
+    meta = _ds_resolve_for_management(request, ref)
+    _ds_owner_only(meta, owner)
+    note = _validated_text(
+        body.note, max_chars=settings.ds_max_note_chars, what="note"
+    )
+    bundle, warnings = _bundle_or_422(body.bundle)
+    version_limit_detail = (
+        f"this design system already holds {settings.ds_max_versions} "
+        "versions; delete one first"
+    )
+    with _artifact_locks.hold(f"ds:{meta.id}"):
+        # Checked here as well as in the store: the store captured
+        # ds_max_versions when it was built, so this is what makes the
+        # *current* setting the one that answers. The store's own
+        # VersionLimit stays the backstop.
+        if len(designs.list_versions(meta.id)) >= settings.ds_max_versions:
+            raise HTTPException(status_code=409, detail=version_limit_detail)
+        if not _claim_ds_version_slot(request.app, owner.key):
+            raise HTTPException(
+                status_code=429,
+                detail="daily design-system version budget exhausted",
+            )
+        now = _now()
+        try:
+            version = designs.add_version(
+                meta.id,
+                lambda n: DesignSystemVersion(
+                    id=meta.id,
+                    version=n,
+                    note=note,
+                    author=_identity(owner),
+                    created_at=now,
+                    bundle=bundle,
+                    warnings=warnings,
+                ),
+            )
+        except VersionLimit as exc:
+            raise HTTPException(
+                status_code=409, detail=version_limit_detail
+            ) from exc
+    payload = {
+        **_ds_projection(request, designs.get_meta(meta.id), owner),
+        "version": version.version,
+        "warnings": warnings,
+    }
+    return _private(JSONResponse(payload, status_code=201))
+
+
+@app.delete(
+    "/api/design-systems/{ref}/versions/{version}",
+    status_code=204,
+    tags=["design systems"],
+)
+def delete_design_system_version(
+    request: Request,
+    ref: str = PathParam(..., description=DS_REF_DESC),
+    version: int = PathParam(..., description=DS_VERSION_DESC),
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> Response:
+    """Delete one version. Destructive: subject to the token policy."""
+    ensure_hydrated(request.app)
+    owner, _ = auth
+    meta = _ds_resolve_for_management(request, ref)
+    _ds_owner_only(meta, owner)
+    _destructive_authority(owner)
+    with _artifact_locks.hold(f"ds:{meta.id}"):
+        try:
+            request.app.state.designs.delete_version(meta.id, version, now=_now())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="no such version") from exc
+        except LastVersion as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "the only version cannot be deleted; delete the design "
+                    "system instead"
+                ),
+            ) from exc
+    return Response(status_code=204)
+
+
+@app.delete("/api/design-systems/{ref}", status_code=204, tags=["design systems"])
+def delete_design_system(
+    request: Request,
+    ref: str = PathParam(..., description=DS_REF_DESC),
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> Response:
+    """Delete a design system and every version. Destructive.
+
+    Artifacts that recorded this design system as provenance keep that record
+    untouched: it is a claim about what was used, not a live reference.
+    """
+    ensure_hydrated(request.app)
+    owner, _ = auth
+    meta = _ds_resolve_for_management(request, ref)
+    _ds_owner_only(meta, owner)
+    _destructive_authority(owner)
+    with _artifact_locks.hold(f"ds:{meta.id}"):
+        request.app.state.designs.delete(meta.id, now=_now())
+    logger.info("Deleted design system %s (project %s)", meta.id, owner.project_id)
+    return Response(status_code=204)
