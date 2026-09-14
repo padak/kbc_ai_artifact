@@ -212,3 +212,11 @@ def test_landing_page_shows_the_plugin_install_commands(api: Api) -> None:
     text = re.sub(r"<[^>]+>", "", api.client.get("/").text)
     assert "claude plugin marketplace add padak/kbc_ai_artifact" in text
     assert "claude plugin install artifact-hub@kbc-artifact-hub" in text
+
+
+def test_landing_page_mentions_design_systems(api: Api) -> None:
+    page = api.client.get("/").text
+    assert "design systems" in page
+    assert "/api/design-systems" in page
+    assert "/ds/{id}" in page
+    assert "/skill" in page
