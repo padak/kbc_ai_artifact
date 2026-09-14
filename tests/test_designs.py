@@ -16,11 +16,13 @@ from src.designs import (
     DesignSystemMeta,
     DesignSystemStore,
     DesignSystemVersion,
+    LastVersion,
     NotHydrated,
     SlugTaken,
+    VersionLimit,
     validate_bundle,
 )
-from src.kbc import InMemoryFilesBackend
+from src.kbc import BackendError, InMemoryFilesBackend
 
 TOKENS = {
     "color": {"$type": "color", "bg": {"$value": "#ffffff"}, "fg": {"$value": "#111111"},
@@ -230,3 +232,105 @@ def test_not_hydrated_store_refuses_to_create(tmp_path):
                               max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
     with pytest.raises(NotHydrated):
         store.create(_meta(), _version())
+
+
+# ------------------------------------------------------------ mutation
+
+def test_add_version_allocates_after_high_water_even_after_restart(ds_store, tmp_path):
+    store, backend = ds_store
+    store.create(_meta(), _version())
+    store.add_version("ds_abc", lambda n: _version(n=n))
+    store.add_version("ds_abc", lambda n: _version(n=n))
+    store.delete_version("ds_abc", 3, now="2026-09-15T01:00:00Z")
+    fresh = DesignSystemStore(backend, tmp_path / "c2", cache_max_entries=8, max_versions=3,
+                              max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
+    fresh.hydrate()
+    v = fresh.add_version("ds_abc", lambda n: _version(n=n))
+    assert v.version == 4                               # never 3 again
+    assert fresh.get_meta("ds_abc").version_high_water == 3
+
+
+def test_version_limit_is_a_409_not_a_prune(ds_store):
+    store, _ = ds_store
+    store.create(_meta(), _version())
+    store.add_version("ds_abc", lambda n: _version(n=n))
+    store.add_version("ds_abc", lambda n: _version(n=n))
+    with pytest.raises(VersionLimit):
+        store.add_version("ds_abc", lambda n: _version(n=n))
+    assert sorted(v.version for v in store.list_versions("ds_abc")) == [1, 2, 3]
+
+
+def test_delete_only_version_refused(ds_store):
+    store, _ = ds_store
+    store.create(_meta(), _version())
+    with pytest.raises(LastVersion):
+        store.delete_version("ds_abc", 1, now="2026-09-15T01:00:00Z")
+
+
+def test_update_meta_uploads_new_file_and_retires_old(ds_store):
+    store, backend = ds_store
+    store.create(_meta(), _version())
+    store.update_meta("ds_abc", name="Corp 2", description=None, now="2026-09-15T02:00:00Z")
+    metas = backend.search_by_tag("ds-meta")
+    assert len(metas) == 1 and store.get_meta("ds_abc").name == "Corp 2"
+    assert store.get_meta("ds_abc").updated_at == "2026-09-15T02:00:00Z"
+
+
+def test_delete_persists_high_water_first_and_removes_children_before_meta(ds_store):
+    store, backend = ds_store
+    store.create(_meta(), _version())
+    store.add_version("ds_abc", lambda n: _version(n=n))
+    order: list[str] = []
+    real_delete = backend.delete
+
+    def spy(fid):
+        order.append(next(f.name for f in backend.search_by_tag(TAG_DS_ALL) if f.id == fid))
+        real_delete(fid)
+
+    backend.delete = spy
+    store.delete("ds_abc", now="2026-09-15T03:00:00Z")
+    # Every meta file of one system shares a single name, so "children first,
+    # the authorizing meta strictly last" is checked as: the last delete is a
+    # meta, and no version file is deleted after any meta -- superseded metas
+    # are retired next to the winner, never ahead of the children.
+    assert order[-1].endswith("-meta.json")
+    first_meta = min(i for i, n in enumerate(order) if n.endswith("-meta.json"))
+    assert all(not n.endswith("-meta.json") for n in order[:first_meta])
+    assert all(n.endswith("-meta.json") for n in order[first_meta:])
+    assert backend.search_by_tag(TAG_DS_ALL) == [] and store.resolve_ref("corp") is None
+
+
+def test_partial_delete_keeps_meta_and_never_reuses_numbers(ds_store, tmp_path):
+    store, backend = ds_store
+    store.create(_meta(), _version())
+    store.add_version("ds_abc", lambda n: _version(n=n))
+    real_delete = backend.delete
+    calls = {"n": 0}
+
+    def flaky(fid):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise BackendError("boom")
+        real_delete(fid)
+
+    backend.delete = flaky
+    with pytest.raises(BackendError):
+        store.delete("ds_abc", now="2026-09-15T03:00:00Z")
+    backend.delete = real_delete
+    assert store.get_meta("ds_abc") is not None                  # owner can retry
+    fresh = DesignSystemStore(backend, tmp_path / "c3", cache_max_entries=8, max_versions=3,
+                              max_envelope_bytes=1_000_000, reap_aborted_after_s=3600)
+    fresh.hydrate()
+    v = fresh.add_version("ds_abc", lambda n: _version(n=n))
+    assert v.version == 3
+
+
+def test_reap_removes_old_meta_only_records_and_stale_metas(ds_store):
+    store, backend = ds_store
+    backend.upload("ds-ds_x-meta.json", _meta("ds_x", "x", created_at="2026-09-15T00:00:00Z").to_json(),
+                   [TAG_DS_ALL, "ds-id-ds_x", "ds-meta", "ds-owner-k", "ds-slug-x"])
+    store.hydrate()
+    from datetime import datetime, timezone
+    late = datetime(2026, 9, 15, 2, tzinfo=timezone.utc).timestamp()
+    assert store.reap_aborted(now_ts=late) == 1
+    assert store.resolve_ref("x") is None and backend.search_by_tag(TAG_DS_ALL) == []

@@ -13,10 +13,10 @@ import logging
 import re
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from src.config import Settings
@@ -642,6 +642,188 @@ class DesignSystemStore:
             self._index[meta.id].versions[first.version] = fid
             self._version_memory[(meta.id, fid)] = first
             self._trim(self._version_memory)
+
+    # ------------------------------------------------------------- mutate
+    def add_version(self, ds_id: str,
+                    build: Callable[[int], DesignSystemVersion]) -> DesignSystemVersion:
+        """Allocate the next version number and write that version.
+
+        ``build`` receives the assigned number, so the caller never has to
+        guess one: the number is reserved under the lock *before* the slow
+        upload runs, which is what keeps two concurrent submissions in this
+        process from picking the same one.
+        """
+        if not self.hydrated:
+            raise NotHydrated("design-system index is not hydrated")
+        meta = self.get_meta(ds_id)                 # seeds entry.high_water from the winning meta
+        if meta is None:
+            raise KeyError(ds_id)
+        with self._lock:
+            e = self._index[ds_id]
+            if len(e.versions) >= self._max_versions:
+                # A version is immutable and never pruned: the limit is a 409,
+                # not a licence to drop somebody's oldest version.
+                raise VersionLimit(ds_id)
+            n = max([e.high_water, *e.versions.keys(), 0]) + 1
+            e.high_water = n                        # reserve so a concurrent caller cannot pick n
+        version = build(n)
+        fid = self._backend.upload(f"ds-{ds_id}-v{n}.json", version.to_json(),
+                                   [TAG_DS_ALL, tag_ds_id(ds_id), tag_ds_version(n)])
+        with self._lock:
+            e = self._index[ds_id]
+            e.versions[n] = fid
+            self._version_memory[(ds_id, fid)] = version
+            self._trim(self._version_memory)
+        self._save_meta(replace(meta, updated_at=version.created_at))
+        return version
+
+    def update_meta(self, ds_id: str, *, name: str | None, description: str | None,
+                    now: str) -> DesignSystemMeta:
+        """Change the editable meta fields. ``None`` means "leave as it is"."""
+        meta = self.get_meta(ds_id)
+        if meta is None:
+            raise KeyError(ds_id)
+        new = replace(meta,
+                      name=meta.name if name is None else name,
+                      description=meta.description if description is None else description,
+                      updated_at=now)
+        self._save_meta(new)
+        return new
+
+    def _save_meta(self, meta: DesignSystemMeta, *, retire_stale: bool = True) -> None:
+        """Upload a new meta file, publish it, retire the older ones.
+
+        Storage Files are immutable, so every meta change is a new file; the
+        index republishes the pointer before anything is deleted, which is why
+        a crash between the two leaves a readable record rather than none.
+        ``retire_stale=False`` leaves the superseded ids on the entry for the
+        caller to delete later -- :meth:`delete` uses it so no meta file is
+        removed ahead of the version files.
+        """
+        fid = self._upload_meta(meta)
+        with self._lock:
+            e = self._index[meta.id]
+            old = e.meta_file_id
+            e.meta_file_id = fid
+            e.high_water = max(e.high_water, meta.version_high_water)
+            stale = set(e.stale_meta_file_ids) | ({old} if old >= 0 else set())
+            e.stale_meta_file_ids = set() if retire_stale else stale
+            self._meta_memory[(meta.id, fid)] = meta
+            self._trim(self._meta_memory)
+        if not retire_stale:
+            return
+        for sid in sorted(stale):
+            try:
+                self._backend.delete(sid)
+            except BackendError as exc:            # leave it for reap_aborted
+                logger.warning("Could not retire stale meta %s: %s", sid, exc)
+                with self._lock:
+                    self._index[meta.id].stale_meta_file_ids.add(sid)
+
+    def delete_version(self, ds_id: str, version: int, *, now: str) -> None:
+        """Remove one version file. The only version of a system is a 409."""
+        meta = self.get_meta(ds_id)
+        if meta is None:
+            raise KeyError(ds_id)
+        with self._lock:
+            e = self._index[ds_id]
+            if version not in e.versions:
+                raise KeyError(version)
+            if len(e.versions) == 1:
+                raise LastVersion(ds_id)
+            fid = e.versions[version]
+            is_highest = version == max(e.versions)
+        if is_highest and meta.version_high_water < version:
+            # Persisted *before* the file goes: otherwise a restart would see a
+            # lower highest-surviving number and hand this one out again.
+            self._save_meta(replace(meta, version_high_water=version, updated_at=now))
+        self._backend.delete(fid)
+        with self._lock:
+            self._index[ds_id].versions.pop(version, None)
+            self._version_memory.pop((ds_id, fid), None)
+        self._drop_cache(ds_id, fid)
+
+    def delete(self, ds_id: str, *, now: str) -> None:
+        """Purge a design system: high water first, children next, meta last.
+
+        The meta file is what authorizes the purge, so removing it while any
+        version file survives would leave the leftover unreachable *and*
+        undeletable. A failure part-way therefore leaves the meta in place and
+        reconciles the index from what survived, so the owner can retry.
+        """
+        meta = self.get_meta(ds_id)
+        if meta is None:
+            raise KeyError(ds_id)
+        with self._lock:
+            highest = max(self._index[ds_id].versions or [0])
+        if highest > meta.version_high_water:
+            # A partial purge must not let a later append reuse a number.
+            self._save_meta(replace(meta, version_high_water=highest, updated_at=now),
+                            retire_stale=False)
+        with self._lock:
+            e = self._index[ds_id]
+            children = sorted(e.versions.items())
+            stale = sorted(e.stale_meta_file_ids)
+        for n, fid in children:                       # children first ...
+            self._backend.delete(fid)                 # BackendError propagates: meta stays
+            with self._lock:
+                self._index[ds_id].versions.pop(n, None)
+            self._drop_cache(ds_id, fid)
+        for sid in stale:                             # ... superseded metas ...
+            self._backend.delete(sid)
+            with self._lock:
+                self._index[ds_id].stale_meta_file_ids.discard(sid)
+        with self._lock:
+            meta_fid = self._index[ds_id].meta_file_id
+        self._backend.delete(meta_fid)                # ... the winning meta strictly last
+        with self._lock:
+            entry = self._index.pop(ds_id, None)
+            if entry is not None:
+                self._slugs.pop(entry.slug, None)
+            for key in [k for k in self._meta_memory if k[0] == ds_id]:
+                self._meta_memory.pop(key, None)
+        self._drop_cache(ds_id, meta_fid)
+
+    def reap_aborted(self, *, now_ts: float) -> int:
+        """Remove meta-only records older than the reap window, and every
+        stale meta file left behind by a failed retirement.
+
+        A meta with no version is either a create still in flight or one that
+        died between its two writes; age is the only thing that tells them
+        apart, which is why the window exists at all. Returns how many records
+        were removed.
+        """
+        removed = 0
+        with self._lock:
+            candidates = [(k, e.meta_file_id, sorted(e.stale_meta_file_ids))
+                          for k, e in self._index.items() if not e.versions]
+            stale_only = [(k, sorted(e.stale_meta_file_ids))
+                          for k, e in self._index.items() if e.versions and e.stale_meta_file_ids]
+        for ds_id, meta_fid, stale in candidates:
+            meta = self.get_meta(ds_id)
+            if meta is None or now_ts - _ts(meta.created_at) < self._reap_after:
+                continue
+            for sid in stale + [meta_fid]:
+                self._backend.delete(sid)
+            with self._lock:
+                e = self._index.pop(ds_id, None)
+                if e is not None:
+                    self._slugs.pop(e.slug, None)
+            removed += 1
+        for ds_id, stale in stale_only:
+            for sid in stale:
+                self._backend.delete(sid)
+                with self._lock:
+                    self._index[ds_id].stale_meta_file_ids.discard(sid)
+        return removed
+
+    def _drop_cache(self, ds_id: str, fid: int) -> None:
+        path = self._cache_path(ds_id, fid)
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # ------------------------------------------------------------- helpers
     def _upload_meta(self, meta: DesignSystemMeta) -> int:
