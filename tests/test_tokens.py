@@ -5,6 +5,10 @@ from src.tokens import (
     TokenLimits,
     TokenSet,
     TokenValidationError,
+    concrete_value,
+    css_value,
+    to_css,
+    validate_document,
     variable_name,
 )
 
@@ -175,3 +179,85 @@ def test_merge_detects_cycle_introduced_by_override():
     base = _parsed({"a": {"$type": "color", "$value": "#000"}, "b": {"$type": "color", "$value": "{a}"}})
     with pytest.raises(TokenValidationError):
         base.merged({"a": {"$value": "{b}"}}, limits=LIMITS)
+
+
+def _one(doc, dotted):
+    ts = _parsed(doc)
+    return css_value(ts.by_dotted(dotted), ts)
+
+
+def test_color_forms():
+    assert _one({"c": {"$type": "color", "$value": "#abc"}}, "c") == [("--c", "#abc")]
+    obj = {"colorSpace": "srgb", "components": [1, 0, 0], "alpha": 0.5, "hex": "#ff0000"}
+    assert _one({"c": {"$type": "color", "$value": obj}}, "c") == [("--c", "rgb(255 0 0 / 0.5)")]
+    obj_opaque = {"colorSpace": "srgb", "components": [1, 0, 0], "hex": "#ff0000"}
+    assert _one({"c": {"$type": "color", "$value": obj_opaque}}, "c") == [("--c", "#ff0000")]
+    with pytest.raises(TokenValidationError) as exc:
+        _one({"c": {"$type": "color", "$value": {"colorSpace": "display-p3", "components": [1, 0, 0]}}}, "c")
+    assert "colorSpace 'display-p3' is not supported" in exc.value.findings[0]["message"]
+
+
+def test_dimension_font_and_misc_forms():
+    assert _one({"d": {"$type": "dimension", "$value": {"value": 16, "unit": "px"}}}, "d") == [("--d", "16px")]
+    assert _one({"f": {"$type": "fontFamily", "$value": ["Inter", "Helvetica Neue", "sans-serif"]}}, "f") == \
+        [("--f", 'Inter, "Helvetica Neue", sans-serif')]
+    assert _one({"w": {"$type": "fontWeight", "$value": 600}}, "w") == [("--w", "600")]
+    assert _one({"t": {"$type": "duration", "$value": {"value": 200, "unit": "ms"}}}, "t") == [("--t", "200ms")]
+    assert _one({"e": {"$type": "cubicBezier", "$value": [0.4, 0, 0.2, 1]}}, "e") == [("--e", "cubic-bezier(0.4, 0, 0.2, 1)")]
+    sh = {"color": "#0003", "offsetX": "0px", "offsetY": "2px", "blur": "4px", "spread": "0px"}
+    assert _one({"s": {"$type": "shadow", "$value": [sh, {**sh, "inset": True}]}}, "s") == \
+        [("--s", "0px 2px 4px 0px #0003, inset 0px 2px 4px 0px #0003")]
+    assert _one({"b": {"$type": "border", "$value": {"width": "1px", "style": "solid", "color": "#ccc"}}}, "b") == \
+        [("--b", "1px solid #ccc")]
+
+
+def test_typography_emits_subvariables_and_alias_to_typography_emits_subaliases():
+    doc = {"h": {"$type": "typography", "$value": {"fontFamily": "Inter", "fontSize": "2rem",
+           "fontWeight": 700, "lineHeight": 1.2, "letterSpacing": "-0.01em"}},
+           "title": {"$value": "{h}"}}
+    ts = _parsed(doc)
+    assert css_value(ts.by_dotted("h"), ts) == [
+        ("--h-font-family", "Inter"), ("--h-font-size", "2rem"), ("--h-font-weight", "700"),
+        ("--h-line-height", "1.2"), ("--h-letter-spacing", "-0.01em")]
+    assert css_value(ts.by_dotted("title"), ts) == [
+        ("--title-font-family", "var(--h-font-family)"), ("--title-font-size", "var(--h-font-size)"),
+        ("--title-font-weight", "var(--h-font-weight)"), ("--title-line-height", "var(--h-line-height)"),
+        ("--title-letter-spacing", "var(--h-letter-spacing)")]
+
+
+def test_alias_emits_var_and_concrete_value_follows_chain():
+    ts = _parsed({"a": {"$type": "color", "$value": "#123"}, "b": {"$type": "color", "$value": "{a}"}})
+    assert css_value(ts.by_dotted("b"), ts) == [("--b", "var(--a)")]
+    assert concrete_value(ts, ("b",)) == "#123"
+
+
+def test_css_breakout_characters_are_rejected():
+    for bad in ["red}", "red;", "<x", "a/*", "*/b", "a\x07"]:
+        with pytest.raises(TokenValidationError):
+            _one({"c": {"$type": "color", "$value": bad}}, "c")
+
+
+def test_preserved_types_are_not_emitted():
+    ts = _parsed({"g": {"$type": "gradient", "$value": [{"color": "#000", "position": 0}]}})
+    assert css_value(ts.by_dotted("g"), ts) == []
+
+
+def test_to_css_all_light_dark():
+    base = _parsed({"c": {"$type": "color", "bg": {"$value": "#fff"}, "fg": {"$value": "#000"}}})
+    dark = base.merged({"c": {"bg": {"$value": "#000"}}}, limits=LIMITS)
+    css = to_css(base, dark, mode="all")
+    assert css.startswith(":root {\n  --c-bg: #fff;\n  --c-fg: #000;\n}\n")
+    assert '@media (prefers-color-scheme: dark) {\n  :root:not([data-theme="light"]) {\n    --c-bg: #000;' in css
+    assert ':root[data-theme="dark"] {\n  --c-bg: #000;\n}' in css
+    assert "--c-fg" not in css.split("@media", 1)[1]        # dark blocks carry only changed tokens
+    assert to_css(base, dark, mode="light") == ":root {\n  --c-bg: #fff;\n  --c-fg: #000;\n}\n"
+    assert to_css(base, dark, mode="dark") == ":root {\n  --c-bg: #000;\n  --c-fg: #000;\n}\n"   # flat mode: every token
+    assert to_css(base, None, mode="all") == to_css(base, None, mode="light")
+
+
+def test_validate_document_returns_warnings_for_preserved_types():
+    base, dark, warnings = validate_document(
+        {"g": {"$type": "gradient", "$value": []}, "c": {"$type": "color", "$value": "#000"}},
+        {"c": {"$value": "#111"}}, limits=LIMITS)
+    assert dark is not None
+    assert warnings == [{"path": "/tokens/g", "message": "type 'gradient' is preserved but not emitted as CSS"}]

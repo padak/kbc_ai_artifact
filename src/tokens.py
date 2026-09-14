@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Iterator, NamedTuple
+from typing import Any, Iterator, Literal, NamedTuple
 
 #: Types the hub emits as CSS custom properties.
 EMITTED_TYPES = frozenset(
@@ -260,3 +260,184 @@ class TokenSet:
 
     def __len__(self) -> int:
         return len(self.tokens)
+
+
+# --- CSS emission ---------------------------------------------------------
+
+_BREAKOUT = re.compile(r"[}<;]|/\*|\*/|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _check_css_text(text: str, path: tuple[str, ...]) -> str:
+    if _BREAKOUT.search(text):
+        raise TokenError(_pointer("/tokens", *path),
+                         "value contains characters that could break out of a <style> block")
+    return text
+
+
+def _quote_family(name: str) -> str:
+    name = name.strip()
+    return f'"{name}"' if " " in name and not name.startswith('"') else name
+
+
+def _num(x: Any) -> str:
+    if isinstance(x, bool) or not isinstance(x, (int, float)):
+        raise TokenError("", f"expected a number, got {x!r}")
+    return str(int(x)) if float(x).is_integer() else repr(float(x))
+
+
+def _dim(v: Any) -> str:
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict) and v.get("unit") in ("px", "rem"):
+        return _num(v["value"]) + v["unit"]
+    raise TokenError("", f"unsupported dimension {v!r}")
+
+
+def _color(v: Any) -> str:
+    if isinstance(v, str):
+        return v
+    if not isinstance(v, dict):
+        raise TokenError("", f"unsupported color {v!r}")
+    space = v.get("colorSpace", "srgb")
+    if space != "srgb":
+        raise TokenError("", f"colorSpace '{space}' is not supported in this release (sRGB only)")
+    alpha = v.get("alpha", 1)
+    if v.get("hex") and alpha == 1:
+        return str(v["hex"])
+    comps = v.get("components")
+    if not (isinstance(comps, list) and len(comps) == 3):
+        raise TokenError("", "sRGB color needs three components")
+    r, g, b = (max(0, min(255, round(float(c) * 255))) for c in comps)
+    return f"rgb({r} {g} {b} / {_num(alpha)})" if alpha != 1 else f"rgb({r} {g} {b})"
+
+
+def _shadow(v: Any) -> str:
+    items = v if isinstance(v, list) else [v]
+    parts = []
+    for s in items:
+        if not isinstance(s, dict):
+            raise TokenError("", "shadow must be an object or a list of objects")
+        inset = "inset " if s.get("inset") else ""
+        parts.append(f"{inset}{_dim(s['offsetX'])} {_dim(s['offsetY'])} {_dim(s['blur'])} "
+                     f"{_dim(s.get('spread', '0px'))} {_color(s['color'])}")
+    return ", ".join(parts)
+
+
+def _scalar(tokenset: TokenSet, tok_type: str, value: Any, path: tuple[str, ...]) -> str:
+    """Concrete CSS text for a non-typography value (aliases already followed)."""
+    if is_alias(value):                       # nested alias inside a composite
+        return concrete_value(tokenset, alias_target(value))
+    if tok_type == "color":
+        out = _color(value)
+    elif tok_type == "dimension":
+        out = _dim(value)
+    elif tok_type == "fontFamily":
+        out = ", ".join(_quote_family(f) for f in value) if isinstance(value, list) else _quote_family(str(value))
+    elif tok_type in ("fontWeight", "number"):
+        out = str(value) if isinstance(value, str) else _num(value)
+    elif tok_type == "duration":
+        out = value if isinstance(value, str) else _num(value["value"]) + str(value["unit"])
+    elif tok_type == "cubicBezier":
+        out = "cubic-bezier(" + ", ".join(_num(x) for x in value) + ")"
+    elif tok_type == "shadow":
+        out = _shadow(value)
+    elif tok_type == "border":
+        out = f"{_dim(value['width'])} {value['style']} {_color(value['color'])}"
+    else:
+        raise TokenError("", f"type '{tok_type}' is not emitted")
+    return _check_css_text(out, path)
+
+
+_TYPO_FIELD_TYPES = {"fontFamily": "fontFamily", "fontSize": "dimension", "fontWeight": "fontWeight",
+                     "lineHeight": "number", "letterSpacing": "dimension"}
+
+
+def _typography_parts(tokenset: TokenSet, value: dict, path: tuple[str, ...]) -> list[tuple[str, str]]:
+    out = []
+    for field, suffix in TYPOGRAPHY_SUBS:
+        if field not in value:
+            raise TokenError("", f"typography value lacks '{field}'")
+        out.append((suffix, _scalar(tokenset, _TYPO_FIELD_TYPES[field], value[field], path)))
+    return out
+
+
+def css_value(token: Token, tokenset: TokenSet) -> list[tuple[str, str]]:
+    """``(--name, css text)`` pairs one token emits; empty for preserved types."""
+    if token.type in PRESERVED_TYPES:
+        return []
+    name = variable_name(token.path)
+    try:
+        if is_alias(token.value):
+            target = tokenset.resolved(token.path)
+            if target.type == "typography":
+                tname = variable_name(target.path)
+                return [(f"{name}-{s}", f"var({tname}-{s})") for _, s in TYPOGRAPHY_SUBS]
+            return [(name, f"var({variable_name(alias_target(token.value))})")]
+        if token.type == "typography":
+            if not isinstance(token.value, dict):
+                raise TokenError("", "typography value must be an object")
+            return [(f"{name}-{s}", v) for s, v in _typography_parts(tokenset, token.value, token.path)]
+        return [(name, _scalar(tokenset, token.type, token.value, token.path))]
+    except TokenError as err:
+        raise TokenValidationError([{"path": _pointer("/tokens", *token.path),
+                                     "message": err.message}]) from err
+    except (KeyError, TypeError, ValueError) as err:
+        raise TokenValidationError([{"path": _pointer("/tokens", *token.path),
+                                     "message": f"malformed {token.type} value: {err}"}]) from err
+
+
+def concrete_value(tokenset: TokenSet, path: tuple[str, ...]) -> str:
+    """Alias-followed concrete CSS value; typography collapses to a ``font`` shorthand."""
+    tok = tokenset.resolved(path)
+    if tok.type == "typography":
+        parts = dict(_typography_parts(tokenset, tok.value, tok.path))
+        return f"{parts['font-weight']} {parts['font-size']}/{parts['line-height']} {parts['font-family']}"
+    return _scalar(tokenset, tok.type, tok.value, tok.path)
+
+
+def _block(selector: str, pairs: list[tuple[str, str]], indent: str = "") -> str:
+    lines = [f"{indent}{selector} {{"]
+    lines.extend(f"{indent}  {name}: {value};" for name, value in pairs)
+    lines.append(f"{indent}}}")
+    return "\n".join(lines) + "\n"
+
+
+def _pairs(ts: TokenSet) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for tok in ts:
+        out.extend(css_value(tok, ts))
+    return out
+
+
+def to_css(base: TokenSet, dark: TokenSet | None, *, mode: Literal["all", "light", "dark"]) -> str:
+    """The stylesheet for one bundle: ``all`` adds the two dark blocks, the
+    flat modes emit every token under ``:root``."""
+    if mode == "light" or dark is None:
+        return _block(":root", _pairs(base))
+    if mode == "dark":
+        return _block(":root", _pairs(dark))
+    light_pairs = _pairs(base)
+    unchanged = set(light_pairs)          # hoisted: the limit allows thousands of tokens
+    changed = [p for p in _pairs(dark) if p not in unchanged]
+    return (_block(":root", light_pairs)
+            + "@media (prefers-color-scheme: dark) {\n"
+            + _block(':root:not([data-theme="light"])', changed, indent="  ")
+            + "}\n"
+            + _block(':root[data-theme="dark"]', changed))
+
+
+def validate_document(document: dict, overrides: dict | None, *, limits: TokenLimits
+                      ) -> tuple[TokenSet, TokenSet | None, list[dict[str, str]]]:
+    """Parse + resolve base and dark, emit once to surface value errors, collect warnings."""
+    base = TokenSet.parse(document, limits=limits)
+    base.resolve(limits=limits)
+    dark = base.merged(overrides, limits=limits) if overrides else None
+    warnings: list[dict[str, str]] = []
+    for tok in base:
+        if tok.type in PRESERVED_TYPES:
+            warnings.append({"path": _pointer("/tokens", *tok.path),
+                             "message": f"type '{tok.type}' is preserved but not emitted as CSS"})
+    _pairs(base)
+    if dark is not None:
+        _pairs(dark)
+    return base, dark, warnings
