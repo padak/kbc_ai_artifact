@@ -1,0 +1,326 @@
+{
+  "slug": "exec-report",
+  "name": "Executive Report",
+  "description": "A restrained navy-and-gold monthly or quarterly report: serif headings, generous whitespace, KPI cards and print-friendly tables.",
+  "note": "Initial version: light + dark, four components, print-safe palette.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#ffffff"
+          },
+          "card": {
+            "$value": "#fbfaf7"
+          },
+          "subtle": {
+            "$value": "#f3f1ea"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#14284b"
+          },
+          "secondary": {
+            "$value": "#5d6b82"
+          },
+          "inverse": {
+            "$value": "#ffffff"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#dcd8cc"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#14284b",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#ffffff"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#2f6f4f"
+          },
+          "warn": {
+            "$value": "#9a6a10"
+          },
+          "danger": {
+            "$value": "#8c2f26"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#14284b"
+          },
+          "2": {
+            "$value": "#b8862b"
+          },
+          "3": {
+            "$value": "#3d6b9c"
+          },
+          "4": {
+            "$value": "#7d8ba3"
+          },
+          "5": {
+            "$value": "#2f6f4f"
+          },
+          "6": {
+            "$value": "#8c2f26"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Inter",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Source Serif 4",
+              "Georgia",
+              "Times New Roman",
+              "serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "2px"
+        },
+        "md": {
+          "$value": "4px"
+        },
+        "lg": {
+          "$value": "8px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "6px"
+        },
+        "sm": {
+          "$value": "12px"
+        },
+        "md": {
+          "$value": "20px"
+        },
+        "lg": {
+          "$value": "36px"
+        },
+        "xl": {
+          "$value": "64px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.8125rem"
+        },
+        "body": {
+          "$value": "1.0625rem"
+        },
+        "h3": {
+          "$value": "1.25rem"
+        },
+        "h2": {
+          "$value": "1.75rem"
+        },
+        "h1": {
+          "$value": "2.75rem"
+        }
+      },
+      "accent2": {
+        "$type": "color",
+        "gold": {
+          "$value": "#b8862b",
+          "$description": "Secondary accent: rules and KPI deltas."
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.2
+        },
+        "body": {
+          "$value": 1.7
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#0e1626"
+            },
+            "card": {
+              "$value": "#151f33"
+            },
+            "subtle": {
+              "$value": "#1b2740"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#eaeef6"
+            },
+            "secondary": {
+              "$value": "#a3b0c6"
+            },
+            "inverse": {
+              "$value": "#0e1626"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#2a3752"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#c9d8f0"
+            },
+            "on-primary": {
+              "$value": "#0e1626"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#59b98a"
+            },
+            "warn": {
+              "$value": "#d9a441"
+            },
+            "danger": {
+              "$value": "#e0736a"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#c9d8f0"
+            },
+            "2": {
+              "$value": "#d9a441"
+            },
+            "3": {
+              "$value": "#7fa9d9"
+            },
+            "4": {
+              "$value": "#9aa8be"
+            },
+            "5": {
+              "$value": "#59b98a"
+            },
+            "6": {
+              "$value": "#e0736a"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.lg}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Executive Report\n\nA monthly or quarterly report that a busy executive reads in eight minutes and\nthen forwards. It must survive being printed in black and white.\n\n## Principles\n\n1. **Conclusion first.** Every section opens with the finding in one sentence,\n   then the evidence. Never make the reader assemble the point themselves.\n2. **Whitespace is authority.** Crowding reads as anxious; the page should feel\n   unhurried even when the news is bad.\n3. **One number per idea.** A KPI card carries a single headline figure and a\n   single delta. If two numbers matter, use two cards.\n\n## Layout grid\n\nSingle column, `max-width: 42rem`, `--space-xl` between top-level sections.\nKPI cards sit in a flex row of two to four; below `40rem` they stack. Tables\nand charts may span to `52rem`. Leave the top of the document to a title\nblock: report name, period, author, date — nothing else.\n\n## Typography\n\nHeadings use the serif family at `--size-h1` / `--size-h2` / `--size-h3`, body\nis Inter at `--size-body` with `--line-body`. The generous body size is\ndeliberate; do not shrink it to fit more in. Numbers in KPI cards use the\nserif at display size, tabular figures where available.\n\n## Colour usage\n\nNavy (`--color-brand-primary`) for headings, rules and the primary chart\nseries. Gold (`--accent2-gold`) is the *only* secondary accent: a thin rule\nunder a section heading, a positive delta, a highlighted row. Never fill a\nlarge area with gold. Background is white; cards are the warm off-white\n`--color-bg-card`. Assume a grayscale printer: no meaning may rest on hue\nalone — always pair a colour with a label, an arrow or a sign.\n\n## Charts\n\nChart.js. Bars for comparisons, lines for trends over time, nothing else. Axis\nlabels always present, gridlines light, no 3-D, no doughnuts. Cap at five\nseries, palette in order. Every chart has a one-sentence caption under it\nstating the takeaway, not the contents.\n\n## Diagrams\n\nMermaid only when a dependency or an org relationship genuinely needs it —\n`flowchart TD`, no more than eight nodes. A table is usually better.\n\n## Components and when to use each\n\n- `kpi-card` — the headline metric of a section, two to four in a row, at the\n  top of the report or the top of a section. Never mid-paragraph.\n- `section-lead` — the one-sentence conclusion that opens every section.\n- `data-table` — comparison across periods or business units; right-align all\n  numbers.\n- `callout-quote` — a pulled statement from a stakeholder or a board question\n  the report answers. At most one per report.\n\n## Do / don't\n\n- **Do** state the period explicitly in every chart caption and table header.\n- **Do** mark estimates and forecasts as such, inline.\n- **Don't** use emoji, exclamation marks, or an accent colour for emphasis in\n  running text — use bold.\n- **Don't** let a chart carry information that is not repeated in text.\n- **Don't** add a company logo; the reader knows whose report this is.\n",
+    "components": [
+      {
+        "name": "kpi-card",
+        "description": "One headline metric with a signed delta.",
+        "when_to_use": "Two to four in a row at the top of the report or a section.",
+        "html": "<div class=\"xr-kpi\">\n  <div class=\"xr-kpi__label\">Net revenue retention</div>\n  <div class=\"xr-kpi__value\">114%</div>\n  <div class=\"xr-kpi__delta xr-kpi__delta--up\">+6 pts vs. Q2</div>\n</div>",
+        "css": ".xr-kpi{background:var(--color-bg-card);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);padding:var(--space-md);flex:1 1 12rem;min-width:0}\n.xr-kpi__label{font-size:var(--size-small);letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-secondary)}\n.xr-kpi__value{font-family:var(--font-family-heading);font-size:var(--size-h1);line-height:var(--line-tight);color:var(--color-brand-primary);margin:var(--space-xs) 0;font-variant-numeric:tabular-nums}\n.xr-kpi__delta{font-size:var(--size-small);color:var(--color-text-secondary)}\n.xr-kpi__delta--up{color:var(--color-status-ok)}\n.xr-kpi__delta--down{color:var(--color-status-danger)}"
+      },
+      {
+        "name": "section-lead",
+        "description": "The one-sentence conclusion opening a section.",
+        "when_to_use": "Directly under every H2. Exactly one sentence.",
+        "html": "<p class=\"xr-lead\">Retention improved for the third consecutive quarter, driven entirely by the enterprise segment.</p>",
+        "css": ".xr-lead{font-family:var(--font-family-heading);font-size:var(--size-h3);line-height:var(--line-body);color:var(--color-text-primary);border-left:3px solid var(--accent2-gold);padding-left:var(--space-md);margin:0 0 var(--space-md)}"
+      },
+      {
+        "name": "data-table",
+        "description": "Period or unit comparison with right-aligned numbers.",
+        "when_to_use": "Whenever more than three numbers are compared; prints cleanly.",
+        "html": "<table class=\"xr-table\">\n  <caption>Revenue by segment, Q3 2026 (USD thousands)</caption>\n  <thead><tr><th>Segment</th><th>Q2</th><th>Q3</th><th>Change</th></tr></thead>\n  <tbody>\n    <tr><td>Enterprise</td><td>4,120</td><td>4,880</td><td>+18%</td></tr>\n    <tr><td>Mid-market</td><td>2,310</td><td>2,290</td><td>&minus;1%</td></tr>\n  </tbody>\n</table>",
+        "css": ".xr-table{width:100%;border-collapse:collapse;margin:var(--space-lg) 0;font-variant-numeric:tabular-nums}\n.xr-table caption{caption-side:top;text-align:left;font-size:var(--size-small);color:var(--color-text-secondary);padding-bottom:var(--space-sm)}\n.xr-table th{text-align:right;font-family:var(--font-family-heading);border-bottom:2px solid var(--color-brand-primary);padding:var(--space-sm)}\n.xr-table th:first-child,.xr-table td:first-child{text-align:left}\n.xr-table td{text-align:right;padding:var(--space-sm);border-bottom:1px solid var(--color-border-default)}"
+      },
+      {
+        "name": "callout-quote",
+        "description": "A pulled stakeholder statement or board question.",
+        "when_to_use": "At most once per report, to frame the section that answers it.",
+        "html": "<blockquote class=\"xr-quote\">\n  <p>Can we hold this margin through the migration?</p>\n  <cite>Board, July meeting</cite>\n</blockquote>",
+        "css": ".xr-quote{margin:var(--space-xl) 0;padding:var(--space-md) 0;border-top:1px solid var(--accent2-gold);border-bottom:1px solid var(--accent2-gold)}\n.xr-quote p{font-family:var(--font-family-heading);font-size:var(--size-h2);line-height:var(--line-tight);margin:0;color:var(--color-text-primary)}\n.xr-quote cite{display:block;margin-top:var(--space-sm);font-style:normal;font-size:var(--size-small);color:var(--color-text-secondary)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Bars for comparison, lines for trend. Max five series, always a caption stating the takeaway."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart TD, at most eight nodes; prefer a table."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&display=swap"
+      }
+    ]
+  }
+}

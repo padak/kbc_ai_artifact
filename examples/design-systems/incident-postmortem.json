@@ -1,0 +1,341 @@
+{
+  "slug": "incident-postmortem",
+  "name": "Incident Post-mortem",
+  "description": "A blameless SRE post-mortem: severity badges, an absolute-time timeline, impact and action-item tables, red/amber/green reserved strictly for severity.",
+  "note": "Initial version: light + dark, five components, severity colour tokens.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#ffffff"
+          },
+          "card": {
+            "$value": "#f7f8fa"
+          },
+          "subtle": {
+            "$value": "#eef0f4"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#14181f"
+          },
+          "secondary": {
+            "$value": "#5c6675"
+          },
+          "inverse": {
+            "$value": "#ffffff"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#dbe0e8"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#d92d20",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#ffffff"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#067647"
+          },
+          "warn": {
+            "$value": "#b54708"
+          },
+          "danger": {
+            "$value": "#d92d20"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#d92d20"
+          },
+          "2": {
+            "$value": "#b54708"
+          },
+          "3": {
+            "$value": "#067647"
+          },
+          "4": {
+            "$value": "#175cd3"
+          },
+          "5": {
+            "$value": "#6941c6"
+          },
+          "6": {
+            "$value": "#5c6675"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Inter",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Inter",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "4px"
+        },
+        "md": {
+          "$value": "6px"
+        },
+        "lg": {
+          "$value": "10px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "4px"
+        },
+        "sm": {
+          "$value": "10px"
+        },
+        "md": {
+          "$value": "16px"
+        },
+        "lg": {
+          "$value": "26px"
+        },
+        "xl": {
+          "$value": "42px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.8125rem"
+        },
+        "body": {
+          "$value": "0.9375rem"
+        },
+        "h3": {
+          "$value": "1.0625rem"
+        },
+        "h2": {
+          "$value": "1.375rem"
+        },
+        "h1": {
+          "$value": "1.875rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.2
+        },
+        "body": {
+          "$value": 1.6
+        }
+      },
+      "severity": {
+        "$type": "color",
+        "sev1": {
+          "$value": "#d92d20",
+          "$description": "Total outage or data loss."
+        },
+        "sev2": {
+          "$value": "#b54708",
+          "$description": "Major degradation, workaround exists."
+        },
+        "sev3": {
+          "$value": "#067647",
+          "$description": "Minor or internal-only impact."
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#0f1216"
+            },
+            "card": {
+              "$value": "#171b21"
+            },
+            "subtle": {
+              "$value": "#1e232b"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#e8ecf2"
+            },
+            "secondary": {
+              "$value": "#97a1b0"
+            },
+            "inverse": {
+              "$value": "#0f1216"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#2a313b"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#f97066"
+            },
+            "on-primary": {
+              "$value": "#0f1216"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#47cd89"
+            },
+            "warn": {
+              "$value": "#f79009"
+            },
+            "danger": {
+              "$value": "#f97066"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#f97066"
+            },
+            "2": {
+              "$value": "#f79009"
+            },
+            "3": {
+              "$value": "#47cd89"
+            },
+            "4": {
+              "$value": "#84adff"
+            },
+            "5": {
+              "$value": "#b692f6"
+            },
+            "6": {
+              "$value": "#97a1b0"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.md}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Incident Post-mortem\n\nThe written record of one incident, for SREs and the people who will be on\ncall next time. It is blameless, chronological and specific. Its only success\ncriterion is that a reader who was asleep during the incident can reconstruct\nit and act on the follow-ups.\n\n## Principles\n\n1. **Timeline before analysis.** The reader needs to know what happened, in\n   order, with timestamps, before any interpretation.\n2. **Blameless and precise.** Name systems, roles and decisions — never\n   individuals as causes. \"The deploy gate allowed…\", not \"X pushed…\".\n3. **Every follow-up has an owner and a link.** An action item without a\n   ticket is a wish.\n\n## Layout grid\n\nSingle column at `max-width: 50rem`. The summary block sits at the very top:\nseverity, duration, impact, status. Then the timeline, then analysis, then the\nfollow-up table. `--space-xl` between those four blocks and `--space-lg`\ninside them. Never reorder: the structure is the contract.\n\n## Typography\n\nInter throughout at `--size-body`, compact `--line-body`. Timestamps,\nidentifiers, service names, commands and error strings are always monospace so\nthey can be grepped out of a paste. Headings stay small — this is a record,\nnot an essay.\n\n## Colour usage\n\nRed / amber / green come from the `--severity-*` and `--color-status-*`\ntokens and mean exactly one thing each: sev1 red (outage or data loss), sev2\namber (major degradation with a workaround), sev3 green (minor or internal).\nUse them on badges and the status column only. The red accent must never\nappear as decoration — in this design system red always means severity.\n\n## Charts\n\nChart.js. One chart at most: the impact metric (error rate, latency, failed\njobs) over the incident window, with vertical annotations for detection,\nmitigation and resolution. Line only, one or two series, axis in the same\ntimezone as the timeline — and say which timezone.\n\n## Diagrams\n\nMermaid `sequenceDiagram` for the failure path across services, and\n`flowchart TD` for the detection and escalation path. Keep to the components\nthat actually participated; a full architecture diagram hides the failure.\n\n## Components and when to use each\n\n- `incident-summary` — the header block: severity badge, duration, impact,\n  current status. Required, first, exactly once.\n- `severity-badge` — inline severity marker, in the summary and in any list of\n  incidents.\n- `timeline` — the ordered event list with timestamps. Required. One event per\n  entry, each with who or what observed it.\n- `impact-table` — affected services, customers, data, and whether the effect\n  was recoverable.\n- `action-items` — follow-ups with owner, ticket and due date. Required, last.\n\n## Do / don't\n\n- **Do** use absolute UTC timestamps, and state the timezone once at the top.\n- **Do** record what was *tried and did not work*; that is the most reusable\n  part of a post-mortem.\n- **Do** separate contributing factors from the trigger.\n- **Don't** write \"human error\" as a root cause.\n- **Don't** publish without every action item having an owner and a ticket.\n- **Don't** use red anywhere it does not mean severity.\n",
+    "components": [
+      {
+        "name": "incident-summary",
+        "description": "Severity, duration, impact and current status.",
+        "when_to_use": "Required, exactly once, as the first element.",
+        "html": "<div class=\"ip-summary\">\n  <span class=\"ip-sev ip-sev--1\">SEV1</span>\n  <dl>\n    <dt>Duration</dt><dd>2026-09-12 04:12&ndash;06:38 UTC (2h26m)</dd>\n    <dt>Impact</dt><dd>Publishing unavailable for all projects.</dd>\n    <dt>Status</dt><dd>Resolved; follow-ups open.</dd>\n  </dl>\n</div>",
+        "css": ".ip-summary{background:var(--color-bg-card);border:1px solid var(--color-border-default);border-left:4px solid var(--severity-sev1);border-radius:var(--radius-md);padding:var(--space-md) var(--space-lg);margin-bottom:var(--space-xl)}\n.ip-summary dl{display:grid;grid-template-columns:7rem 1fr;gap:var(--space-xs) var(--space-md);margin:var(--space-md) 0 0}\n.ip-summary dt{font-weight:var(--font-weight-bold);color:var(--color-text-secondary);font-size:var(--size-small);text-transform:uppercase;letter-spacing:.06em}\n.ip-summary dd{margin:0;line-height:var(--line-body)}"
+      },
+      {
+        "name": "severity-badge",
+        "description": "Inline severity marker.",
+        "when_to_use": "In the summary and in any list of incidents. Never for anything but severity.",
+        "html": "<span class=\"ip-sev ip-sev--2\">SEV2</span>",
+        "css": ".ip-sev{display:inline-block;font-family:var(--font-family-mono);font-size:var(--size-small);font-weight:var(--font-weight-bold);line-height:1;padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-sm);color:var(--color-brand-on-primary);background:var(--severity-sev3)}\n.ip-sev--1{background:var(--severity-sev1)}\n.ip-sev--2{background:var(--severity-sev2)}\n.ip-sev--3{background:var(--severity-sev3)}"
+      },
+      {
+        "name": "timeline",
+        "description": "Ordered event list with absolute timestamps.",
+        "when_to_use": "Required. One event per entry, each naming who or what observed it.",
+        "html": "<ol class=\"ip-timeline\">\n  <li><time>04:12</time><div>Error rate on <code>POST /api/artifacts</code> crosses 5%. Alert fires.</div></li>\n  <li><time>04:19</time><div>On-call acknowledges; rollback of release 0.15.1 begins.</div></li>\n  <li class=\"ip-timeline__key\"><time>06:38</time><div>Error rate returns to baseline. Incident resolved.</div></li>\n</ol>",
+        "css": ".ip-timeline{list-style:none;margin:var(--space-lg) 0;padding:0;border-left:2px solid var(--color-border-default)}\n.ip-timeline li{display:flex;gap:var(--space-md);padding:var(--space-sm) 0 var(--space-sm) var(--space-md);position:relative}\n.ip-timeline li::before{content:'';position:absolute;left:-5px;top:1.1em;width:8px;height:8px;border-radius:var(--radius-lg);background:var(--color-border-default)}\n.ip-timeline__key::before{background:var(--color-brand-primary)}\n.ip-timeline time{font-family:var(--font-family-mono);font-size:var(--size-small);color:var(--color-text-secondary);flex:0 0 4rem}\n.ip-timeline code{font-family:var(--font-family-mono);font-size:var(--size-small)}"
+      },
+      {
+        "name": "impact-table",
+        "description": "Affected services, customers and data.",
+        "when_to_use": "After the timeline; one row per affected surface.",
+        "html": "<table class=\"ip-impact\">\n  <thead><tr><th>Surface</th><th>Effect</th><th>Recoverable</th></tr></thead>\n  <tbody>\n    <tr><td>Publishing API</td><td>100% of writes rejected</td><td>Yes</td></tr>\n    <tr><td>Public pages</td><td>Served from cache</td><td>n/a</td></tr>\n  </tbody>\n</table>",
+        "css": ".ip-impact{width:100%;border-collapse:collapse;margin:var(--space-lg) 0;font-size:var(--size-small)}\n.ip-impact th{text-align:left;background:var(--color-bg-subtle);padding:var(--space-sm);border-bottom:1px solid var(--color-border-default)}\n.ip-impact td{padding:var(--space-sm);border-bottom:1px solid var(--color-border-default);vertical-align:top}"
+      },
+      {
+        "name": "action-items",
+        "description": "Follow-ups with owner, ticket and due date.",
+        "when_to_use": "Required, last. No item ships without an owner and a ticket.",
+        "html": "<table class=\"ip-actions\">\n  <thead><tr><th>Action</th><th>Owner</th><th>Ticket</th><th>Due</th></tr></thead>\n  <tbody>\n    <tr><td>Gate deploys on the smoke suite</td><td>Platform</td><td><code>OPS-4412</code></td><td>2026-09-30</td></tr>\n  </tbody>\n</table>",
+        "css": ".ip-actions{width:100%;border-collapse:collapse;margin:var(--space-lg) 0;font-size:var(--size-small)}\n.ip-actions th{text-align:left;padding:var(--space-sm);border-bottom:2px solid var(--color-brand-primary)}\n.ip-actions td{padding:var(--space-sm);border-bottom:1px solid var(--color-border-default);vertical-align:top}\n.ip-actions code{font-family:var(--font-family-mono)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "At most one: the impact metric over the incident window, line only, annotated at detection, mitigation and resolution."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "sequenceDiagram for the failure path, flowchart TD for escalation; only the components that participated."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap"
+      }
+    ]
+  }
+}

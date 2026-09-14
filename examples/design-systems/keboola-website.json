@@ -1,0 +1,344 @@
+{
+  "slug": "keboola-website",
+  "name": "Keboola Website",
+  "description": "Public-facing content in Keboola's brand: Manrope, brand blue on white with tinted alternating bands and a deep navy inverted section, proof-driven rhythm.",
+  "note": "Initial version derived from the palette and typography of www.keboola.com (look only - no logos, wordmarks or copy).",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#ffffff"
+          },
+          "card": {
+            "$value": "#f6f8fc"
+          },
+          "subtle": {
+            "$value": "#eff5fe"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#02183e"
+          },
+          "secondary": {
+            "$value": "#5b6b85"
+          },
+          "inverse": {
+            "$value": "#ffffff"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#e1e6ec"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#097cf7",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#ffffff"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#2cdea8"
+          },
+          "warn": {
+            "$value": "#ffc306"
+          },
+          "danger": {
+            "$value": "#ff492c"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#097cf7"
+          },
+          "2": {
+            "$value": "#2cdea8"
+          },
+          "3": {
+            "$value": "#ffc306"
+          },
+          "4": {
+            "$value": "#0b63ca"
+          },
+          "5": {
+            "$value": "#6366f1"
+          },
+          "6": {
+            "$value": "#ff492c"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Manrope",
+              "system-ui",
+              "Helvetica Neue",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Manrope",
+              "system-ui",
+              "Helvetica Neue",
+              "sans-serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "8px"
+        },
+        "md": {
+          "$value": "12px"
+        },
+        "lg": {
+          "$value": "20px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "6px"
+        },
+        "sm": {
+          "$value": "12px"
+        },
+        "md": {
+          "$value": "20px"
+        },
+        "lg": {
+          "$value": "40px"
+        },
+        "xl": {
+          "$value": "80px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.875rem"
+        },
+        "body": {
+          "$value": "1.0625rem"
+        },
+        "h3": {
+          "$value": "1.375rem"
+        },
+        "h2": {
+          "$value": "2.125rem"
+        },
+        "h1": {
+          "$value": "3.25rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.1
+        },
+        "body": {
+          "$value": 1.65
+        }
+      },
+      "color-deep": {
+        "$type": "color",
+        "navy": {
+          "$value": "#02183e",
+          "$description": "The deep navy used for inverted sections."
+        },
+        "blue-dark": {
+          "$value": "#0b63ca",
+          "$description": "Hover and pressed state of the brand blue."
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#02132f"
+            },
+            "card": {
+              "$value": "#0b2348"
+            },
+            "subtle": {
+              "$value": "#103169"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#eaf1fb"
+            },
+            "secondary": {
+              "$value": "#9db1cd"
+            },
+            "inverse": {
+              "$value": "#02132f"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#1c3a68"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#1f8fff"
+            },
+            "on-primary": {
+              "$value": "#02132f"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#5eead4"
+            },
+            "warn": {
+              "$value": "#ffd34d"
+            },
+            "danger": {
+              "$value": "#ff7a63"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#1f8fff"
+            },
+            "2": {
+              "$value": "#5eead4"
+            },
+            "3": {
+              "$value": "#ffd34d"
+            },
+            "4": {
+              "$value": "#79b4ff"
+            },
+            "5": {
+              "$value": "#a5a8ff"
+            },
+            "6": {
+              "$value": "#ff7a63"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.lg}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Keboola Website\n\nPublic-facing content in Keboola's brand: landing pages, launch notes,\ncustomer stories, partner one-pagers. Confident, technical, warm — enterprise\ncredibility without enterprise stiffness.\n\n## Principles\n\n1. **Proof over adjectives.** A customer number, a named integration or a\n   measured result beats a claim. Every section should contain something\n   verifiable.\n2. **Rhythm by section.** The page is a stack of full-width bands that\n   alternate between the white page and the tinted `--color-bg-card`, with\n   generous `--space-xl` padding. The alternation is the navigation.\n3. **Blue is the point.** One brand blue, used for action and emphasis and\n   nothing decorative.\n\n## Layout grid\n\nFull-width sections; content capped at `64rem` and centred, with\n`--space-lg` of side padding. Cards sit in a flex or grid row of two to three\nand stack below `48rem`. A section is a heading, at most two paragraphs of\nlead, and one group of cards, a chart or a diagram. Never two content groups\nin one band.\n\n## Typography\n\nManrope throughout — Keboola's typeface — with weight carrying hierarchy.\nSection headings at `--size-h2` with `--line-tight` and slight negative\ntracking; the page title at `--size-h1`. Body at `--size-body`, lead\nparagraphs at `--size-h3` in `--color-text-secondary`. Code, connector names\nand CLI fragments are monospace.\n\n## Colour usage\n\nWhite page, `--color-bg-card` (#f6f8fc) for alternating bands, deep navy\n(`--color-deep-navy`) for the occasional inverted band and the footer. Brand\nblue `--color-brand-primary` (#097cf7) for buttons, links and the primary\nchart series; `--color-deep-blue-dark` for hover. Teal `ok`, yellow `warn` and\ncoral `danger` are accents for metrics and badges, never large areas. Keep at\nmost one inverted navy band per page.\n\n## Charts\n\nChart.js. Bar and line, brand blue first, teal second. Charts illustrate a\nproof point and always carry a caption naming the source and period. No\ngridline clutter, no 3-D, no more than four series. A single metric is better\nshown as a `stat-band` than as a chart.\n\n## Diagrams\n\nMermaid `flowchart LR` for architecture and data-flow pictures — source to\nKeboola to destination. Keep to seven nodes, label edges with the data being\nmoved, and never colour nodes individually.\n\n## Components and when to use each\n\n- `hero` — the page opener: title, one lead sentence, one primary action.\n  Exactly one per page.\n- `section-band` — the alternating full-width wrapper every section uses.\n- `feature-card` — one capability or use case, in a row of two or three.\n- `stat-band` — two to four proof numbers in a row, under the hero or after a\n  customer story.\n- `quote-card` — a customer testimonial with name, role and company.\n- `cta` — the closing action block. One per page, at the end.\n\n## Do / don't\n\n- **Do** name real products, connectors and customers where permitted.\n- **Do** keep the primary action to one verb: \"Start free\", \"Book a demo\".\n- **Don't** reuse Keboola's logo, wordmark or marketing copy inside a\n  document; this design system carries the look, not the brand assets.\n- **Don't** stack two inverted navy bands, and never put body text on the\n  brand blue.\n- **Don't** use more than one exclamation mark per page — ideally none.\n",
+    "components": [
+      {
+        "name": "hero",
+        "description": "Page opener: title, one lead sentence, one action.",
+        "when_to_use": "Exactly one per page, at the top.",
+        "html": "<header class=\"kb-hero\">\n  <h1>Every data pipeline, in one place.</h1>\n  <p class=\"kb-hero__lead\">Build, run and monitor your whole stack without stitching six tools together.</p>\n  <a class=\"kb-hero__cta\" href=\"#start\">Start free</a>\n</header>",
+        "css": ".kb-hero{padding:var(--space-xl) 0;max-width:48rem}\n.kb-hero h1{font-size:var(--size-h1);line-height:var(--line-tight);letter-spacing:-.02em;margin:0;color:var(--color-text-primary)}\n.kb-hero__lead{font-size:var(--size-h3);line-height:var(--line-body);color:var(--color-text-secondary);margin:var(--space-md) 0 var(--space-lg)}\n.kb-hero__cta{display:inline-block;background:var(--color-brand-primary);color:var(--color-brand-on-primary);text-decoration:none;padding:var(--space-sm) var(--space-md);border-radius:var(--radius-sm);font-weight:var(--font-weight-bold)}\n.kb-hero__cta:hover{background:var(--color-deep-blue-dark)}"
+      },
+      {
+        "name": "section-band",
+        "description": "The alternating full-width section wrapper.",
+        "when_to_use": "Every section. Alternate the --alt modifier to create the page rhythm.",
+        "html": "<section class=\"kb-band kb-band--alt\">\n  <div class=\"kb-band__inner\">\n    <h2>Built for the people who run the data</h2>\n    <p>Ship a pipeline in an afternoon and keep it observable for years.</p>\n  </div>\n</section>",
+        "css": ".kb-band{padding:var(--space-xl) var(--space-lg)}\n.kb-band__inner{max-width:64rem;margin:0 auto}\n.kb-band h2{font-size:var(--size-h2);line-height:var(--line-tight);letter-spacing:-.015em;margin:0 0 var(--space-md)}\n.kb-band--alt{background:var(--color-bg-card)}\n.kb-band--invert{background:var(--color-deep-navy);color:var(--color-text-inverse)}\n.kb-band--invert h2{color:var(--color-text-inverse)}"
+      },
+      {
+        "name": "feature-card",
+        "description": "One capability or use case in a row of two or three.",
+        "when_to_use": "Grouped in a flex row; never a single card alone.",
+        "html": "<div class=\"kb-cards\">\n  <article class=\"kb-card\">\n    <h3>Connectors</h3>\n    <p>Over 250 sources, versioned and monitored like code.</p>\n  </article>\n  <article class=\"kb-card\">\n    <h3>Transformations</h3>\n    <p>SQL, Python and dbt side by side in one lineage graph.</p>\n  </article>\n</div>",
+        "css": ".kb-cards{display:flex;flex-wrap:wrap;gap:var(--space-md)}\n.kb-card{flex:1 1 16rem;min-width:0;background:var(--color-bg-page);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);padding:var(--space-md) var(--space-lg)}\n.kb-card h3{margin:0 0 var(--space-sm);font-size:var(--size-h3);line-height:var(--line-tight)}\n.kb-card p{margin:0;color:var(--color-text-secondary);line-height:var(--line-body)}"
+      },
+      {
+        "name": "stat-band",
+        "description": "Two to four proof numbers in a row.",
+        "when_to_use": "Under the hero or after a customer story. Always cite the source nearby.",
+        "html": "<div class=\"kb-stats\">\n  <div class=\"kb-stat\"><span class=\"kb-stat__value\">683%</span><span class=\"kb-stat__label\">return on investment</span></div>\n  <div class=\"kb-stat\"><span class=\"kb-stat__value\">250+</span><span class=\"kb-stat__label\">connectors</span></div>\n</div>",
+        "css": ".kb-stats{display:flex;flex-wrap:wrap;gap:var(--space-lg);margin:var(--space-lg) 0}\n.kb-stat{flex:1 1 10rem;min-width:0}\n.kb-stat__value{display:block;font-size:var(--size-h1);line-height:var(--line-tight);font-weight:var(--font-weight-bold);color:var(--color-brand-primary);font-variant-numeric:tabular-nums}\n.kb-stat__label{display:block;margin-top:var(--space-xs);font-size:var(--size-small);color:var(--color-text-secondary)}"
+      },
+      {
+        "name": "quote-card",
+        "description": "A customer testimonial with attribution.",
+        "when_to_use": "At most two per page, immediately after the claim they support.",
+        "html": "<figure class=\"kb-quote\">\n  <blockquote>We replaced four tools and still shipped faster.</blockquote>\n  <figcaption>Head of Data, a European retailer</figcaption>\n</figure>",
+        "css": ".kb-quote{margin:var(--space-lg) 0;background:var(--color-bg-subtle);border-radius:var(--radius-lg);padding:var(--space-lg)}\n.kb-quote blockquote{margin:0;font-size:var(--size-h3);line-height:var(--line-body);color:var(--color-text-primary)}\n.kb-quote figcaption{margin-top:var(--space-md);font-size:var(--size-small);color:var(--color-text-secondary)}"
+      },
+      {
+        "name": "cta",
+        "description": "The closing action block.",
+        "when_to_use": "One per page, at the end. One verb, one link.",
+        "html": "<div class=\"kb-cta\">\n  <h2>See it on your own data</h2>\n  <a href=\"#demo\">Book a demo</a>\n</div>",
+        "css": ".kb-cta{background:var(--color-deep-navy);color:var(--color-text-inverse);border-radius:var(--radius-lg);padding:var(--space-lg);text-align:center;margin:var(--space-xl) 0}\n.kb-cta h2{margin:0 0 var(--space-md);font-size:var(--size-h2);line-height:var(--line-tight);color:var(--color-text-inverse)}\n.kb-cta a{display:inline-block;background:var(--color-brand-primary);color:var(--color-brand-on-primary);text-decoration:none;padding:var(--space-sm) var(--space-md);border-radius:var(--radius-sm);font-weight:var(--font-weight-bold)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Bar and line, brand blue first then teal, max four series, always captioned with source and period."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart LR for source-to-destination data flow, max seven nodes, edges labelled with the data moved."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap"
+      }
+    ]
+  }
+}
