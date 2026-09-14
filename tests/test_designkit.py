@@ -1,7 +1,7 @@
 """Tests for src.designkit: the starter skeleton and the style-guide document
 derived from a design-system bundle."""
 
-from src.designkit import BODY_SLOT, TITLE_SLOT, fill_starter, role_values, starter_html
+from src.designkit import BODY_SLOT, TITLE_SLOT, fill_starter, role_values, starter_html, style_guide_html
 from src.tokens import TokenLimits, validate_document
 
 LIMITS = TokenLimits(16, 5000, 32)
@@ -97,3 +97,47 @@ def test_role_values_resolve_per_mode():
     assert role_values(BUNDLE, base)["background"] == "#ffffff"
     assert role_values(BUNDLE, dark)["background"] == "#000000"
     assert role_values(BUNDLE, base)["chart_palette"] == ["#ff0000"]
+
+
+META = {"name": "Corp <b>", "slug": "corp", "owner": {"project_name": "Mkt & co", "project_id": 1, "stack_host": "h"}}
+VERSION = {
+    "version": 2,
+    "note": "<i>note</i>",
+    "created_at": "2026-09-15T00:00:00Z",
+    "warnings": [{"path": "/tokens/x", "message": "<w>"}],
+}
+
+
+def _guide(bundle=BUNDLE):
+    return style_guide_html(
+        META,
+        VERSION,
+        bundle,
+        *_sets(bundle),
+        chartjs_url="u",
+        mermaid_url="m",
+        render_markdown=lambda md: "<h1>G</h1>",
+    )
+
+
+def test_guide_escapes_meta_and_lists_sections():
+    g = _guide()
+    assert "Corp &lt;b&gt;" in g and "Mkt &amp; co" in g and "&lt;i&gt;note&lt;/i&gt;" in g and "&lt;w&gt;" in g
+    for section in ("Palette", "Typography", "Scale", "Components", "Charts", "Diagrams", "Guidance", "Warnings"):
+        assert f"<h2>{section}</h2>" in g
+    assert "--color-accent" in g and "#1442e0" in g  # swatch shows variable and value
+    assert '<div class="kpi">x</div>' in g  # live component
+    assert "&lt;div class=&quot;kpi&quot;&gt;x&lt;/div&gt;" in g  # and its escaped source
+    assert "<h1>G</h1>" in g
+    assert "data-theme" in g and "toggle" in g.lower()
+
+
+def test_guide_skips_chart_and_diagram_sections_when_not_declared():
+    b = {**BUNDLE, "charts": {"library": "none", "notes": ""}, "diagrams": {"library": "none", "notes": ""}}
+    g = _guide(b)
+    assert "<h2>Charts</h2>" not in g and "<h2>Diagrams</h2>" not in g
+
+
+def test_guide_is_built_on_the_starter():
+    g = _guide()
+    assert g.startswith("<!doctype html>") and TITLE_SLOT not in g and BODY_SLOT not in g
