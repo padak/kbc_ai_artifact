@@ -1,0 +1,331 @@
+{
+  "slug": "end-user-guide",
+  "name": "End-User Guide",
+  "description": "Friendly help for non-technical readers: rounded type, big screenshot slots, 'Do this' action cards and a warm orange accent at high contrast.",
+  "note": "Initial version: light + dark, four components, phone-first spacing.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#fffdf9"
+          },
+          "card": {
+            "$value": "#ffffff"
+          },
+          "subtle": {
+            "$value": "#fff2e4"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#2b2118"
+          },
+          "secondary": {
+            "$value": "#6d5c4d"
+          },
+          "inverse": {
+            "$value": "#ffffff"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#e8d8c6"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#ea6a12",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#ffffff"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#2e7d32"
+          },
+          "warn": {
+            "$value": "#c77700"
+          },
+          "danger": {
+            "$value": "#c62828"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#ea6a12"
+          },
+          "2": {
+            "$value": "#f2a65a"
+          },
+          "3": {
+            "$value": "#2e7d32"
+          },
+          "4": {
+            "$value": "#1e6091"
+          },
+          "5": {
+            "$value": "#8e44ad"
+          },
+          "6": {
+            "$value": "#c62828"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Nunito",
+              "Segoe UI",
+              "Helvetica Neue",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Nunito",
+              "Segoe UI",
+              "Helvetica Neue",
+              "sans-serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "8px"
+        },
+        "md": {
+          "$value": "14px"
+        },
+        "lg": {
+          "$value": "22px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "6px"
+        },
+        "sm": {
+          "$value": "12px"
+        },
+        "md": {
+          "$value": "20px"
+        },
+        "lg": {
+          "$value": "32px"
+        },
+        "xl": {
+          "$value": "52px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.9375rem"
+        },
+        "body": {
+          "$value": "1.125rem"
+        },
+        "h3": {
+          "$value": "1.3125rem"
+        },
+        "h2": {
+          "$value": "1.75rem"
+        },
+        "h1": {
+          "$value": "2.5rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.25
+        },
+        "body": {
+          "$value": 1.7
+        }
+      },
+      "shadow": {
+        "$type": "shadow",
+        "card": {
+          "$value": {
+            "color": "#2b211814",
+            "offsetX": "0px",
+            "offsetY": "2px",
+            "blur": "8px",
+            "spread": "0px"
+          }
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#1c1713"
+            },
+            "card": {
+              "$value": "#25201a"
+            },
+            "subtle": {
+              "$value": "#2f2821"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#f6efe7"
+            },
+            "secondary": {
+              "$value": "#bba896"
+            },
+            "inverse": {
+              "$value": "#1c1713"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#3d342b"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#ff9248"
+            },
+            "on-primary": {
+              "$value": "#1c1713"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#7fd18a"
+            },
+            "warn": {
+              "$value": "#f0b429"
+            },
+            "danger": {
+              "$value": "#f08a84"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#ff9248"
+            },
+            "2": {
+              "$value": "#ffc08a"
+            },
+            "3": {
+              "$value": "#7fd18a"
+            },
+            "4": {
+              "$value": "#7cb3e0"
+            },
+            "5": {
+              "$value": "#c79bea"
+            },
+            "6": {
+              "$value": "#f08a84"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.lg}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# End-User Guide\n\nHelp for people who did not choose this software and do not want to learn it.\nThey arrived stuck. The guide's only job is to unstick them in under a minute.\n\n## Principles\n\n1. **Answer the question in the heading.** Headings are the user's words —\n   \"I can't sign in\", not \"Authentication troubleshooting\".\n2. **One task, one card, one screenshot.** If a task needs two screenshots it\n   is two tasks.\n3. **Reassure.** Say what will happen before it happens, and say when\n   something is safe to try.\n\n## Layout grid\n\nSingle column at `max-width: 44rem` with `--space-xl` between tasks. Cards and\nscreenshot slots run full width. Type is large and lines are short on purpose;\nnever reduce `--size-body` to fit more on screen. Everything stacks cleanly on\na phone — no side-by-side layouts wider than two items.\n\n## Typography\n\nNunito throughout, rounded and friendly, `--size-body` for prose and\n`--line-body` for comfortable reading. Headings at `--size-h1` / `--size-h2` /\n`--size-h3`, sentence case, never all caps. Use bold for the exact label of a\nbutton or menu item the user must find; never use italics for emphasis.\n\n## Colour usage\n\nWarm off-white page, white cards, orange accent\n(`--color-brand-primary`) for the step badges, the \"Do this\" card rule and\nlinks. Contrast is deliberately high — the reader may be on a phone outdoors.\nStatus green confirms, amber cautions, red warns about something that cannot\nbe undone. Never rely on colour alone: every coloured element also carries a\nword.\n\n## Charts\n\nChart.js, rarely. Only for something the user personally owns — storage used,\nmessages sent, days remaining. Single series, bar or doughnut, with the value\nprinted as text next to it. Never show a chart the reader cannot act on.\n\n## Diagrams\n\nMermaid `flowchart TD` for \"which of these is your situation?\" branching, at\nmost five nodes, with plain-language labels. Otherwise prefer numbered steps.\n\n## Components and when to use each\n\n- `do-this` — the primary action card: what to do, in one or two steps. Every\n  task page has exactly one, near the top.\n- `screenshot` — a captioned image slot. The caption says what to look at, not\n  what the image is.\n- `faq-item` — a question and its short answer, collapsed into a list at the\n  bottom of a page.\n- `tip` — a friendly aside. Optional information only; nothing required to\n  finish the task may live here.\n\n## Do / don't\n\n- **Do** use \"you\" and the present tense.\n- **Do** tell the reader what success looks like: \"Your name appears in the\n  top right.\"\n- **Don't** use jargon without a plain-language gloss in the same sentence.\n- **Don't** apologise for the software or explain why it behaves this way.\n- **Don't** put a required step inside a tip or a footnote.\n",
+    "components": [
+      {
+        "name": "do-this",
+        "description": "The primary action card for a task.",
+        "when_to_use": "Exactly one near the top of every task page.",
+        "html": "<div class=\"eu-do\">\n  <h3 class=\"eu-do__title\">Do this</h3>\n  <ol>\n    <li>Open <strong>Settings</strong>.</li>\n    <li>Choose <strong>Reset password</strong> and check your email.</li>\n  </ol>\n  <p class=\"eu-do__result\">You are signed in and your name appears in the top right.</p>\n</div>",
+        "css": ".eu-do{background:var(--color-bg-card);border:2px solid var(--color-brand-primary);border-radius:var(--radius-lg);padding:var(--space-md) var(--space-lg);margin:var(--space-lg) 0;box-shadow:var(--shadow-card)}\n.eu-do__title{margin:0 0 var(--space-sm);color:var(--color-brand-primary);font-size:var(--size-h3);line-height:var(--line-tight)}\n.eu-do ol{margin:0;padding-left:var(--space-lg);line-height:var(--line-body)}\n.eu-do__result{margin:var(--space-md) 0 0;padding-top:var(--space-sm);border-top:1px dashed var(--color-border-default);color:var(--color-status-ok);font-size:var(--size-small)}"
+      },
+      {
+        "name": "screenshot",
+        "description": "A captioned image slot.",
+        "when_to_use": "One per task. The caption says what to look at.",
+        "html": "<figure class=\"eu-shot\">\n  <img src=\"settings.png\" alt=\"The Settings page with Reset password highlighted\">\n  <figcaption>Look for <strong>Reset password</strong> near the bottom.</figcaption>\n</figure>",
+        "css": ".eu-shot{margin:var(--space-lg) 0}\n.eu-shot img{display:block;width:100%;height:auto;border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-subtle)}\n.eu-shot figcaption{margin-top:var(--space-sm);font-size:var(--size-small);color:var(--color-text-secondary)}"
+      },
+      {
+        "name": "faq-item",
+        "description": "One question with a short answer.",
+        "when_to_use": "Grouped at the bottom of a page, for things that are not the main task.",
+        "html": "<details class=\"eu-faq\">\n  <summary>What if the email never arrives?</summary>\n  <p>Check your spam folder, then try again in five minutes.</p>\n</details>",
+        "css": ".eu-faq{border-bottom:1px solid var(--color-border-default);padding:var(--space-sm) 0}\n.eu-faq summary{cursor:pointer;font-weight:var(--font-weight-bold);color:var(--color-text-primary);line-height:var(--line-body)}\n.eu-faq p{margin:var(--space-sm) 0 0;color:var(--color-text-secondary);line-height:var(--line-body)}"
+      },
+      {
+        "name": "tip",
+        "description": "A friendly, optional aside.",
+        "when_to_use": "Never for a required step. Optional shortcuts and reassurance only.",
+        "html": "<p class=\"eu-tip\">You can change this later — nothing here is permanent.</p>",
+        "css": ".eu-tip{background:var(--color-bg-subtle);border-radius:var(--radius-md);padding:var(--space-sm) var(--space-md);margin:var(--space-md) 0;color:var(--color-text-secondary);font-size:var(--size-small);line-height:var(--line-body)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Only for something the reader owns; single series, value printed as text."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart TD, at most five nodes, plain-language labels."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap"
+      }
+    ]
+  }
+}

@@ -1,0 +1,338 @@
+{
+  "slug": "software-manual",
+  "name": "Software Manual",
+  "description": "Operator and administrator documentation: numbered procedures, note/caution/danger callouts, step tables and CLI blocks, teal accent.",
+  "note": "Initial version: light + dark, five components, shadow token for callout cards.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#ffffff"
+          },
+          "card": {
+            "$value": "#f4faf9"
+          },
+          "subtle": {
+            "$value": "#e8f2f1"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#10241f"
+          },
+          "secondary": {
+            "$value": "#4f6b66"
+          },
+          "inverse": {
+            "$value": "#ffffff"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#cadedb"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#0f766e",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#ffffff"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#0f766e"
+          },
+          "warn": {
+            "$value": "#a16207"
+          },
+          "danger": {
+            "$value": "#b3261e"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#0f766e"
+          },
+          "2": {
+            "$value": "#0d9488"
+          },
+          "3": {
+            "$value": "#5eaaa8"
+          },
+          "4": {
+            "$value": "#a16207"
+          },
+          "5": {
+            "$value": "#b3261e"
+          },
+          "6": {
+            "$value": "#334155"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "IBM Plex Sans",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "IBM Plex Sans",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "3px"
+        },
+        "md": {
+          "$value": "6px"
+        },
+        "lg": {
+          "$value": "10px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "4px"
+        },
+        "sm": {
+          "$value": "10px"
+        },
+        "md": {
+          "$value": "16px"
+        },
+        "lg": {
+          "$value": "28px"
+        },
+        "xl": {
+          "$value": "44px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.875rem"
+        },
+        "body": {
+          "$value": "1rem"
+        },
+        "h3": {
+          "$value": "1.125rem"
+        },
+        "h2": {
+          "$value": "1.5rem"
+        },
+        "h1": {
+          "$value": "2.125rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.25
+        },
+        "body": {
+          "$value": 1.65
+        }
+      },
+      "shadow": {
+        "$type": "shadow",
+        "card": {
+          "$value": {
+            "color": "#10241f26",
+            "offsetX": "0px",
+            "offsetY": "1px",
+            "blur": "3px",
+            "spread": "0px"
+          }
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#0b1a18"
+            },
+            "card": {
+              "$value": "#0f1f1d"
+            },
+            "subtle": {
+              "$value": "#14302c"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#e2f1ee"
+            },
+            "secondary": {
+              "$value": "#8fb3ad"
+            },
+            "inverse": {
+              "$value": "#0b1a18"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#1f423d"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#5eead4"
+            },
+            "on-primary": {
+              "$value": "#0b1a18"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#5eead4"
+            },
+            "warn": {
+              "$value": "#fcd34d"
+            },
+            "danger": {
+              "$value": "#fca5a5"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#5eead4"
+            },
+            "2": {
+              "$value": "#2dd4bf"
+            },
+            "3": {
+              "$value": "#99f6e4"
+            },
+            "4": {
+              "$value": "#fcd34d"
+            },
+            "5": {
+              "$value": "#fca5a5"
+            },
+            "6": {
+              "$value": "#cbd5e1"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.md}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Software Manual\n\nOperating documentation for the administrators who install, configure and\nrecover a system. The reader is usually mid-incident, following along at a\nkeyboard. Every page answers \"what do I type next\".\n\n## Principles\n\n1. **Procedures are numbered, always.** A task is an ordered list of steps\n   with one action per step. Prose that hides a step inside a paragraph is a\n   defect.\n2. **State the precondition before the first step.** Permissions, version,\n   environment. A reader who cannot complete step one has wasted the page.\n3. **Show the expected result.** Each procedure ends with how to verify it\n   worked, not with the last command.\n\n## Layout grid\n\nSingle column at `max-width: 48rem`. `--space-xl` between tasks,\n`--space-lg` between a task heading and its first step. Callouts and step\ntables run the full column width. Do not nest procedures more than one level;\na sub-procedure becomes its own task with a cross-reference.\n\n## Typography\n\nOne family throughout (IBM Plex Sans) at `--size-h1` / `--size-h2` /\n`--size-h3`; hierarchy comes from weight and spacing, not from a second\ntypeface. Commands, paths, file names and values are always monospace\n(`--font-family-mono`), inline as well as in blocks. Never paraphrase a\nliteral string — quote it exactly.\n\n## Colour usage\n\nTeal (`--color-brand-primary`) marks step numbers, links and the `tip` callout\nrule. Status colours are reserved for callouts: `ok` for tips, `warn` for\ncautions, `danger` for anything that can lose data or lock an account. Body\ntext stays `--color-text-primary` on white; cards use `--color-bg-card`. Never\ncolour-code steps themselves.\n\n## Charts\n\nChart.js only for capacity and sizing guidance — bar or line, two series\nmaximum, with the axis units spelled out. Operational documentation rarely\nneeds a chart; a table of thresholds is usually the honest form.\n\n## Diagrams\n\nMermaid `flowchart TD` for decision trees (\"is the service reachable?\") and\n`sequenceDiagram` for multi-component handshakes. Label every edge on a\ndecision tree with the literal condition.\n\n## Components and when to use each\n\n- `procedure` — the numbered task itself. Every \"how do I…\" section is one.\n- `callout` — note, tip, caution or danger. Use `danger` only for\n  irreversible actions; overuse destroys its meaning.\n- `step-table` — parameters or values a step needs, or a matrix of settings\n  per environment. Use when a step would otherwise carry four or more values.\n- `prereq-box` — the preconditions block above a procedure.\n- `cli` — a labelled command with its expected output.\n\n## Do / don't\n\n- **Do** write steps in the imperative: \"Run\", \"Select\", \"Confirm\".\n- **Do** give the rollback for anything destructive, in the same task.\n- **Don't** say \"simply\", \"just\" or \"obviously\".\n- **Don't** describe the UI position of a control (\"the blue button top\n  right\") — name the control.\n- **Don't** mix versions in one procedure; branch into two tasks instead.\n",
+    "components": [
+      {
+        "name": "procedure",
+        "description": "A numbered task: ordered steps with one action each.",
+        "when_to_use": "Every 'how do I...' section. Always numbered, always with a verification step.",
+        "html": "<ol class=\"sm-proc\">\n  <li>Stop the service: <code>systemctl stop hub</code></li>\n  <li>Back up the configuration directory.</li>\n  <li>Apply the new release and restart.</li>\n  <li><strong>Verify:</strong> <code>curl -fsS localhost:8000/health</code> returns 200.</li>\n</ol>",
+        "css": ".sm-proc{counter-reset:sm;list-style:none;padding:0;margin:var(--space-lg) 0}\n.sm-proc>li{counter-increment:sm;position:relative;padding-left:2.5rem;margin-bottom:var(--space-md);line-height:var(--line-body)}\n.sm-proc>li::before{content:counter(sm);position:absolute;left:0;top:0;width:1.75rem;height:1.75rem;border-radius:var(--radius-lg);background:var(--color-brand-primary);color:var(--color-brand-on-primary);display:flex;align-items:center;justify-content:center;font-size:var(--size-small);font-weight:var(--font-weight-bold)}\n.sm-proc code{font-family:var(--font-family-mono);font-size:var(--size-small);background:var(--color-bg-subtle);padding:0 var(--space-xs);border-radius:var(--radius-sm)}"
+      },
+      {
+        "name": "callout",
+        "description": "Note, tip, caution or danger box.",
+        "when_to_use": "Danger only for irreversible actions; caution for anything needing a rollback plan.",
+        "html": "<div class=\"sm-callout sm-callout--danger\">\n  <span class=\"sm-callout__label\">Danger</span>\n  <p>Purging the trash deletes every version permanently. There is no undo.</p>\n</div>",
+        "css": ".sm-callout{background:var(--color-bg-card);border:1px solid var(--color-border-default);border-left-width:4px;border-left-color:var(--color-brand-primary);border-radius:var(--radius-md);padding:var(--space-md);margin:var(--space-lg) 0;box-shadow:var(--shadow-card)}\n.sm-callout__label{display:block;font-weight:var(--font-weight-bold);font-size:var(--size-small);text-transform:uppercase;letter-spacing:.06em;color:var(--color-brand-primary);margin-bottom:var(--space-xs)}\n.sm-callout p{margin:0;line-height:var(--line-body)}\n.sm-callout--warn{border-left-color:var(--color-status-warn)}\n.sm-callout--warn .sm-callout__label{color:var(--color-status-warn)}\n.sm-callout--danger{border-left-color:var(--color-status-danger)}\n.sm-callout--danger .sm-callout__label{color:var(--color-status-danger)}"
+      },
+      {
+        "name": "step-table",
+        "description": "Values or settings a step needs, per environment.",
+        "when_to_use": "When a step would otherwise carry four or more literal values.",
+        "html": "<table class=\"sm-steps\">\n  <thead><tr><th>Setting</th><th>Staging</th><th>Production</th></tr></thead>\n  <tbody>\n    <tr><td><code>HUB_DS_MAX_VERSIONS</code></td><td>20</td><td>50</td></tr>\n    <tr><td><code>HUB_REGISTER_TIMEOUT_S</code></td><td>30</td><td>60</td></tr>\n  </tbody>\n</table>",
+        "css": ".sm-steps{width:100%;border-collapse:collapse;margin:var(--space-lg) 0;font-size:var(--size-small)}\n.sm-steps th{text-align:left;background:var(--color-bg-subtle);padding:var(--space-sm);border-bottom:1px solid var(--color-border-default)}\n.sm-steps td{padding:var(--space-sm);border-bottom:1px solid var(--color-border-default)}\n.sm-steps code{font-family:var(--font-family-mono)}"
+      },
+      {
+        "name": "prereq-box",
+        "description": "Preconditions a reader must satisfy before step one.",
+        "when_to_use": "Above every procedure that needs a permission, a version or an environment.",
+        "html": "<div class=\"sm-prereq\">\n  <h4>Before you start</h4>\n  <ul><li>A master Storage token for the host project.</li><li>Hub 0.16.0 or newer.</li></ul>\n</div>",
+        "css": ".sm-prereq{background:var(--color-bg-subtle);border-radius:var(--radius-md);padding:var(--space-md) var(--space-lg);margin:var(--space-lg) 0}\n.sm-prereq h4{margin:0 0 var(--space-sm);font-size:var(--size-h3);line-height:var(--line-tight);color:var(--color-brand-primary)}\n.sm-prereq ul{margin:0;padding-left:var(--space-lg);line-height:var(--line-body)}"
+      },
+      {
+        "name": "cli",
+        "description": "A labelled command with its expected output.",
+        "when_to_use": "Any command the reader types; always show what success looks like.",
+        "html": "<div class=\"sm-cli\">\n  <pre class=\"sm-cli__cmd\"><code>hubctl design-systems list</code></pre>\n  <pre class=\"sm-cli__out\"><code>tech-docs   v3   2026-09-15</code></pre>\n</div>",
+        "css": ".sm-cli{margin:var(--space-lg) 0;border:1px solid var(--color-border-default);border-radius:var(--radius-md);overflow:hidden}\n.sm-cli pre{margin:0;padding:var(--space-md);overflow-x:auto;font-family:var(--font-family-mono);font-size:var(--size-small)}\n.sm-cli__cmd{background:var(--color-bg-subtle);border-bottom:1px solid var(--color-border-default)}\n.sm-cli__out{background:var(--color-bg-card);color:var(--color-text-secondary)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Only for capacity and sizing; two series maximum, units spelled out."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart TD for decision trees with literal edge labels; sequenceDiagram for handshakes."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap"
+      }
+    ]
+  }
+}

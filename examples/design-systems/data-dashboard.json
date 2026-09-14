@@ -1,0 +1,338 @@
+{
+  "slug": "data-dashboard",
+  "name": "Data Dashboard",
+  "description": "Dark-first operational dashboard for analysts and on-call operators: a grid of KPI tiles and chart panels, compact tables, cyan and lime palette.",
+  "note": "Initial version: dark base with a deeper high-contrast dark mode, five components, typography token for metric figures.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#0d1117"
+          },
+          "card": {
+            "$value": "#151b24"
+          },
+          "subtle": {
+            "$value": "#1c242f"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#e6edf3"
+          },
+          "secondary": {
+            "$value": "#8b98a8"
+          },
+          "inverse": {
+            "$value": "#0d1117"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#26303c"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#22d3ee",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#0d1117"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#a3e635"
+          },
+          "warn": {
+            "$value": "#fbbf24"
+          },
+          "danger": {
+            "$value": "#f87171"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#22d3ee"
+          },
+          "2": {
+            "$value": "#a3e635"
+          },
+          "3": {
+            "$value": "#f472b6"
+          },
+          "4": {
+            "$value": "#fbbf24"
+          },
+          "5": {
+            "$value": "#818cf8"
+          },
+          "6": {
+            "$value": "#34d399"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Inter",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Inter",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "4px"
+        },
+        "md": {
+          "$value": "8px"
+        },
+        "lg": {
+          "$value": "12px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "4px"
+        },
+        "sm": {
+          "$value": "8px"
+        },
+        "md": {
+          "$value": "14px"
+        },
+        "lg": {
+          "$value": "22px"
+        },
+        "xl": {
+          "$value": "36px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.75rem"
+        },
+        "body": {
+          "$value": "0.875rem"
+        },
+        "h3": {
+          "$value": "1rem"
+        },
+        "h2": {
+          "$value": "1.25rem"
+        },
+        "h1": {
+          "$value": "1.625rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.15
+        },
+        "body": {
+          "$value": 1.5
+        }
+      },
+      "type": {
+        "$type": "typography",
+        "metric": {
+          "$value": {
+            "fontFamily": "{font.family.mono}",
+            "fontSize": "2rem",
+            "fontWeight": "{font.weight.bold}",
+            "lineHeight": "{line.tight}",
+            "letterSpacing": "-0.02em"
+          }
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#05080d"
+            },
+            "card": {
+              "$value": "#0d131c"
+            },
+            "subtle": {
+              "$value": "#141c27"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#f2f7fc"
+            },
+            "secondary": {
+              "$value": "#9aa8b8"
+            },
+            "inverse": {
+              "$value": "#05080d"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#1e2833"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#4be3f5"
+            },
+            "on-primary": {
+              "$value": "#05080d"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#bef264"
+            },
+            "warn": {
+              "$value": "#fcd34d"
+            },
+            "danger": {
+              "$value": "#fca5a5"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#4be3f5"
+            },
+            "2": {
+              "$value": "#bef264"
+            },
+            "3": {
+              "$value": "#f9a8d4"
+            },
+            "4": {
+              "$value": "#fcd34d"
+            },
+            "5": {
+              "$value": "#a5b4fc"
+            },
+            "6": {
+              "$value": "#6ee7b7"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.md}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Data Dashboard\n\nAn operational surface for analysts and on-call operators. Dark by default\nbecause it lives on a wall display or a second monitor all day. Read at a\nglance; drill in only when something looks wrong.\n\n## Principles\n\n1. **Answer \"is anything wrong?\" in two seconds.** Status and deltas first,\n   detail below. A viewer who must read to find the problem has a broken\n   dashboard.\n2. **Density with air.** Compact type and tight rows, but never a tile\n   touching another tile. The grid gap is the only separator; avoid borders\n   inside a tile.\n3. **Numbers are monospace.** Tabular figures so a column of values aligns and\n   a changing value does not jitter.\n\n## Layout grid\n\nA responsive grid of tiles: `repeat(auto-fit, minmax(13rem, 1fr))` with\n`--space-md` gaps. KPI tiles occupy one cell; a chart panel spans two or the\nfull row. Tables always come last. On a phone the grid collapses to one\ncolumn in the same source order, so put the most important tile first. Page\npadding is `--space-lg`; do not cap the width — a dashboard uses the screen it\nis given.\n\n## Typography\n\nInter for labels, `--type-metric` (the monospace typography token) for every\nheadline figure. Labels are `--size-small`, uppercase, letter-spaced, in\n`--color-text-secondary`. Headings never exceed `--size-h2`; on a dashboard a\nbig heading is wasted pixels.\n\n## Colour usage\n\nNear-black ground (`--color-bg-page`), tiles one step lighter\n(`--color-bg-card`). Cyan (`--color-brand-primary`) is the interactive and\nprimary-series colour. Lime `ok`, amber `warn`, red `danger` for thresholds\nonly — a tile is coloured only when its value crosses one. Chart series follow\nthe palette in order and never repeat within one canvas. The `dark` mode is a\ndeeper, higher-contrast variant for wall displays in a dim room; both modes\nmust pass the same thresholds.\n\n## Charts\n\nChart.js. Line for time series, bar for comparison across categories,\nhorizontal bar when category names are long. No pie or doughnut beyond a\nsingle-value gauge. Always show the axis units, keep gridlines at\n`--color-border-default`, and disable the legend when three or fewer series\ncan be labelled in the panel title.\n\n## Diagrams\n\nMermaid `flowchart LR` for a pipeline overview panel, nothing else — a\ndashboard that needs a sequence diagram is a document, not a dashboard.\n\n## Components and when to use each\n\n- `kpi-tile` — one metric, its delta and its threshold state. The top row of\n  every dashboard.\n- `chart-panel` — a titled canvas with a subtitle carrying the time window.\n- `data-table` — compact rows for the long tail behind the tiles; right-align\n  numbers, keep to eight visible rows and scroll.\n- `status-dot` — inline health marker in a table row or a tile header.\n- `filter-bar` — the time range and segment currently applied, printed as\n  text so a screenshot stays self-explanatory.\n\n## Do / don't\n\n- **Do** print the time window on every panel; a screenshot outlives its\n  context.\n- **Do** show \"no data\" explicitly rather than an empty chart.\n- **Don't** animate anything. Movement on a wall display reads as an alert.\n- **Don't** put two units on one axis.\n- **Don't** use a colour for a series that also means a threshold state.\n",
+    "components": [
+      {
+        "name": "kpi-tile",
+        "description": "One metric, its delta and threshold state.",
+        "when_to_use": "The top row of every dashboard; one metric per tile.",
+        "html": "<div class=\"dd-tile dd-tile--warn\">\n  <div class=\"dd-tile__label\">p95 latency</div>\n  <div class=\"dd-tile__value\">412 ms</div>\n  <div class=\"dd-tile__delta\">+38 ms vs. 1h ago</div>\n</div>",
+        "css": ".dd-tile{background:var(--color-bg-card);border-radius:var(--radius-md);padding:var(--space-md);border-top:3px solid var(--color-brand-primary)}\n.dd-tile__label{font-size:var(--size-small);text-transform:uppercase;letter-spacing:.08em;color:var(--color-text-secondary)}\n.dd-tile__value{font-family:var(--type-metric-font-family);font-size:var(--type-metric-font-size);font-weight:var(--type-metric-font-weight);line-height:var(--type-metric-line-height);letter-spacing:var(--type-metric-letter-spacing);color:var(--color-text-primary);margin:var(--space-xs) 0;font-variant-numeric:tabular-nums}\n.dd-tile__delta{font-size:var(--size-small);color:var(--color-text-secondary)}\n.dd-tile--ok{border-top-color:var(--color-status-ok)}\n.dd-tile--warn{border-top-color:var(--color-status-warn)}\n.dd-tile--danger{border-top-color:var(--color-status-danger)}"
+      },
+      {
+        "name": "chart-panel",
+        "description": "A titled canvas with its time window as a subtitle.",
+        "when_to_use": "Spans two grid cells or a full row; one chart per panel.",
+        "html": "<section class=\"dd-panel\">\n  <header class=\"dd-panel__head\">\n    <h3>Requests per minute</h3>\n    <span class=\"dd-panel__window\">last 6 hours &middot; UTC</span>\n  </header>\n  <canvas id=\"rpm\" height=\"180\"></canvas>\n</section>",
+        "css": ".dd-panel{background:var(--color-bg-card);border-radius:var(--radius-md);padding:var(--space-md);grid-column:span 2}\n.dd-panel__head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:var(--space-sm);margin-bottom:var(--space-md)}\n.dd-panel__head h3{margin:0;font-size:var(--size-h3);line-height:var(--line-tight)}\n.dd-panel__window{font-family:var(--font-family-mono);font-size:var(--size-small);color:var(--color-text-secondary)}\n.dd-panel canvas{width:100%;max-width:100%}"
+      },
+      {
+        "name": "data-table",
+        "description": "Compact rows for the long tail behind the tiles.",
+        "when_to_use": "Always below the tiles and charts; eight visible rows, then scroll.",
+        "html": "<div class=\"dd-tablewrap\">\n  <table class=\"dd-table\">\n    <thead><tr><th>Endpoint</th><th>Calls</th><th>p95</th></tr></thead>\n    <tbody>\n      <tr><td>/api/artifacts</td><td>18,402</td><td>112 ms</td></tr>\n      <tr><td>/ds/{ref}/css</td><td>9,145</td><td>38 ms</td></tr>\n    </tbody>\n  </table>\n</div>",
+        "css": ".dd-tablewrap{overflow-x:auto;background:var(--color-bg-card);border-radius:var(--radius-md);padding:var(--space-sm)}\n.dd-table{width:100%;border-collapse:collapse;font-size:var(--size-small);font-variant-numeric:tabular-nums}\n.dd-table th{text-align:right;text-transform:uppercase;letter-spacing:.06em;color:var(--color-text-secondary);padding:var(--space-sm);border-bottom:1px solid var(--color-border-default)}\n.dd-table th:first-child,.dd-table td:first-child{text-align:left;font-family:var(--font-family-mono)}\n.dd-table td{text-align:right;padding:var(--space-sm);border-bottom:1px solid var(--color-border-default)}"
+      },
+      {
+        "name": "status-dot",
+        "description": "Inline health marker for a row or tile header.",
+        "when_to_use": "Beside a name, never alone — always followed by a word.",
+        "html": "<span class=\"dd-dot dd-dot--ok\"></span> healthy",
+        "css": ".dd-dot{display:inline-block;width:.5rem;height:.5rem;border-radius:var(--radius-sm);background:var(--color-text-secondary);margin-right:var(--space-xs)}\n.dd-dot--ok{background:var(--color-status-ok)}\n.dd-dot--warn{background:var(--color-status-warn)}\n.dd-dot--danger{background:var(--color-status-danger)}"
+      },
+      {
+        "name": "filter-bar",
+        "description": "The time range and segment currently applied.",
+        "when_to_use": "Directly under the page title, so a screenshot stays self-explanatory.",
+        "html": "<div class=\"dd-filters\">\n  <span class=\"dd-filters__item\">range: last 6h</span>\n  <span class=\"dd-filters__item\">stack: connection.keboola.com</span>\n</div>",
+        "css": ".dd-filters{display:flex;flex-wrap:wrap;gap:var(--space-sm);margin-bottom:var(--space-lg)}\n.dd-filters__item{font-family:var(--font-family-mono);font-size:var(--size-small);color:var(--color-text-secondary);background:var(--color-bg-subtle);padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-sm)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Line for time series, bar for categories; no pie beyond a single gauge; always show axis units and the time window."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart LR for a pipeline overview panel only."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap"
+      }
+    ]
+  }
+}
