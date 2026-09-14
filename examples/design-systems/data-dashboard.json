@@ -2,76 +2,76 @@
   "slug": "data-dashboard",
   "name": "Data Dashboard",
   "description": "Dark-first operational dashboard for analysts and on-call operators: a grid of KPI tiles and chart panels, compact tables, cyan and lime palette.",
-  "note": "Initial version: dark base with a deeper high-contrast dark mode, five components, typography token for metric figures.",
+  "note": "Initial version: light grey base, near-black dark mode, five components, typography token for metric figures.",
   "bundle": {
     "tokens": {
       "color": {
         "$type": "color",
         "bg": {
           "page": {
-            "$value": "#0d1117"
+            "$value": "#f1f4f8"
           },
           "card": {
-            "$value": "#151b24"
+            "$value": "#ffffff"
           },
           "subtle": {
-            "$value": "#1c242f"
+            "$value": "#e6ebf2"
           }
         },
         "text": {
           "primary": {
-            "$value": "#e6edf3"
+            "$value": "#10151c"
           },
           "secondary": {
-            "$value": "#8b98a8"
+            "$value": "#4f5a68"
           },
           "inverse": {
-            "$value": "#0d1117"
+            "$value": "#ffffff"
           }
         },
         "border": {
           "default": {
-            "$value": "#26303c"
+            "$value": "#d3dae3"
           }
         },
         "brand": {
           "primary": {
-            "$value": "#22d3ee",
+            "$value": "#0e7490",
             "$description": "The single accent colour."
           },
           "on-primary": {
-            "$value": "#0d1117"
+            "$value": "#ffffff"
           }
         },
         "status": {
           "ok": {
-            "$value": "#a3e635"
+            "$value": "#4d7c0f"
           },
           "warn": {
-            "$value": "#fbbf24"
+            "$value": "#b45309"
           },
           "danger": {
-            "$value": "#f87171"
+            "$value": "#b42318"
           }
         },
         "chart": {
           "1": {
-            "$value": "#22d3ee"
+            "$value": "#0e7490"
           },
           "2": {
-            "$value": "#a3e635"
+            "$value": "#4d7c0f"
           },
           "3": {
-            "$value": "#f472b6"
+            "$value": "#be185d"
           },
           "4": {
-            "$value": "#fbbf24"
+            "$value": "#b45309"
           },
           "5": {
-            "$value": "#818cf8"
+            "$value": "#4338ca"
           },
           "6": {
-            "$value": "#34d399"
+            "$value": "#0f766e"
           }
         }
       },
@@ -192,68 +192,68 @@
         "color": {
           "bg": {
             "page": {
-              "$value": "#05080d"
+              "$value": "#0d1117"
             },
             "card": {
-              "$value": "#0d131c"
+              "$value": "#151b24"
             },
             "subtle": {
-              "$value": "#141c27"
+              "$value": "#1c242f"
             }
           },
           "text": {
             "primary": {
-              "$value": "#f2f7fc"
+              "$value": "#e6edf3"
             },
             "secondary": {
-              "$value": "#9aa8b8"
+              "$value": "#8b98a8"
             },
             "inverse": {
-              "$value": "#05080d"
+              "$value": "#0d1117"
             }
           },
           "border": {
             "default": {
-              "$value": "#1e2833"
+              "$value": "#26303c"
             }
           },
           "brand": {
             "primary": {
-              "$value": "#4be3f5"
+              "$value": "#22d3ee"
             },
             "on-primary": {
-              "$value": "#05080d"
+              "$value": "#0d1117"
             }
           },
           "status": {
             "ok": {
-              "$value": "#bef264"
+              "$value": "#a3e635"
             },
             "warn": {
-              "$value": "#fcd34d"
+              "$value": "#fbbf24"
             },
             "danger": {
-              "$value": "#fca5a5"
+              "$value": "#f87171"
             }
           },
           "chart": {
             "1": {
-              "$value": "#4be3f5"
+              "$value": "#22d3ee"
             },
             "2": {
-              "$value": "#bef264"
+              "$value": "#a3e635"
             },
             "3": {
-              "$value": "#f9a8d4"
+              "$value": "#f472b6"
             },
             "4": {
-              "$value": "#fcd34d"
+              "$value": "#fbbf24"
             },
             "5": {
-              "$value": "#a5b4fc"
+              "$value": "#818cf8"
             },
             "6": {
-              "$value": "#6ee7b7"
+              "$value": "#34d399"
             }
           }
         }
@@ -280,7 +280,7 @@
         "{color.chart.6}"
       ]
     },
-    "guidance": "# Data Dashboard\n\nAn operational surface for analysts and on-call operators. Dark by default\nbecause it lives on a wall display or a second monitor all day. Read at a\nglance; drill in only when something looks wrong.\n\n## Principles\n\n1. **Answer \"is anything wrong?\" in two seconds.** Status and deltas first,\n   detail below. A viewer who must read to find the problem has a broken\n   dashboard.\n2. **Density with air.** Compact type and tight rows, but never a tile\n   touching another tile. The grid gap is the only separator; avoid borders\n   inside a tile.\n3. **Numbers are monospace.** Tabular figures so a column of values aligns and\n   a changing value does not jitter.\n\n## Layout grid\n\nA responsive grid of tiles: `repeat(auto-fit, minmax(13rem, 1fr))` with\n`--space-md` gaps. KPI tiles occupy one cell; a chart panel spans two or the\nfull row. Tables always come last. On a phone the grid collapses to one\ncolumn in the same source order, so put the most important tile first. Page\npadding is `--space-lg`; do not cap the width — a dashboard uses the screen it\nis given.\n\n## Typography\n\nInter for labels, `--type-metric` (the monospace typography token) for every\nheadline figure. Labels are `--size-small`, uppercase, letter-spaced, in\n`--color-text-secondary`. Headings never exceed `--size-h2`; on a dashboard a\nbig heading is wasted pixels.\n\n## Colour usage\n\nNear-black ground (`--color-bg-page`), tiles one step lighter\n(`--color-bg-card`). Cyan (`--color-brand-primary`) is the interactive and\nprimary-series colour. Lime `ok`, amber `warn`, red `danger` for thresholds\nonly — a tile is coloured only when its value crosses one. Chart series follow\nthe palette in order and never repeat within one canvas. The `dark` mode is a\ndeeper, higher-contrast variant for wall displays in a dim room; both modes\nmust pass the same thresholds.\n\n## Charts\n\nChart.js. Line for time series, bar for comparison across categories,\nhorizontal bar when category names are long. No pie or doughnut beyond a\nsingle-value gauge. Always show the axis units, keep gridlines at\n`--color-border-default`, and disable the legend when three or fewer series\ncan be labelled in the panel title.\n\n## Diagrams\n\nMermaid `flowchart LR` for a pipeline overview panel, nothing else — a\ndashboard that needs a sequence diagram is a document, not a dashboard.\n\n## Components and when to use each\n\n- `kpi-tile` — one metric, its delta and its threshold state. The top row of\n  every dashboard.\n- `chart-panel` — a titled canvas with a subtitle carrying the time window.\n- `data-table` — compact rows for the long tail behind the tiles; right-align\n  numbers, keep to eight visible rows and scroll.\n- `status-dot` — inline health marker in a table row or a tile header.\n- `filter-bar` — the time range and segment currently applied, printed as\n  text so a screenshot stays self-explanatory.\n\n## Do / don't\n\n- **Do** print the time window on every panel; a screenshot outlives its\n  context.\n- **Do** show \"no data\" explicitly rather than an empty chart.\n- **Don't** animate anything. Movement on a wall display reads as an alert.\n- **Don't** put two units on one axis.\n- **Don't** use a colour for a series that also means a threshold state.\n",
+    "guidance": "# Data Dashboard\n\nAn operational surface for analysts and on-call operators. Dark by default\nbecause it lives on a wall display or a second monitor all day. Read at a\nglance; drill in only when something looks wrong.\n\n## Principles\n\n1. **Answer \"is anything wrong?\" in two seconds.** Status and deltas first,\n   detail below. A viewer who must read to find the problem has a broken\n   dashboard.\n2. **Density with air.** Compact type and tight rows, but never a tile\n   touching another tile. The grid gap is the only separator; avoid borders\n   inside a tile.\n3. **Numbers are monospace.** Tabular figures so a column of values aligns and\n   a changing value does not jitter.\n\n## Layout grid\n\nA responsive grid of tiles: `repeat(auto-fit, minmax(13rem, 1fr))` with\n`--space-md` gaps. KPI tiles occupy one cell; a chart panel spans two or the\nfull row. Tables always come last. On a phone the grid collapses to one\ncolumn in the same source order, so put the most important tile first. Page\npadding is `--space-lg`; do not cap the width — a dashboard uses the screen it\nis given.\n\n## Typography\n\nInter for labels, `--type-metric` (the monospace typography token) for every\nheadline figure. Labels are `--size-small`, uppercase, letter-spaced, in\n`--color-text-secondary`. Headings never exceed `--size-h2`; on a dashboard a\nbig heading is wasted pixels.\n\n## Colour usage\n\nDesigned dark-first: it reads best in dark mode, but the light base must\nremain fully usable — never hard-code dark colours. The base is a light grey\nground (`--color-bg-page`) with white tiles; the `dark` mode is the near-black\nwall-display look with tiles one step lighter. Cyan (`--color-brand-primary`)\nis the interactive and primary-series colour — deepened on the light base so it\nstays legible. Lime/green `ok`, amber `warn`, red `danger` for thresholds only:\na tile is coloured only when its value crosses one. Chart series follow the\npalette in order and never repeat within one canvas, and both modes must pass\nthe same contrast thresholds.\n\n## Charts\n\nChart.js. Line for time series, bar for comparison across categories,\nhorizontal bar when category names are long. No pie or doughnut beyond a\nsingle-value gauge. Always show the axis units, keep gridlines at\n`--color-border-default`, and disable the legend when three or fewer series\ncan be labelled in the panel title.\n\n## Diagrams\n\nMermaid `flowchart LR` for a pipeline overview panel, nothing else — a\ndashboard that needs a sequence diagram is a document, not a dashboard.\n\n## Components and when to use each\n\n- `kpi-tile` — one metric, its delta and its threshold state. The top row of\n  every dashboard.\n- `chart-panel` — a titled canvas with a subtitle carrying the time window.\n- `data-table` — compact rows for the long tail behind the tiles; right-align\n  numbers, keep to eight visible rows and scroll.\n- `status-dot` — inline health marker in a table row or a tile header.\n- `filter-bar` — the time range and segment currently applied, printed as\n  text so a screenshot stays self-explanatory.\n\n## Do / don't\n\n- **Do** print the time window on every panel; a screenshot outlives its\n  context.\n- **Do** show \"no data\" explicitly rather than an empty chart.\n- **Don't** animate anything. Movement on a wall display reads as an alert.\n- **Don't** put two units on one axis.\n- **Don't** use a colour for a series that also means a threshold state.\n",
     "components": [
       {
         "name": "kpi-tile",
