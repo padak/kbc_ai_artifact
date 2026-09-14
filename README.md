@@ -100,6 +100,12 @@ content, source, or metadata over a small JSON API.
 - **Visual diff**: `GET /a/{id}/diff/{a}..{b}?format=visual` renders both
   versions side by side in synced-scroll sandboxed iframes, for comparing what
   a reader actually sees rather than the underlying source
+- **Hosted design systems** (`/api/design-systems`, `/ds/{id}`): register your
+  organisation's design tokens (DTCG, light + dark), a written guide and HTML
+  components as a versioned design system; every hub member's agent can list
+  them and pull a ready starter document, and the hub presents each one as a
+  live style guide. Artifacts record which design system version they were
+  written in (`design_system`)
 - Markdown rendering with GFM tables, task lists, mermaid diagrams, and
   syntax-highlighted code
 - Survives restarts: the only durable state is Keboola Storage Files; local
@@ -162,6 +168,16 @@ own origin, where `/admin` and `/review` keep a visitor's Storage token in
 `sessionStorage`. `/a/{id}/raw` is unaffected — it stays the byte-exact
 document for machine clients that just want the HTML.
 
+**Design systems.** A registered design system lives in its own storage
+namespace, `artifact-hub-ds` (meta `ds-{id}-meta.json`, versions
+`ds-{id}-v{n}.json`), rebuilt on startup by the same tag-only `hydrate()`
+approach as artifacts — nothing about a design system's index is kept
+anywhere except those tagged Storage Files. Only the raw, normalised bundle
+is ever stored; the CSS, the `starter` skeleton, the token-to-variable map
+and the style-guide page are all derived outputs computed from that bundle
+and never persisted, so a version's bytes are the only durable artifact and
+every rendering can be regenerated identically from them.
+
 ## Project brain workflow
 
 A published artifact is not just a document to link — it is one URL a whole
@@ -218,6 +234,17 @@ Public (no auth):
 | GET | `/a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault (versions, comments, reasoning timeline), streamed rather than held in memory; 413 above `HUB_EXPORT_MAX_BYTES`, 429 above `HUB_MAX_EXPORTS_PER_HOUR` |
 | GET | `/changelog` / `/changelog.md` | Rendered changelog (hub's own design) / raw source |
 | GET | `/health` | Liveness check + service version + index stats |
+| GET | `/ds/{ref}` | A design system's style guide (HTML, sandboxed) — palette, typography, live components, sample chart/diagram, guidance |
+| GET | `/ds/{ref}/versions` | Design-system version history JSON |
+| GET | `/ds/{ref}/bundle?v=n` | The stored, normalised bundle for one version, plus `variables` (token path → CSS custom property) and `warnings` |
+| GET | `/ds/{ref}/tokens` | `{tokens, modes}` — the raw DTCG token tree |
+| GET | `/ds/{ref}/css?mode=all\|light\|dark` | Generated CSS custom properties for the requested mode |
+| GET | `/ds/{ref}/starter` | Skeleton with `{{TITLE}}`/`{{BODY}}`, every token/role/component CSS and font already in place, served with a CSP sandbox |
+| GET | `/ds/{ref}/guidance` | `text/markdown` — the brand's written rules |
+
+`{ref}` may also be the design system's slug, in which case a credential is
+required (a slug-shaped `ref` on a reader route answers 401 without one — the
+same answer whether or not the slug exists).
 
 **Authorization is per project, by design.** Ownership is `(stack, project)`:
 any valid credential from the owning project carries full owner authority
@@ -233,8 +260,8 @@ bearer):
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/artifacts` | Publish `{html[, markdown_source] \| markdown \| git_url[, git_ref, git_path, git_token, git_username], title?, password?, accept_versions?}` → `{id, version, head_version, url, raw_url, meta_url, versions_url, ...}` |
-| PUT | `/api/artifacts/{id}` | Add a live version and/or change `password` / `clear_password` / `accept_versions_mode` / `contributors` / `comments_mode` / `status` / `webhooks` (owner project only) |
+| POST | `/api/artifacts` | Publish `{html[, markdown_source] \| markdown \| git_url[, git_ref, git_path, git_token, git_username], title?, password?, accept_versions?, design_system?}` → `{id, version, head_version, url, raw_url, meta_url, versions_url, ...}` |
+| PUT | `/api/artifacts/{id}` | Add a live version (optionally `design_system`) and/or change `password` / `clear_password` / `accept_versions_mode` / `contributors` / `comments_mode` / `status` / `webhooks` (owner project only) |
 | GET | `/api/artifacts` | List the caller's project's own artifacts (trashed ones included, with `webhooks_count`); each row's `status` is the document's, mirrored as `document_status` with a derived `contributions_frozen` |
 | DELETE | `/api/artifacts/{id}` | **Soft delete**: move to the trash — public link dies, everything is kept and restorable (owner project only) |
 | POST | `/api/artifacts/{id}/restore` | Undo the soft delete: back on the same share id, same status as before (owner project only) |
@@ -246,7 +273,7 @@ bearer):
 | POST | `/api/artifacts/{id}/invitations` | Invite a guest to comment `{name}` → one-time `review_url` with the secret in the URL fragment (owner project only) |
 | GET | `/api/artifacts/{id}/invitations` | List an artifact's guest invitations, no secrets (owner project only) |
 | DELETE | `/api/artifacts/{id}/invitations/{iid}` | Revoke one invitation; everyone else's keeps working (owner project only) |
-| POST | `/api/artifacts/{id}/versions` | Submit a version `{html[, markdown_source] \| markdown \| git_url, title?, note?, base_version?}` — live for the owner, proposed for any other project (409 when `status` is `final` or trashed) |
+| POST | `/api/artifacts/{id}/versions` | Submit a version `{html[, markdown_source] \| markdown \| git_url, title?, note?, base_version?, design_system?}` — live for the owner, proposed for any other project (409 when `status` is `final` or trashed) |
 | POST | `/api/artifacts/{id}/versions/{n}/promote` | Promote a proposal to live (owner project only) |
 | DELETE | `/api/artifacts/{id}/versions/{n}` | Delete a version (owner), or withdraw your own proposal (contributor). 409 for the last live version, and for the version the head is pinned to — re-pin or switch the head to `latest` first |
 | PUT | `/api/artifacts/{id}/head` | `{"mode": "latest"}` or `{"mode": "pinned", "version": n}` (owner project only) |
@@ -259,6 +286,26 @@ Every version, comment/reply, finalize, trash/restore and link-rotation event
 also fires any webhooks the artifact has registered (`X-Hub-Signature-256`
 HMAC-signed JSON, keyed per receiver, or Slack's `{"text": ...}` shape for a
 `hooks.slack.com` URL) — see *Outbound webhooks* above.
+
+**Design-system management** (same auth as above; `{ref}` is the `ds_…` id or
+the slug; **owner** = the project that registered it; **D** = the
+destructive-token policy applies too):
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/design-systems` | List every registered design system with at least one version, ordered by `updated_at` desc then `slug` asc — any credential |
+| POST | `/api/design-systems` | Register one `{slug, name, description?, note?, bundle}` → 201 `{..., version: 1, warnings}` (409 slug taken, 422 validation, 429 past the per-project or daily cap) — any credential |
+| GET | `/api/design-systems/{ref}` | Full projection plus `versions` — any credential |
+| PUT | `/api/design-systems/{ref}` | Update `{name?, description?}` metadata only — omitted fields unchanged, `description: ""` clears, `null` is 422 — owner |
+| POST | `/api/design-systems/{ref}/versions` | Append a version `{bundle, note?}` → 201 `{..., version, warnings}` (409 at the version cap, 429 past the daily cap) — owner |
+| DELETE | `/api/design-systems/{ref}/versions/{n}` | Delete one version (409 when it is the only version) — owner, **D** |
+| DELETE | `/api/design-systems/{ref}` | Delete the whole design system, permanently — owner, **D** |
+
+`POST /api/artifacts`, `PUT /api/artifacts/{id}` and
+`POST /api/artifacts/{id}/versions` also accept an optional `design_system:
+"id@n"` provenance field, echoed back on `/a/{id}/meta` and
+`/a/{id}/versions` — see *Design systems* in `SKILL.md` for how an agent
+resolves and uses it.
 
 ## Signing in instead of finding a token
 
@@ -986,6 +1033,27 @@ window only the new signature is sent and the old key verifies nothing. A
 meta record persisted before this field existed has no epoch on file at all,
 which is read exactly like a receiver that has simply never been rotated —
 no migration step, no re-registration.
+
+**Design systems render only inside the same sandbox artifacts get.**
+Guidance Markdown, component `html`/`css` and raw token strings are never
+rendered on the hub's own origin — only inside a `srcdoc` iframe sandboxed
+without `allow-same-origin` (the style guide page) or through
+`_sandboxed_html` (`GET /ds/{ref}/starter`, the one route that serves such
+HTML directly). Reading a design system by its **slug** requires an
+authenticated credential, resolved before the lookup runs, so slugs cannot be
+enumerated anonymously; its `ds_…` **id** is a public capability URL exactly
+like an artifact's, and slugs are otherwise enumerable by any accepted
+credential — that is the catalogue's purpose. A published artifact's
+`design_system: "id@n"` field is a **claim recorded at publish time, not a
+live link enforced afterwards** — the hub does not re-check that the bundle
+still exists or that the artifact still matches it — and because it carries
+the design system's own `ds_…` id, anyone who can read the artifact's
+metadata learns that capability URL too, exactly as strongly as if it had
+been shared directly. `fonts` is the one exception to "never render user
+markup": it is structured data (a host allowlisted by
+`HUB_DS_FONT_HOSTS`, not arbitrary HTML), emitted as `<link>` tags the hub
+builds itself, which is what lets `/ds/{ref}/starter` avoid the free-form
+`<head>` HTML earlier design-system proposals would have needed.
 
 ## Contributing
 
