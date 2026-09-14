@@ -1,6 +1,7 @@
 """Route tests for design systems. Reuses the ``api`` fixture from test_api."""
 
 import dataclasses
+import threading
 
 from tests.test_api import AUTH_HEADERS, OTHER_AUTH_HEADERS, api  # noqa: F401
 from tests.test_designs import good as good_bundle
@@ -469,6 +470,97 @@ def test_context_documents_design_systems(api):
         "ds_max_palette",
         "ds_max_font_links",
         "ds_font_hosts",
+        "ds_derived_cache_entries",
     ):
         assert key in ctx["limits"], key
     assert "/api/design-systems" in api.client.get("/llms.txt").text
+
+
+# --------------------------------------------------------------------------
+# Review round 1
+# --------------------------------------------------------------------------
+
+
+def test_v_query_rejects_every_non_canonical_integer(api):
+    ds_id = _register(api.client).json()["id"]
+    # "\u00b2" is str.isdigit() but not int()-parseable: it must be a 422,
+    # never an unhandled 500.
+    assert api.client.get(f"/ds/{ds_id}/bundle?v=\u00b2").status_code == 422
+    assert api.client.get(f"/ds/{ds_id}/bundle?v=1e3").status_code == 422
+    # A leading zero is not the canonical form of a version number.
+    assert api.client.get(f"/ds/{ds_id}/bundle?v=01").status_code == 422
+    assert api.client.get(f"/ds/{ds_id}/bundle?v=-1").status_code == 422
+    assert api.client.get(f"/ds/{ds_id}/bundle?v=1").status_code == 200
+
+
+def test_catalogue_does_not_download_version_envelopes(api):
+    for slug in ("one", "two"):
+        ds_id = _register(api.client, slug=slug).json()["id"]
+        api.client.post(
+            f"/api/design-systems/{ds_id}/versions",
+            json={"bundle": good_bundle()},
+            headers=AUTH_HEADERS,
+        )
+    # Cold caches, as after a restart: anything the catalogue needs it must
+    # fetch, so the spy below sees the real fan-out rather than LRU hits.
+    designs = api.client.app.state.designs
+    designs._meta_memory.clear()
+    designs._version_memory.clear()
+    for path in api.settings.cache_dir.glob("ds.*"):
+        path.unlink()
+
+    downloaded: list[str] = []
+    backend = api.backend
+    real_download = backend.download
+
+    def spy(file_id: int) -> bytes:
+        downloaded.append(backend.files[file_id][0].name)
+        return real_download(file_id)
+
+    backend.download = spy
+    try:
+        rows = api.client.get("/api/design-systems", headers=AUTH_HEADERS).json()[
+            "design_systems"
+        ]
+    finally:
+        backend.download = real_download
+    assert {r["slug"]: r["versions_count"] for r in rows} == {"one": 2, "two": 2}
+    # Counting versions must never pull a version envelope: only meta files
+    # (ds-{id}-meta.json) may be downloaded here.
+    assert [n for n in downloaded if "-meta" not in n] == []
+
+
+def test_concurrent_creation_cannot_exceed_the_per_project_cap(api, monkeypatch):
+    from src import main
+
+    monkeypatch.setattr(
+        main, "settings", dataclasses.replace(main.settings, ds_max_per_project=1)
+    )
+    barrier = threading.Barrier(2)
+    results: dict[str, int] = {}
+
+    def register(slug: str) -> None:
+        barrier.wait(timeout=10)
+        results[slug] = _register(api.client, slug=slug).status_code
+
+    threads = [
+        threading.Thread(target=register, args=(slug,)) for slug in ("first", "second")
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+        assert not t.is_alive()
+    assert sorted(results.values()) == [201, 429]
+    owner_key = next(iter(api.client.app.state.designs._index.values())).owner_key
+    assert api.client.app.state.designs.count_owner(owner_key) == 1
+
+
+def test_css_authenticates_a_slug_before_validating_mode(api):
+    _register(api.client)
+    # A slug ref is 401 without a credential whatever the query says.
+    assert api.client.get("/ds/corp/css?mode=sepia").status_code == 401
+    assert (
+        api.client.get("/ds/corp/css?mode=sepia", headers=AUTH_HEADERS).status_code
+        == 422
+    )

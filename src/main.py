@@ -5213,6 +5213,7 @@ def context(request: Request) -> dict:
             "ds_max_name_chars": settings.ds_max_name_chars,
             "ds_max_description_chars": settings.ds_max_description_chars,
             "ds_max_note_chars": settings.ds_max_note_chars,
+            "ds_derived_cache_entries": settings.ds_derived_cache_entries,
         },
         "design_systems": {
             "what": (
@@ -10607,10 +10608,12 @@ def _ds_projection(
 ) -> dict[str, Any]:
     designs: DesignSystemStore = request.app.state.designs
     head = designs.head_version(meta.id)
-    versions = designs.list_versions(meta.id) if head is not None else []
+    # version_numbers, not list_versions: the projection only needs a count,
+    # and downloading every envelope of every system to produce one would
+    # make the catalogue fan out across the whole hub.
     return meta.projection(
         head_version=head,
-        versions_count=len(versions),
+        versions_count=len(designs.version_numbers(meta.id)),
         mine=caller is not None and caller.key == meta.owner_key,
         urls=_ds_urls(base_url(request), meta.id, head),
     )
@@ -10904,7 +10907,7 @@ def add_design_system_version(
         # ds_max_versions when it was built, so this is what makes the
         # *current* setting the one that answers. The store's own
         # VersionLimit stays the backstop.
-        if len(designs.list_versions(meta.id)) >= settings.ds_max_versions:
+        if len(designs.version_numbers(meta.id)) >= settings.ds_max_versions:
             raise HTTPException(status_code=409, detail=version_limit_detail)
         if not _claim_ds_version_slot(request.app, owner.key):
             raise HTTPException(
@@ -10928,6 +10931,12 @@ def add_design_system_version(
         except VersionLimit as exc:
             raise HTTPException(
                 status_code=409, detail=version_limit_detail
+            ) from exc
+        except NotHydrated as exc:
+            # The flag can flip between the check above and here.
+            raise HTTPException(
+                status_code=502,
+                detail="design-system index is not available yet; retry shortly",
             ) from exc
     payload = {
         **_ds_projection(request, designs.get_meta(meta.id), owner),
@@ -11036,7 +11045,16 @@ def _parse_v(v: str | None) -> int | None:
     """``?v=`` as a positive integer, or None when absent."""
     if v is None:
         return None
-    if not v.isdigit() or int(v) < 1:
+    # isascii() + isdecimal(), not isdigit(): "\u00b2".isdigit() is True but
+    # int("\u00b2") raises, which would be a 500 where the spec says 422. A
+    # leading zero is refused too -- "01" is not the canonical form of 1, and
+    # accepting both spellings would make a version addressable two ways.
+    if (
+        not v.isascii()
+        or not v.isdecimal()
+        or (len(v) > 1 and v.startswith("0"))
+        or int(v) < 1
+    ):
         raise HTTPException(status_code=422, detail="v must be a positive integer")
     return int(v)
 
@@ -11188,9 +11206,11 @@ def design_system_css(
     mode: str = Query(default="all", description=DS_QUERY_MODE_DESC),
 ) -> Response:
     """The tokens compiled to CSS custom properties."""
+    # Resolved first, so a slug reference answers 401 before anything about
+    # the query string is judged -- exactly like every other reader route.
+    _, version = _ds_reader(request, ref, v)
     if mode not in ("all", "light", "dark"):
         raise HTTPException(status_code=422, detail="mode must be all, light or dark")
-    _, version = _ds_reader(request, ref, v)
     base, dark = _ds_sets(version)
     if mode == "dark" and dark is None:
         raise HTTPException(

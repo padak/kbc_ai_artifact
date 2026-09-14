@@ -636,10 +636,20 @@ class DesignSystemStore:
             self._trim(self._version_memory)
         return v
 
-    def list_versions(self, ds_id: str) -> list[DesignSystemVersion]:
+    def version_numbers(self, ds_id: str) -> list[int]:
+        """Which versions exist, ascending, straight from the index.
+
+        The cheap half of :meth:`list_versions`: no download, no cache churn.
+        Use it whenever only the count or the set of numbers is needed — the
+        catalogue's ``versions_count`` and the append limit check — and keep
+        ``list_versions`` for the places that actually render version rows.
+        """
         with self._lock:
             e = self._index.get(ds_id)
-            numbers = sorted(e.versions) if e else []
+            return sorted(e.versions) if e else []
+
+    def list_versions(self, ds_id: str) -> list[DesignSystemVersion]:
+        numbers = self.version_numbers(ds_id)
         return [v for v in (self.get_version(ds_id, n) for n in numbers) if v is not None]
 
     # ------------------------------------------------------------- create
