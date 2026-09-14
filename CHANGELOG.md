@@ -4,6 +4,30 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.16.0 — Your design system, hosted and presented (2026-09-15)
+
+- The hub now holds your organisation's **design systems**: the design
+  tokens you export from Figma (light and dark), the written rules for how a
+  document in your brand is laid out, and the HTML components you want
+  reused. Register one with `POST /api/design-systems`, give it a name, and
+  append versions as the brand evolves — nothing is edited in place and
+  nothing is pruned behind your back.
+- Every member of the hub can list them (`GET /api/design-systems`), and an
+  agent in a fresh session only needs to hear "use the corporate design,
+  version 2" to pull that version's bundle and a ready **starter** document
+  (`GET /ds/{id}/starter`) with every token, font and component in place,
+  then publish on-brand HTML. The skill and the agent definition teach the
+  whole recipe, including how to convert a Figma Variables export.
+- Each design system presents itself at `GET /ds/{id}`: palette, typography,
+  spacing scale, live components, a sample chart and diagram in the brand's
+  own colours, and the guidance — a style guide you can send to anyone.
+- Artifacts remember which design system version they were written in
+  (`design_system` on publish, echoed on `/meta` and `/versions`), so a later
+  revision keeps the same look.
+- Design-system content is rendered only inside the same sandbox artifacts
+  get — the starter included — and reading a design system by name needs a
+  Keboola credential, while its `ds_` id is a shareable capability link.
+
 ## 0.15.1 — The agent trusts your configured token, not its memory (2026-09-09)
 
 - When the stack refuses a token, the agent now re-reads `KBC_TOKEN` from the
