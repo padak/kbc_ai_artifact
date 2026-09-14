@@ -2299,6 +2299,32 @@ def landing_page(
         ]
     )
 
+    design_systems = "".join(
+        [
+            _card(
+                "your brand, registered once",
+                "An organisation registers its design tokens (exported from "
+                "Figma), a written style guide and a library of HTML "
+                "components as a versioned design system. Every member's "
+                f'agent can list them with <code>GET {base}/api/design-systems</code>.',
+            ),
+            _card(
+                "presented by the hub",
+                "Each design system gets a live style guide at "
+                "<code>/ds/{id}</code> &mdash; palette, type, components, a "
+                "sample chart and a sample diagram &mdash; that you can send "
+                "to anyone.",
+            ),
+            _card(
+                "say it once to your agent",
+                '&ldquo;Publish this as a report in the corporate design, '
+                "version 1.&rdquo; The agent pulls the starter and publishes "
+                "on-brand HTML; the artifact remembers which design system "
+                "it used.",
+            ),
+        ]
+    )
+
     publish_term = _term(
         "POST /api/artifacts",
         '<span class="c"># Markdown — GFM tables, task lists, mermaid, '
@@ -2419,6 +2445,11 @@ that is the only credential you need.</p>
 
 <h2 class="label">what it does</h2>
 <div class="grid">{features}</div>
+
+<h2 class="label">design systems</h2>
+<div class="grid">{design_systems}</div>
+<p class="note">Read how in <a href="{base}/skill">/skill</a> &middot;
+machine manifest at <a href="{base}/context">/context</a></p>
 
 <h2 class="label">authentication</h2>
 <p>Everything under <code>/api/artifacts</code> is authenticated with headers,
