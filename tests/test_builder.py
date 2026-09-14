@@ -856,3 +856,17 @@ class TestCommitShaRefIsRefusedClearly:
     def test_a_hex_name_shorter_than_an_object_id_is_still_a_branch(self):
         """Only unambiguous object ids are refused, not any hex-looking name."""
         assert _validate_git_ref("deadbeef") == "deadbeef"
+
+
+class TestChartjsCdnConstant:
+    """Chart.js is pinned exactly the way MERMAID_VERSION/HLJS_VERSION are,
+    for the design-system starter/style-guide documents (src/designkit.py)."""
+
+    def test_chartjs_cdn_constant_is_exact_pinned(self):
+        from src import builder
+
+        assert builder.CHARTJS_VERSION.count(".") == 2
+        assert (
+            builder.CHARTJS_JS
+            == f"https://cdn.jsdelivr.net/npm/chart.js@{builder.CHARTJS_VERSION}/dist/chart.umd.min.js"
+        )
