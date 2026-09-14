@@ -141,3 +141,28 @@ def test_guide_skips_chart_and_diagram_sections_when_not_declared():
 def test_guide_is_built_on_the_starter():
     g = _guide()
     assert g.startswith("<!doctype html>") and TITLE_SLOT not in g and BODY_SLOT not in g
+
+
+def test_design_system_page_is_hub_chrome_around_a_sandboxed_iframe():
+    from src import pages
+
+    proj = {
+        "id": "ds_abc",
+        "slug": "corp",
+        "name": "Corp <x>",
+        "description": "d",
+        "head_version": 2,
+        "owner": {"project_name": "P", "project_id": 1, "stack_host": "h"},
+        "urls": {},
+    }
+    rows = [
+        {"version": 1, "created_at": "2026-09-14T00:00:00Z", "note": ""},
+        {"version": 2, "created_at": "2026-09-15T00:00:00Z", "note": "n"},
+    ]
+    out = pages.design_system_page("https://hub", proj, rows, 2, "<html>guide</html>", "0.16.0")
+    assert "Corp &lt;x&gt;" in out
+    assert 'sandbox="allow-scripts allow-popups allow-forms allow-downloads"' in out and "allow-same-origin" not in out
+    assert 'srcdoc="&lt;html&gt;guide&lt;/html&gt;"' in out
+    assert 'href="https://hub/ds/ds_abc?v=1"' in out
+    assert "https://hub/ds/ds_abc/bundle?v=2" in out and "https://hub/ds/ds_abc/starter?v=2" in out
+    assert "hubSession" not in out
