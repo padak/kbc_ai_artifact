@@ -4,7 +4,11 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
-## 0.18.0 — Every artifact explains itself (2026-09-15)
+## 0.18.1 — Every artifact explains itself (2026-09-15)
+
+_(0.18.0 was never released: its tag landed on the 0.17.0 commit by a scripting
+mistake and tags on this repository cannot be deleted, so the reader menu ships
+as 0.18.1.)_
 
 - **Reader menu.** Every artifact page now carries a small round button in
   its corner — "What can I do with this document?" — opening a panel that
