@@ -512,9 +512,10 @@ class ArtifactMeta:
     # Does the hub's own reader menu -- the small corner control on
     # /a/{share_id} that tells a reader how to comment, see the history or
     # propose a version -- appear on this artifact's frame page? True for
-    # every artifact, including every meta file written before 0.18.0, because
-    # :meth:`from_json` reads a missing key as the default its caller passes
-    # (True). It is hub chrome, never part of the published bytes: /a/{id}/raw
+    # every artifact, including every meta file written before 0.18.0, whose
+    # missing key :meth:`from_json` always reads as True (the deployment's
+    # HUB_READER_MENU_DEFAULT governs *new* artifacts only, never an old
+    # record). It is hub chrome, never part of the published bytes: /a/{id}/raw
     # and every export are identical whichever way this is set. Declared last,
     # after ``webhook_key_epochs``, for the same reason that field is declared
     # after ``version_high_water``: positional ArtifactMeta(...) construction
@@ -730,10 +731,14 @@ class ArtifactMeta:
             # the "never rotated" state — the receiver keeps verifying under
             # its original epoch-less key with no migration needed.
             webhook_key_epochs=data.get("webhook_key_epochs"),
-            # Absent in every meta file written before 0.18.0, and that has to
-            # mean "on": the menu is the answer to "how do I comment on this?",
-            # and an artifact published last month deserves it as much as one
-            # published today. __post_init__ coerces whatever is here to bool.
+            # Absent in every meta file written before 0.18.0, and that reads
+            # as True *unconditionally* -- never as this deployment's
+            # HUB_READER_MENU_DEFAULT. The two settle different questions:
+            # the env var decides what a **newly published** artifact is given,
+            # while an artifact that predates the field is always on, because
+            # the menu is the answer to "how do I comment on this?" and one
+            # published last month deserves it as much as one published today.
+            # __post_init__ coerces whatever is here to bool.
             reader_menu=data.get("reader_menu", True),
         )
 

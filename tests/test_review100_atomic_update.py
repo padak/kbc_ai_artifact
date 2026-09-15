@@ -655,3 +655,32 @@ def test_every_setting_the_route_can_change_is_classified(api: Api) -> None:
     # "webhooks" is the one settable field this request cannot exercise (its
     # validation resolves DNS), so its membership is asserted directly.
     assert "webhooks" in main._ACCESS_SETTINGS
+
+
+def test_a_tightening_put_still_carries_a_non_access_setting(api: Api) -> None:
+    """Content + tightening + reader_menu: the flag must not be dropped.
+
+    A request with a tightening change and no loosening one commits only the
+    ``_tightening_half`` copy, which is built from ``_ACCESS_SETTINGS``.
+    ``reader_menu`` is deliberately not an access setting (it changes what the
+    wrapper page shows, never who may read or write), so it has to be carried
+    across explicitly — otherwise the owner gets a 200 for a change that was
+    silently thrown away.
+    """
+    artifact_id = _publish(api)
+
+    resp = _update(
+        api,
+        artifact_id,
+        markdown=REPLACEMENT_MARKDOWN,
+        password="new-pw",
+        reader_menu=False,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reader_menu"] is False
+
+    persisted = api.client.app.state.store.get_meta(artifact_id)
+    assert persisted is not None
+    assert persisted.reader_menu is False
+    # The tightening itself still took, and nothing widened.
+    assert persisted.password is not None

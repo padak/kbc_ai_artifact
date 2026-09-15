@@ -2088,3 +2088,22 @@ def test_reader_menu_is_declared_after_webhook_key_epochs():
     names = [f.name for f in dataclasses.fields(ArtifactMeta)]
     assert names[-1] == "reader_menu"
     assert names[-2] == "webhook_key_epochs"
+
+
+def test_reader_menu_missing_key_ignores_the_deployment_default(monkeypatch):
+    """Controller ruling: an old record is on whatever HUB_READER_MENU_DEFAULT says.
+
+    The env var governs what a *newly published* artifact is given and nothing
+    else; a meta file written before the field existed always reads as True.
+    """
+    monkeypatch.setenv("HUB_READER_MENU_DEFAULT", "0")
+    raw = json.dumps({"id": "old"}).encode("utf-8")
+    assert ArtifactMeta.from_json(raw).reader_menu is True
+
+
+def test_reader_menu_proposal_modes_track_the_store():
+    """pages spells the two modes out; they must stay the store's own list."""
+    import src.pages as pages
+    import src.store as store
+
+    assert set(pages._MENU_PROPOSAL_MODES) == set(store._ACCEPT_ON_MODES)

@@ -7699,7 +7699,6 @@ def test_reader_menu_links_point_at_the_share_id():
     for href in (
         f"{base}/a/shr1/review",
         f"{base}/a/shr1/versions?format=html",
-        f"{base}/skill#versioning",
         f"{base}/a/shr1/export/markdown",
         f"{base}/llms.txt",
     ):
@@ -7715,6 +7714,10 @@ def test_reader_menu_proposal_item_follows_accept_versions_mode():
         on = _frame_with_menu(reader_menu=True, accept_versions_mode=mode)
         assert "Propose a new version" in on
         assert "does not accept proposals" not in on
+        # The how-to keeps the route, but the human link goes to a page a
+        # browser can render -- not to a raw-Markdown anchor.
+        assert "/api/artifacts/shr1/versions" in on
+        assert "/skill#versioning" not in on
 
 
 def test_reader_menu_escapes_the_share_id():
@@ -7870,3 +7873,16 @@ def test_admin_studio_has_a_reader_menu_checkbox(api: Api) -> None:
     page = api.client.get("/admin").text
     assert "reader_menu" in page
     assert "reader menu" in page
+
+
+def test_reader_menu_panel_is_focusable_and_announced_as_a_dialog():
+    page = _frame_with_menu(reader_menu=True)
+    assert 'aria-haspopup="dialog"' in page
+    assert "panel.focus()" in page
+    assert "btn.focus()" in page
+
+
+def test_reader_menu_markdown_row_says_it_downloads():
+    page = _frame_with_menu(reader_menu=True)
+    assert "Download as Markdown" in page
+    assert "downloads" in page

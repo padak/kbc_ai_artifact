@@ -3040,12 +3040,24 @@ box-shadow:0 10px 34px rgba(0,0,0,.6)}
 #: module docstring's rule about pages that hold one.
 _MENU_JS = """
 (function () {
+  /* These listeners are the parent document's own. A click or an Escape
+     inside the artifact cannot reach them: the document lives in a sandboxed
+     iframe running in an opaque origin, so its events never cross into this
+     one. That is by design -- the menu closes on interaction with the hub's
+     chrome, and an artifact can neither close it nor spy on it. A reader who
+     clicks into the document and wants the menu gone clicks the button. */
   var btn = document.getElementById("ah-menu-btn");
   var panel = document.getElementById("ah-menu-panel");
   if (!btn || !panel) { return; }
   function setOpen(open) {
     panel.hidden = !open;
     btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      /* The panel is a dialog, so move the reading position into it rather
+         than leaving a screen reader on the button it just described. */
+      panel.tabIndex = -1;
+      panel.focus();
+    }
   }
   btn.addEventListener("click", function () {
     setOpen(panel.hidden);
@@ -3122,8 +3134,12 @@ def reader_menu_html(
     art = f"{safe_base}/a/{safe_id}"
 
     if accept_versions_mode in _MENU_PROPOSAL_MODES:
+        # The human link goes to the artifact's own version history -- a page
+        # a browser renders -- rather than to /skill#versioning, which is raw
+        # Markdown with no anchor a browser can honour. The route itself stays
+        # in the how-to, for the agent reading over the reader's shoulder.
         propose = _menu_item(
-            f'<a href="{safe_base}/skill#versioning">Propose a new version</a>',
+            f'<a href="{art}/versions?format=html">Propose a new version</a>',
             "Publish your revision with <code>POST "
             f"/api/artifacts/{safe_id}/versions</code> (any Keboola token); "
             "the owner reviews it in the admin studio.",
@@ -3147,8 +3163,9 @@ def reader_menu_html(
         )
         + propose
         + _menu_item(
-            f'<a href="{art}/export/markdown">Read as Markdown</a>',
-            "The same document as plain Markdown, for reading or reuse.",
+            f'<a href="{art}/export/markdown">Download as Markdown</a>',
+            "Downloads the document as a plain Markdown file, for reading "
+            "somewhere else or for reuse.",
         )
         + _menu_item(
             "<strong>Share with an AI assistant</strong>",
@@ -3168,7 +3185,7 @@ def reader_menu_html(
 
     return (
         '<button type="button" class="ahmenu-btn" id="ah-menu-btn" '
-        'aria-haspopup="true" aria-expanded="false" '
+        'aria-haspopup="dialog" aria-expanded="false" '
         'aria-controls="ah-menu-panel" '
         f'aria-label="{READER_MENU_LABEL}" title="{READER_MENU_LABEL}">'
         "?</button>\n"

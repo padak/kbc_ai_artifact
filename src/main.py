@@ -3790,6 +3790,15 @@ def _tightening_half(previous: ArtifactMeta, candidate: ArtifactMeta) -> Artifac
         after = getattr(candidate, field_name)
         if _is_tightening(field_name, before, after):
             setattr(tightened, field_name, after)
+    # Settings that are *not* access-relevant still have to survive a request
+    # whose only other change is a tightening one: phase (c) is skipped
+    # entirely in that case, so whatever is not copied here is silently
+    # dropped behind a 200. ``reader_menu`` only decides whether the wrapper
+    # page paints the hub's corner menu -- it lets nobody in and nobody out --
+    # so carrying it into the restrictive half cannot widen access, which is
+    # the only property this copy has to preserve. A new non-access setting
+    # belongs on this list too.
+    tightened.reader_menu = candidate.reader_menu
     return tightened
 
 
@@ -4987,10 +4996,12 @@ def context(request: Request) -> dict:
                 "accept_versions/accept_versions_mode, contributors, "
                 "comments_mode, reader_menu and status; a title is only valid "
                 "together with new content, because a title lives on a version",
-                "reader_menu (default from limits.reader_menu_default) shows "
-                "the hub's corner menu on /a/{id}, telling a reader how to "
-                "comment, browse versions or propose one; it is wrapper "
-                "chrome only and never changes /a/{id}/raw or any export",
+                "reader_menu shows the hub's corner menu on /a/{id}, telling "
+                "a reader how to comment, browse versions or propose one; it "
+                "is wrapper chrome only and never changes /a/{id}/raw or any "
+                "export. limits.reader_menu_default is the value a newly "
+                "published artifact is given; an artifact published before "
+                "the setting existed is always on",
                 "POST /api/artifacts/{id}/versions accepts the same content "
                 f"fields plus an optional note (max {MAX_NOTE_CHARS} chars)",
                 "design_system is only valid together with new content on "
@@ -5265,8 +5276,10 @@ def context(request: Request) -> dict:
             "diff_max_bytes": settings.diff_max_bytes,
             "max_note_chars": MAX_NOTE_CHARS,
             "max_comments_per_day": settings.max_comments_per_day,
-            # What a newly published artifact gets for its reader menu; the
-            # owner overrides it per artifact with PUT /api/artifacts/{id}.
+            # What a *newly published* artifact gets for its reader menu, and
+            # nothing else: an artifact published before the setting existed
+            # is always on, whatever this says. The owner overrides it per
+            # artifact with PUT /api/artifacts/{id}.
             "reader_menu_default": settings.reader_menu_default,
             "max_replies_per_thread": MAX_REPLIES_PER_THREAD,
             "max_thread_bytes": MAX_THREAD_BYTES,
@@ -8440,6 +8453,10 @@ def list_artifacts(
                 # Slack hook's path *is* its credential), so the only response
                 # that echoes them is the owner PUT that set them.
                 "webhooks_count": len(meta.webhooks) if meta is not None else 0,
+                # True when the meta record vanished between listing and
+                # loading it (a concurrent purge, the same race the webhook
+                # count above guards): "on" is what a record without the flag
+                # means everywhere else, so the fallback agrees with it.
                 "reader_menu": meta.reader_menu if meta is not None else True,
                 # Built from share_id, so a rotated link is reflected here.
                 **artifact_urls(base, row["share_id"]),

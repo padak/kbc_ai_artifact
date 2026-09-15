@@ -160,8 +160,10 @@ class Settings:
     # ArtifactMeta.reader_menu -- the small corner control on the frame page
     # that tells a reader how to comment, browse versions or propose one.
     # On by default: the menu exists because readers keep asking those
-    # questions. Per-artifact, the owner overrides it with
-    # PUT /api/artifacts/{id} {"reader_menu": false}.
+    # questions. It governs *new* artifacts only -- a meta record written
+    # before the field existed always reads as on, whatever this says. Per
+    # artifact, the owner overrides it with PUT /api/artifacts/{id}
+    # {"reader_menu": false}.
     reader_menu_default: bool = True
     # Extra stack URLs (comma-separated) beyond the *.keboola.com rule
     extra_stacks: tuple[str, ...] = ()

@@ -51,7 +51,9 @@ that opens a menu of what a reader can do here, with one-line how-tos.
    (which has its own chrome), the unlock form, and when `reader_menu` is
    false.
 5. **Settings.** `HUB_READER_MENU_DEFAULT` (`true`) decides the value a **new**
-   artifact gets and the value assumed for meta records without the key.
+   artifact gets; a meta record without the key is always on. (Amended after
+   the controller ruling of round 1: the env var governs newly published
+   artifacts only, never an existing record.)
 
 ## Endpoints and shapes
 
