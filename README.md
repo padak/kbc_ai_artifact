@@ -33,6 +33,11 @@ content, source, or metadata over a small JSON API.
   proposal whose content only you and its author can read, until you promote it
 - **Diffs**: side-by-side HTML, unified text, or JSON with add/remove counts —
   standard library only, no new dependencies
+- **Reader menu**: a small corner control on every artifact page telling the
+  person who received the link what they can do here — comment, see the
+  history, propose a version, read the Markdown, hand the link to an AI
+  assistant. On by default, per-artifact `PUT {"reader_menu": false}` or a
+  checkbox in the admin studio turns it off; the published bytes never change
 - **Head pointer**: `/a/{id}` serves the newest live version, or one you pin
 - Machine-readable API: `/context` manifest and a `/skill` SKILL.md an AI
   agent can read to learn how to publish and contribute, unassisted
@@ -284,7 +289,7 @@ bearer):
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/artifacts` | Publish `{html[, markdown_source] \| markdown \| git_url[, git_ref, git_path, git_token, git_username], title?, password?, accept_versions?, design_system?}` → `{id, version, head_version, url, raw_url, meta_url, versions_url, ...}` |
-| PUT | `/api/artifacts/{id}` | Add a live version (optionally `design_system`) and/or change `password` / `clear_password` / `accept_versions_mode` / `contributors` / `comments_mode` / `status` / `webhooks` (owner project only) |
+| PUT | `/api/artifacts/{id}` | Add a live version (optionally `design_system`) and/or change `password` / `clear_password` / `accept_versions_mode` / `contributors` / `comments_mode` / `reader_menu` / `status` / `webhooks` (owner project only) |
 | GET | `/api/artifacts` | List the caller's project's own artifacts (trashed ones included, with `webhooks_count`); each row's `status` is the document's, mirrored as `document_status` with a derived `contributions_frozen` |
 | DELETE | `/api/artifacts/{id}` | **Soft delete**: move to the trash — public link dies, everything is kept and restorable (owner project only) |
 | POST | `/api/artifacts/{id}/restore` | Undo the soft delete: back on the same share id, same status as before (owner project only) |
@@ -716,6 +721,7 @@ are missing. Everything else has a documented default, overridable via env.
 | `HUB_MAX_VERSIONS` | `50` | Live versions kept per artifact; older non-head, non-pinned ones are pruned (this rule never counts or removes a proposal — proposals have their own cap, `HUB_MAX_PROPOSED_VERSIONS`) |
 | `HUB_MAX_VERSIONS_PER_DAY` | `20` | Versions one project may submit for one artifact per UTC day |
 | `HUB_MAX_COMMENTS_PER_DAY` | `100` | Comment threads plus replies one project (or one guest invitation) may submit for one artifact per UTC day |
+| `HUB_READER_MENU_DEFAULT` | `true` | Whether a newly published artifact shows the reader menu on its page. Per-artifact override: `PUT /api/artifacts/{id}` with `{"reader_menu": false}` |
 | `HUB_DIFF_MAX_BYTES` | `2097152` (2 MB) | Largest per-side payload the diff renderer (including `format=visual`'s rendered HTML) will process (413 above it) |
 | `HUB_EXTRA_STACKS` | empty | Comma-separated extra stack URLs allowed beyond the `*.keboola.com` rule |
 | `HUB_MAX_ENVELOPE_BYTES` | `20971520` (20 MB) | Largest persisted envelope/meta record the store will download or read from cache before refusing it as a DoS guard; `0` disables the bound |
@@ -759,7 +765,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.17.0 \
+  --git-branch v0.18.1 \
   --git-public
 ```
 

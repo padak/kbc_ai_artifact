@@ -4,6 +4,35 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.18.1 — Every artifact explains itself (2026-09-15)
+
+_(0.18.0 was never released: its tag landed on the 0.17.0 commit by a scripting
+mistake and tags on this repository cannot be deleted, so the reader menu ships
+as 0.18.1.)_
+
+- **Reader menu.** Every artifact page now carries a small round button in
+  its corner — "What can I do with this document?" — opening a panel that
+  answers it: comment on the document, browse its versions and history,
+  propose a new version, read it as Markdown, hand the link to an AI
+  assistant, or find out what this hub is. One line of how-to each. People
+  who are *sent* a link kept asking those two questions; the answer now lives
+  on the page instead of in a reply.
+- The proposal row follows the artifact's own `accept_versions_mode`: a
+  document that takes no contributions says so, rather than teaching a route
+  that would answer 403.
+- The menu is **on by default**, for artifacts published today and for every
+  one published before this release. It is the hub's own chrome, rendered in
+  the wrapper page around the sandboxed document: `/a/{id}/raw`,
+  `/a/{id}/source`, the exports and the diff views are byte-identical whether
+  it is on or off, and it holds no credential of any kind.
+- Owners turn it off per artifact with `PUT /api/artifacts/{id}` and
+  `{"reader_menu": false}` — an ordinary owner setting, never gated by
+  `HUB_DESTRUCTIVE_TOKEN_POLICY` — or by unticking *show the reader menu on
+  the artifact page* in the admin studio. `GET /a/{id}/meta` and
+  `GET /api/artifacts` report the current value, and `/context` reports the
+  deployment default as `limits.reader_menu_default`
+  (`HUB_READER_MENU_DEFAULT`, `true`).
+
 ## 0.17.0 — One document, ten looks (2026-09-15)
 
 - Every design system now emits a second, **shared** set of CSS variables

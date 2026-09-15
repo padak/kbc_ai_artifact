@@ -1,5 +1,6 @@
 """Tests for src.store: envelopes, meta records and the versioned store."""
 
+import dataclasses
 import json
 import os
 import stat
@@ -2052,3 +2053,57 @@ class TestHydrateReapsAbortedPublishes:
         file_id = self._orphan_meta(backend, "kept", age_s=7200)
         self._store(backend, tmp_path, settings, reap_after=0).hydrate()
         assert file_id in backend.files
+
+
+# --------------------------------------------------------------------------
+# Reader menu (0.18.0)
+# --------------------------------------------------------------------------
+
+
+def test_reader_menu_defaults_on():
+    meta = ArtifactMeta(id="a1")
+    assert meta.reader_menu is True
+
+
+def test_reader_menu_survives_json_roundtrip():
+    meta = ArtifactMeta(id="a1", reader_menu=False)
+    again = ArtifactMeta.from_json(meta.to_json())
+    assert again.reader_menu is False
+    assert json.loads(meta.to_json())["reader_menu"] is False
+
+
+def test_reader_menu_missing_key_reads_as_true():
+    """Every meta file written before 0.18.0 keeps the menu."""
+    raw = json.dumps({"id": "old", "owner": {}}).encode("utf-8")
+    assert ArtifactMeta.from_json(raw).reader_menu is True
+
+
+def test_reader_menu_junk_value_is_coerced_to_bool():
+    raw = json.dumps({"id": "old", "reader_menu": 0}).encode("utf-8")
+    assert ArtifactMeta.from_json(raw).reader_menu is False
+
+
+def test_reader_menu_is_declared_after_webhook_key_epochs():
+    """Positional ArtifactMeta(...) construction must keep its old meaning."""
+    names = [f.name for f in dataclasses.fields(ArtifactMeta)]
+    assert names[-1] == "reader_menu"
+    assert names[-2] == "webhook_key_epochs"
+
+
+def test_reader_menu_missing_key_ignores_the_deployment_default(monkeypatch):
+    """Controller ruling: an old record is on whatever HUB_READER_MENU_DEFAULT says.
+
+    The env var governs what a *newly published* artifact is given and nothing
+    else; a meta file written before the field existed always reads as True.
+    """
+    monkeypatch.setenv("HUB_READER_MENU_DEFAULT", "0")
+    raw = json.dumps({"id": "old"}).encode("utf-8")
+    assert ArtifactMeta.from_json(raw).reader_menu is True
+
+
+def test_reader_menu_proposal_modes_track_the_store():
+    """pages spells the two modes out; they must stay the store's own list."""
+    import src.pages as pages
+    import src.store as store
+
+    assert set(pages._MENU_PROPOSAL_MODES) == set(store._ACCEPT_ON_MODES)

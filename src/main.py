@@ -2454,6 +2454,8 @@ def _framed(
             share_id=meta.share_id,
             pinned_version=envelope.version if pinned else None,
             hub_version=SERVICE_VERSION,
+            reader_menu=meta.reader_menu,
+            accept_versions_mode=meta.accept_versions_mode,
         ),
         headers={"Content-Security-Policy": "frame-ancestors 'self'"},
     )
@@ -3223,6 +3225,17 @@ class UpdateBody(BaseModel):
             "entries. Replaces the whole list; omit to leave unchanged."
         ),
     )
+    reader_menu: bool | None = Field(
+        None,
+        description=(
+            "Show the hub's reader menu on this artifact's page: the small "
+            "corner control that tells a reader how to comment, browse the "
+            "version history or propose a version. On by default. It is hub "
+            "chrome in the wrapper page only — /a/{id}/raw, /a/{id}/source "
+            "and every export are byte-identical either way. Omit to leave "
+            "unchanged."
+        ),
+    )
     comments_mode: str | None = Field(
         None,
         description=(
@@ -3657,6 +3670,12 @@ def _apply_policy(meta: ArtifactMeta, body: UpdateBody) -> None:
             )
         meta.comments_mode = body.comments_mode
 
+    # Not access-relevant (it changes what the *wrapper page* shows, never who
+    # may read or write), so it is deliberately absent from the settings
+    # direction machinery below and never behind _destructive_authority.
+    if body.reader_menu is not None:
+        meta.reader_menu = bool(body.reader_menu)
+
     if body.webhooks is not None:
         meta.webhooks = _validate_webhooks(body.webhooks)
 
@@ -3771,6 +3790,15 @@ def _tightening_half(previous: ArtifactMeta, candidate: ArtifactMeta) -> Artifac
         after = getattr(candidate, field_name)
         if _is_tightening(field_name, before, after):
             setattr(tightened, field_name, after)
+    # Settings that are *not* access-relevant still have to survive a request
+    # whose only other change is a tightening one: phase (c) is skipped
+    # entirely in that case, so whatever is not copied here is silently
+    # dropped behind a 200. ``reader_menu`` only decides whether the wrapper
+    # page paints the hub's corner menu -- it lets nobody in and nobody out --
+    # so carrying it into the restrictive half cannot widen access, which is
+    # the only property this copy has to preserve. A new non-access setting
+    # belongs on this list too.
+    tightened.reader_menu = candidate.reader_menu
     return tightened
 
 
@@ -4052,6 +4080,7 @@ def _artifact_response(
         "accept_versions_mode": meta.accept_versions_mode,
         "contributors": list(meta.contributors),
         "comments_mode": meta.comments_mode,
+        "reader_menu": meta.reader_menu,
         "artifact_status": meta.status,
         # Full URLs, not a count: this response only ever reaches the owning
         # project, which is who set them. The listing endpoint reports a count.
@@ -4965,8 +4994,14 @@ def context(request: Request) -> dict:
                 "none of them, and each can carry a secret",
                 "PUT accepts the same fields, all optional, plus clear_password, "
                 "accept_versions/accept_versions_mode, contributors, "
-                "comments_mode and status; a title is only valid together "
-                "with new content, because a title lives on a version",
+                "comments_mode, reader_menu and status; a title is only valid "
+                "together with new content, because a title lives on a version",
+                "reader_menu shows the hub's corner menu on /a/{id}, telling "
+                "a reader how to comment, browse versions or propose one; it "
+                "is wrapper chrome only and never changes /a/{id}/raw or any "
+                "export. limits.reader_menu_default is the value a newly "
+                "published artifact is given; an artifact published before "
+                "the setting existed is always on",
                 "POST /api/artifacts/{id}/versions accepts the same content "
                 f"fields plus an optional note (max {MAX_NOTE_CHARS} chars)",
                 "design_system is only valid together with new content on "
@@ -5241,6 +5276,11 @@ def context(request: Request) -> dict:
             "diff_max_bytes": settings.diff_max_bytes,
             "max_note_chars": MAX_NOTE_CHARS,
             "max_comments_per_day": settings.max_comments_per_day,
+            # What a *newly published* artifact gets for its reader menu, and
+            # nothing else: an artifact published before the setting existed
+            # is always on, whatever this says. The owner overrides it per
+            # artifact with PUT /api/artifacts/{id}.
+            "reader_menu_default": settings.reader_menu_default,
             "max_replies_per_thread": MAX_REPLIES_PER_THREAD,
             "max_thread_bytes": MAX_THREAD_BYTES,
             "max_contributors": MAX_CONTRIBUTORS,
@@ -6770,6 +6810,10 @@ def read_meta(
             # owner configured, not what is currently possible.
             "accept_versions": meta.accept_versions,
             "accept_versions_mode": meta.accept_versions_mode,
+            # Whether the wrapper page carries the hub's reader menu. Public
+            # because it describes the page a reader is looking at, and it
+            # grants nobody anything either way.
+            "reader_menu": meta.reader_menu,
             # ... while these two describe the *document*. The spread above
             # carries the head *version's* "status" ('live'/'proposed'), which
             # is a different axis entirely - see
@@ -7916,6 +7960,10 @@ def publish_artifact(
         owner=identity,
         password=hash_password(body.password) if body.password else None,
         accept_versions=bool(body.accept_versions),
+        # A new artifact starts with whatever this deployment's
+        # HUB_READER_MENU_DEFAULT says; the owner flips it per artifact with
+        # PUT /api/artifacts/{id}.
+        reader_menu=settings.reader_menu_default,
         head_mode=HEAD_LATEST,
         head_version=None,
         created_at=now,
@@ -8405,6 +8453,11 @@ def list_artifacts(
                 # Slack hook's path *is* its credential), so the only response
                 # that echoes them is the owner PUT that set them.
                 "webhooks_count": len(meta.webhooks) if meta is not None else 0,
+                # True when the meta record vanished between listing and
+                # loading it (a concurrent purge, the same race the webhook
+                # count above guards): "on" is what a record without the flag
+                # means everywhere else, so the fallback agrees with it.
+                "reader_menu": meta.reader_menu if meta is not None else True,
                 # Built from share_id, so a rotated link is reflected here.
                 **artifact_urls(base, row["share_id"]),
             }

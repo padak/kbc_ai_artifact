@@ -13,3 +13,6 @@ _review/
 requirements-prod.txt
 .claude/agent-memory/
 .claude/settings.local.json
+
+# Local SDD/agent scratch (per-worktree), never part of the repo
+.superpowers/

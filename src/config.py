@@ -156,6 +156,15 @@ class Settings:
     # Project brain (phase 3)
     # Per-contributor cap on inline comments (threads + replies) per rolling day.
     max_comments_per_day: int = 100
+    # Reader menu (0.18.0): the value a *newly published* artifact gets for
+    # ArtifactMeta.reader_menu -- the small corner control on the frame page
+    # that tells a reader how to comment, browse versions or propose one.
+    # On by default: the menu exists because readers keep asking those
+    # questions. It governs *new* artifacts only -- a meta record written
+    # before the field existed always reads as on, whatever this says. Per
+    # artifact, the owner overrides it with PUT /api/artifacts/{id}
+    # {"reader_menu": false}.
+    reader_menu_default: bool = True
     # Extra stack URLs (comma-separated) beyond the *.keboola.com rule
     extra_stacks: tuple[str, ...] = ()
     # Largest persisted envelope/meta record (bytes) the store will download or
@@ -496,6 +505,7 @@ def load_settings() -> Settings:
         max_versions_per_day=_int_env("HUB_MAX_VERSIONS_PER_DAY", 20),
         diff_max_bytes=_int_env("HUB_DIFF_MAX_BYTES", 2 * 1024 * 1024),
         max_comments_per_day=_int_env("HUB_MAX_COMMENTS_PER_DAY", 100),
+        reader_menu_default=_bool_env("HUB_READER_MENU_DEFAULT", True),
         extra_stacks=extra,
         max_envelope_bytes=_int_env("HUB_MAX_ENVELOPE_BYTES", 20 * 1024 * 1024),
         reap_aborted_publish_after_s=_int_env("HUB_REAP_ABORTED_PUBLISH_AFTER_S", 3600),

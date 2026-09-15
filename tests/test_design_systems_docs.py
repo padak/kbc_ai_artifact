@@ -68,3 +68,20 @@ def test_readme_documents_the_gallery_and_the_role_variables():
     assert "GET /ds" in README
     assert "?format=json" in README
     assert "--ds-" in README
+
+
+# --------------------------------------------------------------------------
+# Reader menu (0.18.0)
+# --------------------------------------------------------------------------
+
+
+def test_skill_and_agent_explain_the_reader_menu():
+    for doc in (SKILL, AGENT):
+        assert "reader menu" in doc.lower()
+        assert '"reader_menu": false' in doc
+        assert "admin studio" in doc.lower()
+
+
+def test_readme_documents_the_reader_menu():
+    assert "reader_menu" in README
+    assert "HUB_READER_MENU_DEFAULT" in README

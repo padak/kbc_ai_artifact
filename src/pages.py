@@ -1182,6 +1182,34 @@ _ADMIN_JS = """
     toggleLabel.appendChild(el("span", null, "accept versions from other projects"));
     controls.appendChild(toggleLabel);
 
+    /* Reader menu: hub chrome on the artifact page, not an access setting.
+       Same PUT, same optimistic-revert-on-error shape as the toggle above. */
+    var menuLabel = el("label", "switch");
+    var menuBox = document.createElement("input");
+    menuBox.type = "checkbox";
+    menuBox.checked = data.reader_menu !== false;
+    menuBox.addEventListener("change", async function () {
+      menuBox.disabled = true;
+      setError(errBox, "");
+      try {
+        await request("/api/artifacts/" + id, {
+          method: "PUT",
+          body: { reader_menu: menuBox.checked }
+        });
+        refresh();
+      } catch (err) {
+        menuBox.checked = !menuBox.checked;
+        setError(errBox, err.message);
+      } finally {
+        menuBox.disabled = false;
+      }
+    });
+    menuLabel.appendChild(menuBox);
+    menuLabel.appendChild(
+      el("span", null, "show the reader menu on the artifact page")
+    );
+    controls.appendChild(menuLabel);
+
     var openLink = el("a", "btn btn-sm", "Open artifact");
     openLink.href = publicUrl;
     openLink.target = "_blank";
@@ -2934,6 +2962,244 @@ def agent_note(base: str, share_id: str) -> str:
     )
 
 
+#: The reader menu's accessible name, reused as the button's ``aria-label``,
+#: its tooltip and the panel's heading so the three cannot drift.
+READER_MENU_LABEL = "What can I do with this document?"
+
+#: ``accept_versions_mode`` values under which the menu teaches the proposal
+#: route. Spelled out here rather than imported from :mod:`src.store` so this
+#: module keeps depending on nothing but the design kit; the two-item list is
+#: pinned by the test suite.
+_MENU_PROPOSAL_MODES = ("anyone", "allowlist")
+
+
+_MENU_CSS = """
+.ahmenu-btn{position:fixed;right:1rem;bottom:1rem;z-index:2147483100;
+width:44px;height:44px;border-radius:50%;border:1px solid #1442e0;
+background:#1442e0;color:#fff;cursor:pointer;font-family:"JetBrains Mono",
+ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:1.1rem;
+line-height:1;font-weight:600;display:flex;align-items:center;
+justify-content:center;box-shadow:0 6px 22px rgba(13,22,34,.22);padding:0}
+.ahmenu-btn:hover{opacity:.9}
+.ahmenu-btn:focus-visible{outline:2px solid #0d1622;outline-offset:2px}
+.ahlive:not([hidden]) ~ .ahmenu-btn{bottom:4.6rem}
+.ahmenu{position:fixed;right:1rem;bottom:4.2rem;z-index:2147483099;
+width:min(23rem,calc(100vw - 2rem));max-height:min(32rem,calc(100vh - 6rem));
+overflow:auto;border:1px solid #d8e0ea;border-radius:10px;background:#fff;
+color:#0d1622;box-shadow:0 10px 34px rgba(13,22,34,.22);
+font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+"Helvetica Neue",Arial,sans-serif;font-size:.82rem;line-height:1.45;
+padding:.85rem .95rem 0}
+.ahlive:not([hidden]) ~ .ahmenu{bottom:7.8rem}
+.ahmenu[hidden]{display:none}
+.ahmenu h2{margin:0 0 .5rem;font-family:"JetBrains Mono",ui-monospace,
+SFMono-Regular,Menlo,Consolas,monospace;font-size:.74rem;font-weight:600;
+letter-spacing:.06em;text-transform:uppercase;color:#697687}
+.ahmenu-item{padding:.5rem 0;border-top:1px solid #e6ecf3}
+.ahmenu-item:first-of-type{border-top:0}
+.ahmenu-item a{color:#1442e0;font-weight:600;text-decoration:none}
+.ahmenu-item a:hover{text-decoration:underline}
+.ahmenu-item p{margin:.2rem 0 0;color:#38455a}
+.ahmenu-item code{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,
+Menlo,Consolas,monospace;font-size:.92em;background:#e7ecfd;color:#1442e0;
+padding:.05rem .25rem;border-radius:4px}
+.ahmenu-copy{font:inherit;font-weight:600;cursor:pointer;margin-top:.35rem;
+padding:.25rem .55rem;border-radius:6px;border:1px solid #d8e0ea;
+background:#f6f8fb;color:#0d1622}
+.ahmenu-copy:hover{border-color:#1442e0}
+.ahmenu-url{display:block;width:100%;margin-top:.35rem;padding:.3rem .4rem;
+border:1px solid #d8e0ea;border-radius:6px;background:#f6f8fb;color:#38455a;
+font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,
+monospace;font-size:.72rem;box-sizing:border-box}
+.ahmenu-url[hidden]{display:none}
+.ahmenu-foot{margin:.2rem -.95rem 0;padding:.55rem .95rem;
+border-top:1px solid #e6ecf3;background:#f6f8fb;color:#697687;
+font-size:.72rem;border-radius:0 0 9px 9px}
+@media (prefers-color-scheme: dark){
+.ahmenu-btn{border-color:#7aa2ff;background:#7aa2ff;color:#0b1119;
+box-shadow:0 6px 22px rgba(0,0,0,.55)}
+.ahmenu-btn:focus-visible{outline-color:#e7edf5}
+.ahmenu{border-color:#22303f;background:#111a25;color:#e7edf5;
+box-shadow:0 10px 34px rgba(0,0,0,.6)}
+.ahmenu h2{color:#8e9cae}
+.ahmenu-item{border-top-color:#141e2b}
+.ahmenu-item a{color:#9dbaff}
+.ahmenu-item p{color:#b3c0d1}
+.ahmenu-item code{background:#16233d;color:#9dbaff}
+.ahmenu-copy{border-color:#22303f;background:#0b1119;color:#e7edf5}
+.ahmenu-copy:hover{border-color:#7aa2ff}
+.ahmenu-url{border-color:#22303f;background:#0b1119;color:#b3c0d1}
+.ahmenu-foot{border-top-color:#141e2b;background:#0b1119;color:#8e9cae}
+}
+"""
+
+
+#: Open/close the reader menu and copy the page URL. Deliberately the whole
+#: behaviour: the menu holds no credential, calls no API and stores nothing,
+#: so there is no ``window.hubSession`` here and must never be — see the
+#: module docstring's rule about pages that hold one.
+_MENU_JS = """
+(function () {
+  /* These listeners are the parent document's own. A click or an Escape
+     inside the artifact cannot reach them: the document lives in a sandboxed
+     iframe running in an opaque origin, so its events never cross into this
+     one. That is by design -- the menu closes on interaction with the hub's
+     chrome, and an artifact can neither close it nor spy on it. A reader who
+     clicks into the document and wants the menu gone clicks the button. */
+  var btn = document.getElementById("ah-menu-btn");
+  var panel = document.getElementById("ah-menu-panel");
+  if (!btn || !panel) { return; }
+  function setOpen(open) {
+    panel.hidden = !open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      /* The panel is a dialog, so move the reading position into it rather
+         than leaving a screen reader on the button it just described. */
+      panel.tabIndex = -1;
+      panel.focus();
+    }
+  }
+  btn.addEventListener("click", function () {
+    setOpen(panel.hidden);
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !panel.hidden) {
+      setOpen(false);
+      btn.focus();
+    }
+  });
+  document.addEventListener("click", function (ev) {
+    if (panel.hidden) { return; }
+    if (panel.contains(ev.target) || btn.contains(ev.target)) { return; }
+    setOpen(false);
+  });
+  var copy = document.getElementById("ah-menu-copy");
+  var field = document.getElementById("ah-menu-url");
+  if (!copy || !field) { return; }
+  copy.addEventListener("click", async function () {
+    var url = field.value;
+    try {
+      if (!navigator.clipboard) { throw new Error("no clipboard"); }
+      await navigator.clipboard.writeText(url);
+      copy.textContent = "Link copied";
+      setTimeout(function () { copy.textContent = "Copy link"; }, 2000);
+    } catch (err) {
+      /* Clipboard denied (or no permission): show the link to copy by hand. */
+      field.hidden = false;
+      field.focus();
+      field.select();
+      copy.textContent = "Copy it from here";
+    }
+  });
+})();
+"""
+
+
+def _menu_item(link_html: str, note_html: str, extra: str = "") -> str:
+    """One row of the reader menu: a heading line, a how-to, optional extras."""
+    return (
+        '<div class="ahmenu-item">'
+        + link_html
+        + "<p>"
+        + note_html
+        + "</p>"
+        + extra
+        + "</div>\n"
+    )
+
+
+def reader_menu_html(
+    base: str, share_id: str, accept_versions_mode: str = "off"
+) -> str:
+    """The hub's own "what can I do here?" control for one artifact.
+
+    People who are *sent* an artifact link keep asking how to comment on it
+    and how to propose a change. The answer belongs on the page, so this is a
+    small round button in the corner plus a panel of one-line how-tos.
+
+    It is rendered by the hub into the **wrapper** document, never into the
+    artifact: ``/a/{id}/raw``, the exports and every other representation stay
+    byte-identical whether or not the owner has it switched on, and the
+    artifact's own scripts -- which run in the sandboxed iframe's opaque
+    origin -- can neither cover it nor read it.
+
+    The proposal row follows ``accept_versions_mode``: an artifact that takes
+    no contributions says so instead of teaching a route that would answer
+    403. Everything interpolated is escaped, because ``share_id`` reaches
+    here straight from the URL.
+    """
+    base = base.rstrip("/")
+    safe_base = html.escape(base, quote=True)
+    safe_id = html.escape(share_id, quote=True)
+    art = f"{safe_base}/a/{safe_id}"
+
+    if accept_versions_mode in _MENU_PROPOSAL_MODES:
+        # The human link goes to the artifact's own version history -- a page
+        # a browser renders -- rather than to /skill#versioning, which is raw
+        # Markdown with no anchor a browser can honour. The route itself stays
+        # in the how-to, for the agent reading over the reader's shoulder.
+        propose = _menu_item(
+            f'<a href="{art}/versions?format=html">Propose a new version</a>',
+            "Publish your revision with <code>POST "
+            f"/api/artifacts/{safe_id}/versions</code> (any Keboola token); "
+            "the owner reviews it in the admin studio.",
+        )
+    else:
+        propose = _menu_item(
+            "<strong>Propose a new version</strong>",
+            "This document does not accept proposals.",
+        )
+
+    items = (
+        _menu_item(
+            f'<a href="{art}/review">Comment on this document</a>',
+            "Select a passage, write a note. You need a Keboola sign-in, or "
+            "an invitation link from the owner.",
+        )
+        + _menu_item(
+            f'<a href="{art}/versions?format=html">Versions and history</a>',
+            "Every version this document has had, who submitted it and what "
+            "changed.",
+        )
+        + propose
+        + _menu_item(
+            f'<a href="{art}/export/markdown">Download as Markdown</a>',
+            "Downloads the document as a plain Markdown file, for reading "
+            "somewhere else or for reuse.",
+        )
+        + _menu_item(
+            "<strong>Share with an AI assistant</strong>",
+            "Paste this link; the page tells the assistant where the document "
+            f'and the API live (<a href="{safe_base}/llms.txt">/llms.txt</a>).',
+            '<button type="button" class="ahmenu-copy" id="ah-menu-copy">'
+            "Copy link</button>"
+            f'<input class="ahmenu-url" id="ah-menu-url" readonly hidden '
+            f'value="{art}" aria-label="Link to this document">',
+        )
+        + _menu_item(
+            f'<a href="{safe_base}/">About this hub</a>',
+            "KBC Artifact Hub: one web address for a document, secured by the "
+            "Keboola account you already have.",
+        )
+    )
+
+    return (
+        '<button type="button" class="ahmenu-btn" id="ah-menu-btn" '
+        'aria-haspopup="dialog" aria-expanded="false" '
+        'aria-controls="ah-menu-panel" '
+        f'aria-label="{READER_MENU_LABEL}" title="{READER_MENU_LABEL}">'
+        "?</button>\n"
+        '<div class="ahmenu" id="ah-menu-panel" role="dialog" hidden '
+        f'aria-label="{READER_MENU_LABEL}">\n'
+        f"<h2>{READER_MENU_LABEL}</h2>\n"
+        + items
+        + '<p class="ahmenu-foot">Hidden by the owner? Toggle '
+        "<code>reader_menu</code> in the admin studio.</p>\n"
+        "</div>\n"
+        "<script>" + _MENU_JS + "</script>\n"
+    )
+
+
 def artifact_frame_page(
     title: str,
     artifact_html: str,
@@ -2942,6 +3208,8 @@ def artifact_frame_page(
     share_id: str = "",
     pinned_version: int | None = None,
     hub_version: str = "",
+    reader_menu: bool = False,
+    accept_versions_mode: str = "off",
 ) -> str:
     """Wrap one artifact's built HTML in a zero-chrome sandboxed iframe.
 
@@ -2977,8 +3245,20 @@ def artifact_frame_page(
     Visually this is a no-op until something actually changes: the frame has
     no border and fills the viewport, so a reader sees exactly what they saw
     before. Machines that want the bytes themselves keep using ``/a/{id}/raw``.
+
+    **Reader menu.** With ``reader_menu`` on (the owner's per-artifact
+    setting, default on) the shell also paints the corner control described in
+    :func:`reader_menu_html`, telling a reader how to comment, browse the
+    history or propose a version; ``accept_versions_mode`` decides what that
+    last row says. Like the live banner it lives in the wrapper only, so
+    ``/a/{id}/raw`` and every export are untouched by it.
     """
     safe_title = html.escape(title or "Artifact", quote=True)
+    menu = (
+        reader_menu_html(base_url, share_id, accept_versions_mode)
+        if reader_menu and base_url and share_id
+        else ""
+    )
     document_html = artifact_html
     live = ""
     # Orientation for machines (see :func:`agent_note`): only when the page
@@ -3032,13 +3312,14 @@ def artifact_frame_page(
         "iframe{margin:0;padding:0;border:0;width:100%;height:100vh;"
         "display:block}"
         + _FRAME_LIVE_CSS
+        + (_MENU_CSS if menu else "")
         + _AGENT_NOTE_CSS
         + "</style>\n"
         "</head>\n<body>\n"
         f'<iframe id="ah-frame" title="{safe_title}" '
         'sandbox="allow-scripts allow-popups allow-forms allow-downloads" '
         f'srcdoc="{html.escape(document_html, quote=True)}"></iframe>\n'
-        f"{note}{live}"
+        f"{note}{live}{menu}"
         "</body>\n</html>\n"
     )
 
