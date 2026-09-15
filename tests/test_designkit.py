@@ -3,7 +3,18 @@ derived from a design-system bundle."""
 
 import pytest
 
-from src.designkit import BODY_SLOT, TITLE_SLOT, fill_starter, role_values, starter_html, style_guide_html
+from src.designkit import (
+    BODY_SLOT,
+    TITLE_SLOT,
+    SAFE_CSS_COLOR_RE,
+    fill_starter,
+    is_safe_css_color,
+    role_css_vars,
+    role_values,
+    role_variable_names,
+    starter_html,
+    style_guide_html,
+)
 from src.tokens import TokenLimits, to_css, validate_document
 
 LIMITS = TokenLimits(16, 5000, 32)
@@ -60,7 +71,7 @@ def test_starter_has_each_slot_once_and_every_variable():
         assert var + ":" in s
     assert '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter&amp;display=swap">' in s
     assert '<link rel="preconnect" href="https://fonts.googleapis.com">' in s
-    assert "body{background:var(--color-bg);color:var(--color-fg);font-family:var(--font-sans)}" in s
+    assert "body{background:var(--ds-background);color:var(--ds-text);font-family:var(--ds-font-body)}" in s
     assert ".kpi{color:var(--color-fg)}" in s
     assert "<!--" not in s  # no commented component library
 
@@ -76,6 +87,63 @@ def test_starter_omits_role_rules_and_scripts_when_absent():
     }
     s = starter_html(b, *_sets(), chartjs_url="https://cdn/x.js", mermaid_url="https://cdn/m.mjs")
     assert "body{" not in s and "<script" not in s and "<link" not in s
+    assert "--ds-" not in s
+
+
+# --- role variables (0.17.0) ----------------------------------------------
+
+
+def test_role_variable_names_covers_declared_roles_only():
+    names = role_variable_names(BUNDLE)
+    assert names["background"] == "--ds-background"
+    assert names["text"] == "--ds-text"
+    assert names["accent"] == "--ds-accent"
+    assert names["on_accent"] == "--ds-on-accent"
+    assert names["font_body"] == "--ds-font-body"
+    assert names["radius"] == "--ds-radius"
+    # chart_palette expands to one alias per entry, plus the count
+    assert names["chart_palette_1"] == "--ds-chart-1"
+    assert names["chart_palette_count"] == "--ds-chart-count"
+    # nothing is invented for a role the bundle never declared
+    assert "surface" not in names and "muted" not in names and "border" not in names
+    assert role_variable_names({"roles": {}}) == {}
+    assert role_variable_names({}) == {}
+
+
+def test_role_css_vars_aliases_the_mode_following_targets():
+    base, _ = _sets()
+    css = role_css_vars(BUNDLE, base)
+    assert css.startswith(":root{") and css.endswith("}")
+    assert css.count(":root{") == 1
+    for pair in (
+        "--ds-background:var(--color-bg)",
+        "--ds-text:var(--color-fg)",
+        "--ds-accent:var(--color-accent)",
+        "--ds-on-accent:var(--color-on)",
+        "--ds-font-body:var(--font-sans)",
+        "--ds-radius:var(--radius-md)",
+        "--ds-chart-1:var(--color-c1)",
+        "--ds-chart-count:1",
+    ):
+        assert pair in css, pair
+    assert "--ds-surface" not in css
+
+
+def test_role_css_vars_is_empty_when_no_roles_are_declared():
+    base, _ = _sets()
+    assert role_css_vars({"roles": {}}, base) == ""
+    assert role_css_vars({}, base) == ""
+
+
+def test_starter_carries_the_alias_block_and_uses_it_in_role_rules():
+    s = starter_html(BUNDLE, *_sets(), chartjs_url="https://cdn/x.js", mermaid_url="https://cdn/m.mjs")
+    assert ":root{--ds-background:var(--color-bg)" in s
+    assert "a{color:var(--ds-accent)}" in s
+    assert "code,pre,kbd{font-family:var(--ds-font-mono)}" not in s  # role not declared
+    # the alias block sits inside the one <style> block, after the token CSS
+    style = s.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert "--color-bg:" in style
+    assert style.index("--color-bg:") < style.index("--ds-background:")
 
 
 def test_chart_and_mermaid_blocks_use_resolved_colours():
@@ -222,3 +290,66 @@ def test_design_system_page_is_hub_chrome_around_a_sandboxed_iframe():
     assert 'href="https://hub/ds/ds_abc?v=1"' in out
     assert "https://hub/ds/ds_abc/bundle?v=2" in out and "https://hub/ds/ds_abc/starter?v=2" in out
     assert "hubSession" not in out
+
+
+# --- colour safety (fix round 1) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "#fff",
+        "#FFF",
+        "#ffffff",
+        "#11223344",
+        "rgb(1,2,3)",
+        "rgb( 12 , 34 , 56 )",
+        "rgb(18 52 86)",
+        "rgb(18 52 86 / 0.5)",
+        "rgba(1,2,3,0.25)",
+        "rgba(1, 2, 3, 1)",
+        "rebeccapurple",
+        "Red",
+    ],
+)
+def test_is_safe_css_color_accepts_real_colours(value):
+    assert is_safe_css_color(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "   ",
+        "#12",
+        "#1234567",
+        "#zzzzzz",
+        "red;position:fixed",
+        "position:fixed;top:0;left:0;width:100vw;background:url(https://attacker.example/x)",
+        "url(https://attacker.example/x)",
+        "var(--color-bg)",
+        "rgb(1,2,3);background:url(https://attacker.example/p)",
+        "expression(alert(1))",
+        "a" * 21,
+        "#fff /*",
+        "\\75 rl(x)",
+        None,
+        123,
+    ],
+)
+def test_is_safe_css_color_rejects_everything_else(value):
+    assert is_safe_css_color(value) is False
+
+
+def test_safe_css_color_re_is_exported_for_reuse():
+    assert SAFE_CSS_COLOR_RE.match("#abc")
+    assert not SAFE_CSS_COLOR_RE.match("#abc;x:y")
+
+
+def test_safe_css_color_is_exact_about_hex_length_and_trailing_newlines():
+    from src.designkit import is_safe_css_color
+    assert is_safe_css_color("#abc") and is_safe_css_color("#aabbcc") and is_safe_css_color("#aabbccdd")
+    assert not is_safe_css_color("#12345")        # 5 digits is not a colour
+    assert not is_safe_css_color("#abcd")         # nor 4
+    assert not is_safe_css_color("red\n")         # $ must not tolerate a trailing newline
+    assert not is_safe_css_color("#fff\n")

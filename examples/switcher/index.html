@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<!--
+  KBC Artifact Hub — style switcher demo.
+  One static document, re-skinned by swapping a single stylesheet link.
+  Nothing here is design-system-specific: every colour, font and radius
+  comes from a `--ds-*` alias variable (see the 0.17.0 amendment,
+  docs/superpowers/specs/2026-09-15-design-systems-0.17-amendment.md).
+  Published via git_url + git_path=examples/switcher.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KBC Artifact Hub — style switcher</title>
+<!-- The hub this demo talks to. Override for local testing with ?hub=... -->
+<meta name="hub" content="https://artifact-hub-1304628444.hub.keboola.com">
+<style>
+  /* fallback */
+  /* Neutral palette shown for the instant before the first design system's
+     CSS finishes loading. Every one of these is overridden by --ds-* once
+     a stylesheet is applied — this block is the ONLY place in this file
+     a literal hex colour is allowed to appear. */
+:root {
+    --ds-background: #f5f5f4;
+    --ds-surface: #ffffff;
+    --ds-text: #1c1c1a;
+    --ds-muted: #6b6b66;
+    --ds-border: #d8d8d3;
+    --ds-accent: #2f6f4f;
+    --ds-on-accent: #ffffff;
+    --ds-font-body: system-ui, sans-serif;
+    --ds-font-heading: system-ui, sans-serif;
+    --ds-font-mono: ui-monospace, monospace;
+    --ds-radius: 0.5rem;
+    --ds-chart-1: #2f6f4f;
+    --ds-chart-2: #7a9e8a;
+    --ds-chart-3: #b8b8b2;
+  }
+  /* fallback */
+  * { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--ds-background);
+    color: var(--ds-text);
+    font-family: var(--ds-font-body);
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+  h1, h2, h3 { font-family: var(--ds-font-heading); }
+  a { color: var(--ds-accent); }
+  /* --- top bar: not part of the "document" itself, so it uses --ds-*
+     too but stays visually distinct with a border --- */
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--ds-surface, var(--ds-background));
+    border-bottom: 1px solid var(--ds-border, transparent);
+    font-size: 0.85rem;
+  }
+  .topbar select,
+.topbar button {
+    font: inherit;
+    padding: 0.35rem 0.6rem;
+    border-radius: var(--ds-radius, 0.25rem);
+    border: 1px solid var(--ds-border, gray);
+    background: var(--ds-background);
+    color: var(--ds-text);
+  }
+  .topbar button { cursor: pointer; }
+  .topbar .note { color: var(--ds-muted, var(--ds-text)); flex-basis: 100%; font-size: 0.8rem; }
+  .topbar .spacer { flex: 1 1 auto; }
+#load-error {
+    display: none;
+    padding: 0.5rem 1rem;
+    background: mistyrose;
+    color: darkred;
+    font-size: 0.85rem;
+    border-bottom: 1px solid crimson;
+  }
+  #load-error.visible { display: block; }
+  /* --- the document itself --- */
+  main { max-width: 52rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  main h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+  main .lead { font-size: 1.1rem; color: var(--ds-muted, var(--ds-text)); margin-top: 0; }
+.tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+.tile {
+    background: var(--ds-surface, var(--ds-background));
+    border: 1px solid var(--ds-border, transparent);
+    border-radius: var(--ds-radius, 0.5rem);
+    padding: 1rem;
+  }
+.tile .kpi-label {
+    font-size: 0.8rem;
+    color: var(--ds-muted, var(--ds-text));
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .tile .kpi-value { font-size: 1.6rem; font-weight: 700; margin-top: 0.25rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--ds-border, lightgray); }
+  th { color: var(--ds-muted, var(--ds-text)); font-weight: 600; }
+.chart-wrap {
+    background: var(--ds-surface, var(--ds-background));
+    border: 1px solid var(--ds-border, transparent);
+    border-radius: var(--ds-radius, 0.5rem);
+    padding: 1rem;
+    margin: 1.5rem 0;
+  }
+  .chart-wrap canvas { max-width: 100%; }
+.callout {
+    border-radius: var(--ds-radius, 0.5rem);
+    border: 1px solid var(--ds-border, transparent);
+    border-left: 4px solid var(--ds-accent);
+    padding: 0.9rem 1.1rem;
+    margin: 1.5rem 0;
+    background: var(--ds-surface, var(--ds-background));
+  }
+code {
+    font-family: var(--ds-font-mono);
+    background: var(--ds-surface, var(--ds-background));
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.3rem;
+  }
+footer {
+    color: var(--ds-muted, var(--ds-text));
+    font-size: 0.8rem;
+    border-top: 1px solid var(--ds-border, lightgray);
+    margin-top: 2rem;
+    padding-top: 1rem;
+  }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <label for="ds">Design system</label>
+  <select id="ds" aria-label="Choose a design system"></select>
+  <button id="theme-toggle" type="button" aria-pressed="false">Dark mode</button>
+  <span class="spacer"></span>
+  <a id="style-guide-link" href="#" target="_blank" rel="noopener">Style guide</a>
+  <div class="note">
+    Same document, different design system — only the CSS link changes.
+  </div>
+</div>
+<div id="load-error"></div>
+<!-- Swapped by applySystem(): no href until JS sets one (avoids a
+     spurious self-request); a neutral fallback (above) covers the gap
+     before the first system's CSS finishes loading. -->
+<link id="ds-css" rel="stylesheet">
+<main>
+  <h1>Quarterly Product Update</h1>
+  <p class="lead">
+    A short recap of where the product stands this quarter — usage,
+    reliability and what shipped — styled entirely with role variables so
+    it can wear any registered design system without a single edit below.
+  </p>
+  <div class="tiles">
+    <div class="tile">
+      <div class="kpi-label">Active workspaces</div>
+      <div class="kpi-value">1,284</div>
+    </div>
+    <div class="tile">
+      <div class="kpi-label">Median job latency</div>
+      <div class="kpi-value">2.1s</div>
+    </div>
+    <div class="tile">
+      <div class="kpi-label">Uptime</div>
+      <div class="kpi-value">99.95%</div>
+    </div>
+  </div>
+  <h2>Adoption by module</h2>
+  <table>
+    <thead>
+      <tr><th>Module</th><th>New users</th><th>Retention (90d)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Extractors</td><td>412</td><td>78%</td></tr>
+      <tr><td>Transformations</td><td>309</td><td>81%</td></tr>
+      <tr><td>Writers</td><td>226</td><td>74%</td></tr>
+      <tr><td>Data Apps</td><td>140</td><td>69%</td></tr>
+    </tbody>
+  </table>
+  <h2>Weekly active jobs</h2>
+  <div class="chart-wrap">
+    <canvas id="chart" height="220"></canvas>
+  </div>
+  <div class="callout">
+    <strong>Note.</strong> Every colour and font on this page comes from
+    the <code>--ds-*</code> alias variables published at
+    <code>GET /ds/{id}/css</code>. Pick a system above and watch the tiles,
+    table and chart repaint themselves — the markup never changes.
+  </div>
+  <footer>
+    Data is illustrative. Built for KBC Artifact Hub's design-systems
+    gallery — see <code>examples/switcher/README.md</code> for how this
+    page works.
+  </footer>
+</main>
+<!-- Chart.js — exact pin matches builder.CHARTJS_JS in the hub's own
+     server code, so this demo and the hub agree on one version. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var dsSelect = document.getElementById("ds");
+  var themeToggle = document.getElementById("theme-toggle");
+  var styleGuideLink = document.getElementById("style-guide-link");
+  var cssLink = document.getElementById("ds-css");
+  var errorBox = document.getElementById("load-error");
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.classList.add("visible");
+  }
+
+  function clearError() {
+    errorBox.textContent = "";
+    errorBox.classList.remove("visible");
+  }
+
+  // ---- hub base URL: <meta name="hub"> by default, ?hub= overrides ----
+  var metaHub = document.querySelector('meta[name="hub"]');
+  var DEFAULT_HUB = (metaHub && metaHub.content || "").replace(/\/+$/, "");
+  var params = new URLSearchParams(window.location.search);
+  var HUB = DEFAULT_HUB;
+  var hubOverridden = false; // true only when ?hub= supplied a valid http(s) URL
+  var hubParam = params.get("hub");
+  if (hubParam) {
+    var parsedHubParam = null;
+    try {
+      parsedHubParam = new URL(hubParam);
+    } catch (e) {
+      parsedHubParam = null;
+    }
+    if (parsedHubParam && (parsedHubParam.protocol === "http:" || parsedHubParam.protocol === "https:")) {
+      HUB = hubParam.replace(/\/+$/, "");
+      hubOverridden = true;
+    } else {
+      showError("Ignoring invalid ?hub= value (must be http: or https:); using the default hub.");
+    }
+  }
+
+  var gallery = [];  // [{id, slug, name, head_version, urls: {...}}, ...]
+  var chart = null;  // active Chart.js instance
+  var applySeq = 0;  // guards a slow-resolving stale applySystem() call from clobbering a newer one
+
+  // Accepts only http:/https: URLs. Unless ?hub= was explicitly given, also
+  // requires the same origin as HUB -- gallery `urls.*` fields are trusted
+  // hub-issued links, not arbitrary attacker-controlled input, but we never
+  // want a compromised or misconfigured gallery response silently sending a
+  // fetch or navigation somewhere else. `opts.requireHttps` and
+  // `opts.anyHost` relax this for font hrefs, which may legitimately point
+  // at a different host (e.g. Google Fonts) over https.
+  function safeUrl(raw, opts) {
+    opts = opts || {};
+    var parsed;
+    try {
+      parsed = new URL(raw, HUB);
+    } catch (e) {
+      return null;
+    }
+    var protoOk = opts.requireHttps
+      ? parsed.protocol === "https:"
+      : (parsed.protocol === "http:" || parsed.protocol === "https:");
+    if (!protoOk) return null;
+    if (!opts.anyHost && !hubOverridden) {
+      var hubOrigin = null;
+      try {
+        hubOrigin = new URL(HUB).origin;
+      } catch (e2) {
+        hubOrigin = null;
+      }
+      if (!hubOrigin || parsed.origin !== hubOrigin) return null;
+    }
+    return parsed.href;
+  }
+
+  // ---- fetch the public gallery and populate the <select> ----
+  function loadGallery() {
+    return fetch(HUB + "/ds?format=json")
+      .then(function (res) {
+        if (!res.ok) {
+          throw new Error("gallery request failed: HTTP " + res.status);
+        }
+        return res.json();
+      })
+      .then(function (data) {
+        gallery = (data && data.design_systems) || [];
+        if (!gallery.length) {
+          throw new Error("gallery returned no design systems");
+        }
+        dsSelect.innerHTML = "";
+        gallery.forEach(function (system) {
+          var opt = document.createElement("option");
+          opt.value = system.slug;
+          opt.textContent = system.name + " (v" + system.head_version + ")";
+          dsSelect.appendChild(opt);
+        });
+      });
+  }
+
+  function findSystem(slug) {
+    for (var i = 0; i < gallery.length; i++) {
+      if (gallery[i].slug === slug) return gallery[i];
+    }
+    return null;
+  }
+
+  // ---- swap the stylesheet, wait for it to actually load ----
+  function loadCss(href) {
+    return new Promise(function (resolve, reject) {
+      var onLoad = function () {
+        cssLink.removeEventListener("load", onLoad);
+        cssLink.removeEventListener("error", onError);
+        resolve();
+      };
+      var onError = function () {
+        cssLink.removeEventListener("load", onLoad);
+        cssLink.removeEventListener("error", onError);
+        reject(new Error("stylesheet failed to load: " + href));
+      };
+      cssLink.addEventListener("load", onLoad);
+      cssLink.addEventListener("error", onError);
+      cssLink.href = href;
+    });
+  }
+
+  // ---- load the bundle, swap the font <link> elements ----
+  // `seq` is this call's applySystem() sequence number: the fonts are only
+  // swapped if it is still the current one, so a stale, later-resolving
+  // call can neither orphan a newer system's font links nor remove them out
+  // from under it (both would happen with a shared "current links" array).
+  function loadFonts(bundleUrl, seq) {
+    return fetch(bundleUrl)
+      .then(function (res) {
+        if (!res.ok) {
+          throw new Error("bundle request failed: HTTP " + res.status);
+        }
+        return res.json();
+      })
+      .then(function (data) {
+        if (seq !== applySeq) return;
+        var fonts = (data && data.bundle && data.bundle.fonts) || [];
+        var safeFonts = [];
+        fonts.forEach(function (font) {
+          if (!font || !font.href) return;
+          var fontUrl = safeUrl(font.href, { requireHttps: true, anyHost: true });
+          if (fontUrl) safeFonts.push(fontUrl);
+        });
+        document.querySelectorAll('link[data-ds-font="1"]').forEach(function (link) {
+          link.remove();
+        });
+        safeFonts.forEach(function (href) {
+          var link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          link.setAttribute("data-ds-font", "1");
+          document.head.appendChild(link);
+        });
+      });
+  }
+
+  // ---- read --ds-chart-1..N off :root and (re)draw the bar chart ----
+  function renderChart() {
+    var styles = getComputedStyle(document.documentElement);
+    var countRaw = styles.getPropertyValue("--ds-chart-count").trim();
+    var count = parseInt(countRaw, 10);
+    if (!count || count < 1) count = 3; // fallback block always has 3
+    var colors = [];
+    for (var i = 1; i <= count; i++) {
+      var c = styles.getPropertyValue("--ds-chart-" + i).trim();
+      if (c) colors.push(c);
+    }
+    if (!colors.length) colors = ["seagreen", "darkseagreen", "lightgray"];
+    var text = styles.getPropertyValue("--ds-text").trim() || "black";
+    var border = styles.getPropertyValue("--ds-border").trim() || "lightgray";
+    var fontBody = styles.getPropertyValue("--ds-font-body").trim() ||
+      "system-ui, sans-serif";
+    var labels = ["W1", "W2", "W3", "W4", "W5", "W6"];
+    var values = [820, 932, 901, 934, 1290, 1330];
+    var barColors = labels.map(function (_, idx) {
+      return colors[idx % colors.length];
+    });
+    var canvas = document.getElementById("chart");
+    if (chart) {
+      chart.destroy();
+    }
+    chart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Jobs run",
+          data: values,
+          backgroundColor: barColors
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false }
+        },
+        scales: {
+          x: {
+            ticks: { color: text, font: { family: fontBody } },
+            grid: { color: border }
+          },
+          y: {
+            ticks: { color: text, font: { family: fontBody } },
+            grid: { color: border },
+            beginAtZero: true
+          }
+        }
+      }
+    });
+  }
+
+  // ---- apply one design system end to end ----
+  function applySystem(slug) {
+    var seq = ++applySeq; // captured now; every later step checks it is still current
+    var system = findSystem(slug);
+    if (!system) {
+      showError("Unknown design system slug: " + slug);
+      return Promise.resolve();
+    }
+    var urls = system.urls || {};
+    // The HUB + "/ds/" + id + "/..." fallbacks below are defensive only --
+    // the public gallery (GET /ds?format=json) always includes `urls` for
+    // every listed system. safeUrl() rejects anything that is not an
+    // http(s) URL on the hub's own origin.
+    var cssUrl = safeUrl(urls.css || (HUB + "/ds/" + system.id + "/css"));
+    var bundleUrl = safeUrl(urls.bundle || (HUB + "/ds/" + system.id + "/bundle"));
+    var pageUrl = safeUrl(urls.page || (HUB + "/ds/" + system.id));
+    if (!cssUrl || !bundleUrl || !pageUrl) {
+      showError("Design system \"" + slug + "\" has an unsafe or invalid URL; skipping.");
+      return Promise.resolve();
+    }
+    return loadCss(cssUrl)
+      .then(function () {
+        if (seq !== applySeq) return null;
+        return loadFonts(bundleUrl, seq);
+      })
+      .then(function () {
+        if (seq !== applySeq) return;
+        renderChart();
+        styleGuideLink.href = pageUrl;
+        clearError();
+        dsSelect.value = slug;
+        var url = new URL(window.location.href);
+        url.searchParams.set("ds", slug);
+        history.replaceState(null, "", url.toString());
+      })
+      .catch(function (err) {
+        if (seq !== applySeq) return;
+        showError("Could not apply design system \"" + slug + "\": " + err.message);
+      });
+  }
+
+  // ---- theme toggle: light <-> dark via data-theme ----
+  function initThemeToggle() {
+    themeToggle.addEventListener("click", function () {
+      var root = document.documentElement;
+      var isDark = root.getAttribute("data-theme") === "dark";
+      if (isDark) {
+        root.removeAttribute("data-theme");
+        themeToggle.textContent = "Dark mode";
+        themeToggle.setAttribute("aria-pressed", "false");
+      } else {
+        root.setAttribute("data-theme", "dark");
+        themeToggle.textContent = "Light mode";
+        themeToggle.setAttribute("aria-pressed", "true");
+      }
+      // Re-render the chart: dark mode usually swaps --ds-chart-* too.
+      renderChart();
+    });
+  }
+
+  function init() {
+    if (!HUB) {
+      showError("No hub URL configured (missing <meta name=\"hub\"> and no ?hub= override).");
+      return;
+    }
+    initThemeToggle();
+    loadGallery()
+      .then(function () {
+        var requested = params.get("ds");
+        var initial = (requested && findSystem(requested)) ? requested : gallery[0].slug;
+        return applySystem(initial);
+      })
+      .catch(function (err) {
+        showError("Could not load the design-systems gallery from " + HUB + ": " + err.message);
+      });
+    dsSelect.addEventListener("change", function () {
+      applySystem(dsSelect.value);
+    });
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

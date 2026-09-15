@@ -154,3 +154,26 @@ def test_base_is_the_light_look_and_dark_mode_is_dark(path: Path):
     light_text = _srgb_luminance(_role_colour(bundle, "text", dark=False))
     assert light_text < MIN_LIGHT_LUMINANCE, (
         f"{path.stem}: base text luminance {light_text:.3f} is not dark on a light base")
+
+
+@pytest.mark.parametrize("path", _paths(), ids=lambda p: p.stem)
+def test_starter_exposes_the_stable_role_variables(path: Path):
+    """Every sample must be swappable: its starter emits the ``--ds-*`` layer.
+
+    A document styled only against these aliases re-skins by pointing at
+    another system's ``/ds/{id}/css``. A sample whose starter lacked them
+    would silently break that promise for the switcher demo.
+    """
+    from src.designkit import starter_html
+
+    bundle = _load(path)["bundle"]
+    limits = TokenLimits(16, 5000, 32)
+    base, dark, _ = validate_document(
+        bundle["tokens"], (bundle.get("modes") or {}).get("dark"), limits=limits)
+    starter = starter_html(
+        bundle, base, dark,
+        chartjs_url="https://example.invalid/chart.js",
+        mermaid_url="https://example.invalid/mermaid.mjs",
+    )
+    for variable in ("--ds-background", "--ds-accent"):
+        assert f"{variable}:var(--" in starter, f"{path.stem} starter has no {variable}"

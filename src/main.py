@@ -1931,7 +1931,8 @@ async def artifact_headers(request: Request, call_next):
     # nothing this service does needs a Referer: its own fetches are
     # same-origin and authenticate with headers, not with where they came from.
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    if request.url.path.startswith("/a/") or request.url.path.startswith("/ds/"):
+    ds_path = request.url.path == "/ds" or request.url.path.startswith("/ds/")
+    if request.url.path.startswith("/a/") or ds_path:
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
         # Orientation for a machine that was handed a share link and reads
         # headers (curl -I, an agent's HEAD probe): where this service
@@ -4834,6 +4835,24 @@ def context(request: Request) -> dict:
             },
             {
                 "method": "GET",
+                "path": "/ds",
+                "auth": "none",
+                "purpose": (
+                    "public gallery: every design system with at least one "
+                    "version, newest change first (HTML)"
+                ),
+            },
+            {
+                "method": "GET",
+                "path": "/ds?format=json",
+                "auth": "none",
+                "purpose": (
+                    "the same list as JSON, readable cross-origin; carries "
+                    "swatches and reader urls, not owner project id or stack"
+                ),
+            },
+            {
+                "method": "GET",
                 "path": "/ds/{ref}",
                 "auth": "none (id) / any token (slug)",
                 "purpose": "human-facing style guide (HTML)",
@@ -5270,6 +5289,8 @@ def context(request: Request) -> dict:
             "ds_max_description_chars": settings.ds_max_description_chars,
             "ds_max_note_chars": settings.ds_max_note_chars,
             "ds_derived_cache_entries": settings.ds_derived_cache_entries,
+            "ds_gallery_swatches": settings.ds_gallery_swatches,
+            "ds_gallery_max_rows": settings.ds_gallery_max_rows,
         },
         "design_systems": {
             "what": (
@@ -5313,6 +5334,31 @@ def context(request: Request) -> dict:
                     "CSS variable)"
                 ),
             },
+            "gallery": (
+                "GET /ds lists every design system with at least one version, "
+                "newest first, with no credential; GET /ds?format=json is the "
+                "same list for machines and is readable cross-origin. It "
+                "carries name, slug, description, owner project name, head "
+                "version, updated_at, resolved swatches and reader urls — not "
+                "the owner project id, the stack host or a `mine` flag. Agents "
+                "that hold a Keboola credential should still use GET "
+                "/api/design-systems, which reports both."
+            ),
+            "role_variables": (
+                "Every declared role is also emitted as a stable alias in "
+                "/ds/{ref}/css and in the starter: --ds-background, "
+                "--ds-surface, --ds-text, --ds-muted, --ds-border, "
+                "--ds-accent, --ds-on-accent, --ds-font-body, "
+                "--ds-font-heading, --ds-font-mono, --ds-radius, plus "
+                "--ds-chart-1..N and --ds-chart-count. Each is var(<this "
+                "system's own token variable>), so it follows the mode. A "
+                "document styled only with --ds-* re-skins by pointing at "
+                "another system's /css. The exact names are reported in "
+                "`variables.roles` of /ds/{ref}/bundle — read them, never "
+                "derive them; in the one case a token path is literally named "
+                "'roles' the token map keeps that key and the role map moves "
+                "to `variables.role_variables`."
+            ),
             "provenance": (
                 "publish/update/version bodies accept design_system: 'ref' or "
                 "'ref@n'; the hub stores {id, slug, version} on the version "
@@ -5481,6 +5527,9 @@ def llms_txt_document(base: str) -> str:
         "the organisation's design systems (`GET /api/design-systems`, Keboola "
         "credential required), picks one and publishes on-brand HTML; every "
         f"design system has a public style guide at {base}/ds/{{id}}\n"
+        f"- [Design-system gallery]({base}/ds): the public, uncredentialed "
+        "list of every design system registered here, with "
+        f"{base}/ds?format=json as its machine form\n"
         f"- [Human landing page]({base}/) and [changelog]({base}/changelog)\n"
         "\n"
         "## Optional\n"
@@ -11187,10 +11236,189 @@ def _ds_reader(
     return meta, version
 
 
-def _ds_response(request: Request, response: Response) -> Response:
-    """A slug-resolved read was credentialed, so no shared cache may keep it."""
+def _ds_response(request: Request, response: Response, *, cors: bool = True) -> Response:
+    """Mark a design-system read according to how it was resolved.
+
+    A slug-resolved read was credentialed, so no shared cache may keep it —
+    and it is never readable cross-origin either, or a page on any origin
+    could spend the reader's credential for its own content.
+
+    An id-resolved *machine* read is the opposite: the id **is** the
+    capability, the answer is already public, and a browser page on another
+    origin (the switcher demo above all) must be able to read it. Only a `GET`
+    with no custom headers reaches here, which is a CORS simple request — so
+    no preflight handling is needed, just the headers below.
+
+    ``cors=False`` is for the HTML style-guide page: nothing fetches it
+    cross-origin, and a header that grants an ability nobody uses is one more
+    thing to reason about.
+    """
     if getattr(request.state, "ds_private", False):
         response.headers["Cache-Control"] = "private, no-store"
+    elif cors:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        # Exposed *and* sent: a reader that is told to look for this header
+        # must actually find one.
+        response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
+        response.headers["X-Hub-Version"] = SERVICE_VERSION
+    return response
+
+
+#: Where the role -> ``--ds-*`` map lives inside a bundle's ``variables``.
+#: The token map is the older contract and keeps every key it already owns,
+#: so a design system with a token path literally named ``roles`` pushes the
+#: role map aside to ``role_variables`` rather than losing its own entry.
+DS_ROLE_MAP_KEY = "roles"
+DS_ROLE_MAP_FALLBACK_KEY = "role_variables"
+
+
+def _ds_variables(version: DesignSystemVersion, base: TokenSet) -> dict[str, Any]:
+    """``variables`` for one version: the token map plus the role alias map."""
+    variables: dict[str, Any] = dict(base.variables())
+    key = (
+        DS_ROLE_MAP_FALLBACK_KEY
+        if DS_ROLE_MAP_KEY in variables
+        else DS_ROLE_MAP_KEY
+    )
+    variables[key] = designkit.role_variable_names(version.bundle)
+    return variables
+
+
+#: The scalar roles the gallery shows a swatch for, in strip order.
+GALLERY_SWATCH_ROLES = ("background", "surface", "text", "accent")
+
+
+def _ds_swatches(version: DesignSystemVersion) -> dict[str, Any]:
+    """The head version's resolved role colours, for one gallery card.
+
+    Cached per (id, version) in the same LRU as every other derived output:
+    a version is immutable, so the strip can never go stale. A version that
+    cannot be rendered at all yields an empty strip rather than taking the
+    whole gallery down with it -- ``_ds_sets`` has already logged which one
+    and why.
+    """
+
+    def build() -> dict[str, Any]:
+        base, _ = _ds_sets(version)
+        values = designkit.role_values(version.bundle, base)
+        out: dict[str, Any] = {}
+        for role in GALLERY_SWATCH_ROLES:
+            value = values.get(role)
+            # A token's $value is author-controlled text that reaches an inline
+            # style attribute on the hub's own origin, so anything that is not
+            # plainly a colour loses its chip rather than being escaped and
+            # hoped about.
+            if designkit.is_safe_css_color(value):
+                out[role] = value
+        palette = values.get("chart_palette")
+        if isinstance(palette, list):
+            chart = [c for c in palette if designkit.is_safe_css_color(c)]
+            if chart:
+                out["chart"] = chart[: settings.ds_gallery_swatches]
+        return out
+
+    try:
+        return _ds_cached(("swatches", version.id, version.version), build)
+    except (DerivedOutputError, ValueError, KeyError):
+        return {}
+
+
+def _gallery_rows(request: Request) -> list[dict[str, Any]]:
+    """The public gallery shape: no owner project id, no stack host.
+
+    ``list_all`` already returns newest change first and already skips a
+    record with no version, so a registration that died between its two
+    Storage writes is never listed.
+    """
+    designs: DesignSystemStore = request.app.state.designs
+    base = base_url(request)
+    rows: list[dict[str, Any]] = []
+    # Bounded on purpose: one anonymous request costs a version read and a
+    # token parse per row, and those renders share the derived LRU with every
+    # /css and /starter read. The newest N are listed and the answer says so.
+    for meta in designs.list_all()[: settings.ds_gallery_max_rows]:
+        version = designs.get_version(meta.id, None)
+        if version is None:
+            continue
+        urls = _ds_urls(base, meta.id, version.version)
+        rows.append(
+            {
+                "id": meta.id,
+                "slug": meta.slug,
+                "name": meta.name,
+                "description": meta.description,
+                "owner": {"project_name": meta.owner.get("project_name")},
+                "head_version": version.version,
+                "updated_at": meta.updated_at,
+                "swatches": _ds_swatches(version),
+                "urls": {k: urls[k] for k in ("page", "bundle", "css", "starter")},
+            }
+        )
+    return rows
+
+
+def _gallery_truncated(request: Request) -> bool:
+    """Whether the gallery had more design systems than it listed."""
+    designs: DesignSystemStore = request.app.state.designs
+    return len(designs.list_all()) > settings.ds_gallery_max_rows
+
+
+# Declared before /ds/{ref} on purpose: FastAPI matches routes in declaration
+# order, so the static path has to come first or a design system could never
+# be addressed at all -- "/ds" would be read as a ref named "ds".
+@app.get(
+    "/ds",
+    response_class=HTMLResponse,
+    tags=["design systems"],
+    summary="Public gallery of the design systems registered on this hub",
+)
+def design_systems_gallery(
+    request: Request,
+    fmt: str | None = Query(
+        default=None,
+        alias="format",
+        description="'json' for the machine list; anything else renders the page.",
+    ),
+) -> Response:
+    """Every design system with at least one version, newest change first.
+
+    Public and uncredentialed, which is the point: this hub's design systems
+    are meant to be seen. It therefore makes names, slugs and descriptions
+    public -- the catalogue API stays credentialed, because only that one
+    reports ownership and the caller's own ``mine`` flag.
+    """
+    ensure_hydrated(request.app)
+    designs: DesignSystemStore = request.app.state.designs
+    if not designs.hydrated:
+        # Unlike a single read, there is no per-id fallback to answer from:
+        # an unhydrated index would render an empty gallery, which reads as
+        # "this hub has none" rather than "not loaded yet".
+        raise HTTPException(
+            status_code=503,
+            detail="design-system index is not available yet; retry shortly",
+        )
+    if fmt not in (None, "", "json"):
+        raise HTTPException(
+            status_code=422, detail="format must be 'json', or be omitted for the page"
+        )
+    rows = _gallery_rows(request)
+    response: Response
+    if fmt == "json":
+        response = JSONResponse(
+            {"design_systems": rows, "truncated": _gallery_truncated(request)}
+        )
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
+        response.headers["X-Hub-Version"] = SERVICE_VERSION
+    else:
+        response = HTMLResponse(
+            pages.design_systems_gallery_page(
+                base_url(request), rows, SERVICE_VERSION
+            )
+        )
+    # /ds is not under /ds/, so the artifact_headers middleware does not set
+    # this one for us.
+    response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -11224,7 +11452,7 @@ def design_system_style_guide(
             srcdoc,
             SERVICE_VERSION,
         )
-    return _ds_response(request, HTMLResponse(html_out))
+    return _ds_response(request, HTMLResponse(html_out), cors=False)
 
 
 @app.get("/ds/{ref}/versions", tags=["design systems"])
@@ -11271,7 +11499,7 @@ def design_system_bundle(
                 "created_at": version.created_at,
                 "note": version.note,
                 "bundle": version.bundle,
-                "variables": base.variables(),
+                "variables": _ds_variables(version, base),
                 "warnings": version.warnings,
                 "urls": _ds_urls(base_url(request), meta.id, version.version),
             }
@@ -11316,11 +11544,16 @@ def design_system_css(
         raise HTTPException(
             status_code=404, detail="this design system has no dark mode"
         )
+    # The alias block goes after the token CSS in every mode: the aliases are
+    # var() references, so one block follows whichever mode the document ends
+    # up in -- there is nothing mode-specific to emit twice.
+    def build_css() -> str:
+        aliases = designkit.role_css_vars(version.bundle, base)
+        body = to_css(base, dark, mode=mode)
+        return f"{body}\n{aliases}" if aliases else body
+
     with _deriving(version):
-        css = _ds_cached(
-            ("css", version.id, version.version, mode),
-            lambda: to_css(base, dark, mode=mode),
-        )
+        css = _ds_cached(("css", version.id, version.version, mode), build_css)
     return _ds_response(
         request, Response(css, media_type="text/css; charset=utf-8")
     )
