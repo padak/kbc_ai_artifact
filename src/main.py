@@ -11228,6 +11228,122 @@ def _ds_variables(version: DesignSystemVersion, base: TokenSet) -> dict[str, Any
     return variables
 
 
+#: The scalar roles the gallery shows a swatch for, in strip order.
+GALLERY_SWATCH_ROLES = ("background", "surface", "text", "accent")
+
+
+def _ds_swatches(version: DesignSystemVersion) -> dict[str, Any]:
+    """The head version's resolved role colours, for one gallery card.
+
+    Cached per (id, version) in the same LRU as every other derived output:
+    a version is immutable, so the strip can never go stale. A version that
+    cannot be rendered at all yields an empty strip rather than taking the
+    whole gallery down with it -- ``_ds_sets`` has already logged which one
+    and why.
+    """
+
+    def build() -> dict[str, Any]:
+        base, _ = _ds_sets(version)
+        values = designkit.role_values(version.bundle, base)
+        out: dict[str, Any] = {}
+        for role in GALLERY_SWATCH_ROLES:
+            value = values.get(role)
+            if isinstance(value, str) and value:
+                out[role] = value
+        palette = values.get("chart_palette")
+        if isinstance(palette, list) and palette:
+            out["chart"] = palette[: settings.ds_gallery_swatches]
+        return out
+
+    try:
+        return _ds_cached(("swatches", version.id, version.version), build)
+    except DerivedOutputError:
+        return {}
+
+
+def _gallery_rows(request: Request) -> list[dict[str, Any]]:
+    """The public gallery shape: no owner project id, no stack host.
+
+    ``list_all`` already returns newest change first and already skips a
+    record with no version, so a registration that died between its two
+    Storage writes is never listed.
+    """
+    designs: DesignSystemStore = request.app.state.designs
+    base = base_url(request)
+    rows: list[dict[str, Any]] = []
+    for meta in designs.list_all():
+        version = designs.get_version(meta.id, None)
+        if version is None:
+            continue
+        urls = _ds_urls(base, meta.id, version.version)
+        rows.append(
+            {
+                "id": meta.id,
+                "slug": meta.slug,
+                "name": meta.name,
+                "description": meta.description,
+                "owner": {"project_name": meta.owner.get("project_name")},
+                "head_version": version.version,
+                "updated_at": meta.updated_at,
+                "swatches": _ds_swatches(version),
+                "urls": {k: urls[k] for k in ("page", "bundle", "css", "starter")},
+            }
+        )
+    return rows
+
+
+# Declared before /ds/{ref} on purpose: FastAPI matches routes in declaration
+# order, so the static path has to come first or a design system could never
+# be addressed at all -- "/ds" would be read as a ref named "ds".
+@app.get(
+    "/ds",
+    response_class=HTMLResponse,
+    tags=["design systems"],
+    summary="Public gallery of the design systems registered on this hub",
+)
+def design_systems_gallery(
+    request: Request,
+    fmt: str | None = Query(
+        default=None,
+        alias="format",
+        description="'json' for the machine list; anything else renders the page.",
+    ),
+) -> Response:
+    """Every design system with at least one version, newest change first.
+
+    Public and uncredentialed, which is the point: this hub's design systems
+    are meant to be seen. It therefore makes names, slugs and descriptions
+    public -- the catalogue API stays credentialed, because only that one
+    reports ownership and the caller's own ``mine`` flag.
+    """
+    ensure_hydrated(request.app)
+    designs: DesignSystemStore = request.app.state.designs
+    if not designs.hydrated:
+        # Unlike a single read, there is no per-id fallback to answer from:
+        # an unhydrated index would render an empty gallery, which reads as
+        # "this hub has none" rather than "not loaded yet".
+        raise HTTPException(
+            status_code=503,
+            detail="design-system index is not available yet; retry shortly",
+        )
+    rows = _gallery_rows(request)
+    response: Response
+    if fmt == "json":
+        response = JSONResponse({"design_systems": rows})
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
+    else:
+        response = HTMLResponse(
+            pages.design_systems_gallery_page(
+                base_url(request), rows, SERVICE_VERSION
+            )
+        )
+    # /ds is not under /ds/, so the artifact_headers middleware does not set
+    # this one for us.
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/ds/{ref}", response_class=HTMLResponse, tags=["design systems"])
 def design_system_style_guide(
     request: Request,

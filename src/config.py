@@ -397,6 +397,9 @@ class Settings:
     # Derived CSS/starter renders kept in the bounded LRU, keyed by
     # (id, version, mode) (HUB_DS_DERIVED_CACHE_ENTRIES).
     ds_derived_cache_entries: int = 64
+    # chart_palette colours the public gallery shows per design system; the
+    # strip is a taste of the palette, not the palette (HUB_DS_GALLERY_SWATCHES).
+    ds_gallery_swatches: int = 6
 
     @property
     def ds_content_request_bytes(self) -> int:
@@ -547,6 +550,7 @@ def load_settings() -> Settings:
         ds_max_description_chars=_int_env("HUB_DS_MAX_DESCRIPTION_CHARS", 500),
         ds_max_note_chars=_int_env("HUB_DS_MAX_NOTE_CHARS", 500),
         ds_derived_cache_entries=_int_env("HUB_DS_DERIVED_CACHE_ENTRIES", 64),
+        ds_gallery_swatches=_int_env("HUB_DS_GALLERY_SWATCHES", 6),
         login_client_id=(
             os.environ.get("HUB_LOGIN_CLIENT_ID", "").strip() or "kbc-artifact-hub"
         ),

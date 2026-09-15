@@ -674,3 +674,91 @@ def test_role_map_moves_aside_for_a_token_literally_named_roles(api):
     body = api.client.get(f"/ds/{ds_id}/bundle").json()
     assert body["variables"]["roles"] == "--roles"
     assert body["variables"]["role_variables"]["background"] == "--ds-background"
+
+
+# --------------------------------------------------------------------------
+# 0.17.0: the public gallery
+# --------------------------------------------------------------------------
+
+
+def test_gallery_json_lists_registered_systems_in_the_public_shape(api):
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get("/ds?format=json")
+    assert r.status_code == 200
+    assert r.headers[CORS_ORIGIN] == "*"
+    assert r.headers[CORS_EXPOSE] == "X-Hub-Version"
+    assert r.headers["Cache-Control"] == "no-cache"
+    rows = r.json()["design_systems"]
+    assert [x["id"] for x in rows] == [ds_id]
+    row = rows[0]
+    assert set(row) == {
+        "id", "slug", "name", "description", "owner", "head_version",
+        "updated_at", "swatches", "urls",
+    }
+    assert row["slug"] == "corp" and row["name"] == "Corp"
+    assert row["head_version"] == 1 and row["updated_at"]
+    # the public shape carries no project id and no stack host
+    assert set(row["owner"]) == {"project_name"}
+    assert set(row["urls"]) == {"page", "bundle", "css", "starter"}
+    assert row["urls"]["css"].endswith(f"/ds/{ds_id}/css?v=1")
+    assert row["swatches"]["background"] == "#ffffff"
+    assert row["swatches"]["text"] == "#111111"
+    assert row["swatches"]["accent"] == "#1442e0"
+    assert row["swatches"]["chart"] == ["#ff0000", "#00ff00"]
+
+
+def test_gallery_json_swatch_palette_is_capped(api):
+    from src import main
+
+    _register(api.client)
+    assert main.settings.ds_gallery_swatches >= 1
+    rows = api.client.get("/ds?format=json").json()["design_systems"]
+    assert len(rows[0]["swatches"]["chart"]) <= main.settings.ds_gallery_swatches
+
+
+def test_gallery_skips_a_meta_only_record_and_needs_no_credential(api):
+    """Only systems with at least one version are listed."""
+    ds_id = _register(api.client).json()["id"]
+    second = _register(api.client, slug="other").json()["id"]
+    api.client.delete(f"/api/design-systems/{second}", headers=AUTH_HEADERS)
+    rows = api.client.get("/ds?format=json").json()["design_systems"]
+    assert [x["id"] for x in rows] == [ds_id]
+
+
+def test_gallery_page_is_hub_chrome_listing_every_system(api):
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get("/ds")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    page = r.text
+    assert f'href="https://testserver/ds/{ds_id}"' in page
+    assert "Corp" in page and "corp" in page and "Brand" in page
+    assert "background:#1442e0" in page and 'title="accent"' in page
+    assert f'href="https://testserver/ds/{ds_id}/bundle?v=1"' in page
+    assert "KBC Artifact Hub" in page
+
+
+def test_gallery_page_has_an_empty_state(api):
+    page = api.client.get("/ds").text
+    assert "No design system" in page
+
+
+def test_gallery_answers_503_while_the_index_is_unhydrated(api):
+    from src import main
+
+    designs = main.app.state.designs
+    designs.hydrated = False
+    try:
+        assert api.client.get("/ds").status_code == 503
+        assert api.client.get("/ds?format=json").status_code == 503
+    finally:
+        designs.hydrated = True
+
+
+def test_gallery_route_wins_over_the_ref_route(api):
+    """`/ds` is the gallery, never a design system whose id is 'ds'."""
+    from src import main
+
+    paths = [r.path for r in main.app.routes if getattr(r, "path", "") == "/ds"]
+    assert paths == ["/ds"]
+    assert api.client.get("/ds").status_code == 200
