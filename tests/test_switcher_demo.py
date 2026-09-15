@@ -97,3 +97,18 @@ def test_document_has_core_switcher_affordances():
     assert "data-theme" in content
     assert "history.replaceState" in content
     assert "getComputedStyle" in content
+
+
+def test_has_sequence_guard_against_stale_apply_calls():
+    content = _read()
+    assert "applySeq" in content
+
+
+def test_validates_urls_before_use():
+    content = _read()
+    assert "safeUrl(" in content
+
+
+def test_ds_css_link_has_no_empty_href_placeholder():
+    content = _read()
+    assert 'href=""' not in content

@@ -153,9 +153,10 @@ footer {
   </div>
 </div>
 <div id="load-error"></div>
-<!-- Swapped by applySystem(): starts unset, a neutral fallback (above)
-     covers the gap before the first system's CSS finishes loading. -->
-<link id="ds-css" rel="stylesheet" href="">
+<!-- Swapped by applySystem(): no href until JS sets one (avoids a
+     spurious self-request); a neutral fallback (above) covers the gap
+     before the first system's CSS finishes loading. -->
+<link id="ds-css" rel="stylesheet">
 <main>
   <h1>Quarterly Product Update</h1>
   <p class="lead">
@@ -211,29 +212,80 @@ footer {
 <script>
 (function () {
   "use strict";
-  // ---- hub base URL: <meta name="hub"> by default, ?hub= overrides ----
-  var metaHub = document.querySelector('meta[name="hub"]');
-  var HUB = (metaHub && metaHub.content || "").replace(/\/+$/, "");
-  var params = new URLSearchParams(window.location.search);
-  if (params.get("hub")) {
-    HUB = params.get("hub").replace(/\/+$/, "");
-  }
+
   var dsSelect = document.getElementById("ds");
   var themeToggle = document.getElementById("theme-toggle");
   var styleGuideLink = document.getElementById("style-guide-link");
   var cssLink = document.getElementById("ds-css");
   var errorBox = document.getElementById("load-error");
-  var gallery = [];          // [{id, slug, name, head_version, urls: {...}}, ...]
-  var currentFontLinks = []; // <link> elements for the active system's fonts
-  var chart = null;          // active Chart.js instance
+
   function showError(message) {
     errorBox.textContent = message;
     errorBox.classList.add("visible");
   }
+
   function clearError() {
     errorBox.textContent = "";
     errorBox.classList.remove("visible");
   }
+
+  // ---- hub base URL: <meta name="hub"> by default, ?hub= overrides ----
+  var metaHub = document.querySelector('meta[name="hub"]');
+  var DEFAULT_HUB = (metaHub && metaHub.content || "").replace(/\/+$/, "");
+  var params = new URLSearchParams(window.location.search);
+  var HUB = DEFAULT_HUB;
+  var hubOverridden = false; // true only when ?hub= supplied a valid http(s) URL
+  var hubParam = params.get("hub");
+  if (hubParam) {
+    var parsedHubParam = null;
+    try {
+      parsedHubParam = new URL(hubParam);
+    } catch (e) {
+      parsedHubParam = null;
+    }
+    if (parsedHubParam && (parsedHubParam.protocol === "http:" || parsedHubParam.protocol === "https:")) {
+      HUB = hubParam.replace(/\/+$/, "");
+      hubOverridden = true;
+    } else {
+      showError("Ignoring invalid ?hub= value (must be http: or https:); using the default hub.");
+    }
+  }
+
+  var gallery = [];  // [{id, slug, name, head_version, urls: {...}}, ...]
+  var chart = null;  // active Chart.js instance
+  var applySeq = 0;  // guards a slow-resolving stale applySystem() call from clobbering a newer one
+
+  // Accepts only http:/https: URLs. Unless ?hub= was explicitly given, also
+  // requires the same origin as HUB -- gallery `urls.*` fields are trusted
+  // hub-issued links, not arbitrary attacker-controlled input, but we never
+  // want a compromised or misconfigured gallery response silently sending a
+  // fetch or navigation somewhere else. `opts.requireHttps` and
+  // `opts.anyHost` relax this for font hrefs, which may legitimately point
+  // at a different host (e.g. Google Fonts) over https.
+  function safeUrl(raw, opts) {
+    opts = opts || {};
+    var parsed;
+    try {
+      parsed = new URL(raw, HUB);
+    } catch (e) {
+      return null;
+    }
+    var protoOk = opts.requireHttps
+      ? parsed.protocol === "https:"
+      : (parsed.protocol === "http:" || parsed.protocol === "https:");
+    if (!protoOk) return null;
+    if (!opts.anyHost && !hubOverridden) {
+      var hubOrigin = null;
+      try {
+        hubOrigin = new URL(HUB).origin;
+      } catch (e2) {
+        hubOrigin = null;
+      }
+      if (!hubOrigin || parsed.origin !== hubOrigin) return null;
+    }
+    return parsed.href;
+  }
+
   // ---- fetch the public gallery and populate the <select> ----
   function loadGallery() {
     return fetch(HUB + "/ds?format=json")
@@ -257,12 +309,14 @@ footer {
         });
       });
   }
+
   function findSystem(slug) {
     for (var i = 0; i < gallery.length; i++) {
       if (gallery[i].slug === slug) return gallery[i];
     }
     return null;
   }
+
   // ---- swap the stylesheet, wait for it to actually load ----
   function loadCss(href) {
     return new Promise(function (resolve, reject) {
@@ -281,8 +335,13 @@ footer {
       cssLink.href = href;
     });
   }
+
   // ---- load the bundle, swap the font <link> elements ----
-  function loadFonts(bundleUrl) {
+  // `seq` is this call's applySystem() sequence number: the fonts are only
+  // swapped if it is still the current one, so a stale, later-resolving
+  // call can neither orphan a newer system's font links nor remove them out
+  // from under it (both would happen with a shared "current links" array).
+  function loadFonts(bundleUrl, seq) {
     return fetch(bundleUrl)
       .then(function (res) {
         if (!res.ok) {
@@ -291,19 +350,27 @@ footer {
         return res.json();
       })
       .then(function (data) {
+        if (seq !== applySeq) return;
         var fonts = (data && data.bundle && data.bundle.fonts) || [];
-        currentFontLinks.forEach(function (link) { link.remove(); });
-        currentFontLinks = [];
+        var safeFonts = [];
         fonts.forEach(function (font) {
           if (!font || !font.href) return;
+          var fontUrl = safeUrl(font.href, { requireHttps: true, anyHost: true });
+          if (fontUrl) safeFonts.push(fontUrl);
+        });
+        document.querySelectorAll('link[data-ds-font="1"]').forEach(function (link) {
+          link.remove();
+        });
+        safeFonts.forEach(function (href) {
           var link = document.createElement("link");
           link.rel = "stylesheet";
-          link.href = font.href;
+          link.href = href;
+          link.setAttribute("data-ds-font", "1");
           document.head.appendChild(link);
-          currentFontLinks.push(link);
         });
       });
   }
+
   // ---- read --ds-chart-1..N off :root and (re)draw the bar chart ----
   function renderChart() {
     var styles = getComputedStyle(document.documentElement);
@@ -358,20 +425,34 @@ footer {
       }
     });
   }
+
   // ---- apply one design system end to end ----
   function applySystem(slug) {
+    var seq = ++applySeq; // captured now; every later step checks it is still current
     var system = findSystem(slug);
     if (!system) {
       showError("Unknown design system slug: " + slug);
       return Promise.resolve();
     }
     var urls = system.urls || {};
-    var cssUrl = urls.css || (HUB + "/ds/" + system.id + "/css");
-    var bundleUrl = urls.bundle || (HUB + "/ds/" + system.id + "/bundle");
-    var pageUrl = urls.page || (HUB + "/ds/" + system.id);
+    // The HUB + "/ds/" + id + "/..." fallbacks below are defensive only --
+    // the public gallery (GET /ds?format=json) always includes `urls` for
+    // every listed system. safeUrl() rejects anything that is not an
+    // http(s) URL on the hub's own origin.
+    var cssUrl = safeUrl(urls.css || (HUB + "/ds/" + system.id + "/css"));
+    var bundleUrl = safeUrl(urls.bundle || (HUB + "/ds/" + system.id + "/bundle"));
+    var pageUrl = safeUrl(urls.page || (HUB + "/ds/" + system.id));
+    if (!cssUrl || !bundleUrl || !pageUrl) {
+      showError("Design system \"" + slug + "\" has an unsafe or invalid URL; skipping.");
+      return Promise.resolve();
+    }
     return loadCss(cssUrl)
-      .then(function () { return loadFonts(bundleUrl); })
       .then(function () {
+        if (seq !== applySeq) return null;
+        return loadFonts(bundleUrl, seq);
+      })
+      .then(function () {
+        if (seq !== applySeq) return;
         renderChart();
         styleGuideLink.href = pageUrl;
         clearError();
@@ -381,9 +462,11 @@ footer {
         history.replaceState(null, "", url.toString());
       })
       .catch(function (err) {
+        if (seq !== applySeq) return;
         showError("Could not apply design system \"" + slug + "\": " + err.message);
       });
   }
+
   // ---- theme toggle: light <-> dark via data-theme ----
   function initThemeToggle() {
     themeToggle.addEventListener("click", function () {
@@ -402,6 +485,7 @@ footer {
       renderChart();
     });
   }
+
   function init() {
     if (!HUB) {
       showError("No hub URL configured (missing <meta name=\"hub\"> and no ?hub= override).");
@@ -421,6 +505,7 @@ footer {
       applySystem(dsSelect.value);
     });
   }
+
   init();
 })();
 </script>
