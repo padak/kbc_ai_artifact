@@ -725,13 +725,17 @@ vault you already have.
 | `GET /a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault; 413 when the history is over `HUB_EXPORT_MAX_BYTES`, 429 over `HUB_MAX_EXPORTS_PER_HOUR` builds per hour |
 | `GET /changelog` | Rendered changelog, hub's own design |
 | `GET /llms.txt` | llmstxt.org map of the hub for an assistant handed a share link (`text/markdown`) |
-| `GET /ds/{ref}` | A design system's style guide page (HTML), sandboxed like an artifact |
+| `GET /ds/{ref}` | A design system's style guide page: the style guide renders inside a sandboxed iframe on a hub-chrome page |
 | `GET /ds/{ref}/versions` | Design-system version history JSON |
 | `GET /ds/{ref}/bundle` | `{..., version, head_version, bundle, variables, warnings, urls}` — the stored normalised bundle, `?v=` to pin |
 | `GET /ds/{ref}/tokens` | `{tokens, modes}` |
 | `GET /ds/{ref}/css` | `text/css`, `?mode=all\|light\|dark` |
 | `GET /ds/{ref}/starter` | `text/html`, sandboxed — the skeleton with `{{TITLE}}`/`{{BODY}}` to fill in and publish |
 | `GET /ds/{ref}/guidance` | `text/markdown` — the brand's written rules |
+
+`?v=N` pins a version on the routes that serve one — the style-guide page,
+`/bundle`, `/tokens`, `/css`, `/starter`, `/guidance` (omitted = head).
+`/ds/{ref}/versions` takes no `?v`: it lists every version.
 
 If password-protected, send `X-Artifact-Password: <password>` on these; a
 browser gets an HTML unlock form instead. Your own auth headers are enough on

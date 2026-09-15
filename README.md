@@ -234,7 +234,7 @@ Public (no auth):
 | GET | `/a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault (versions, comments, reasoning timeline), streamed rather than held in memory; 413 above `HUB_EXPORT_MAX_BYTES`, 429 above `HUB_MAX_EXPORTS_PER_HOUR` |
 | GET | `/changelog` / `/changelog.md` | Rendered changelog (hub's own design) / raw source |
 | GET | `/health` | Liveness check + service version + index stats |
-| GET | `/ds/{ref}` | A design system's style guide (HTML, sandboxed) — palette, typography, live components, sample chart/diagram, guidance |
+| GET | `/ds/{ref}` | A design system's style guide — palette, typography, live components, sample chart/diagram, guidance; the style guide renders inside a sandboxed iframe on a hub-chrome page |
 | GET | `/ds/{ref}/versions` | Design-system version history JSON |
 | GET | `/ds/{ref}/bundle?v=n` | The stored, normalised bundle for one version, plus `variables` (token path → CSS custom property) and `warnings` |
 | GET | `/ds/{ref}/tokens` | `{tokens, modes}` — the raw DTCG token tree |
@@ -1034,12 +1034,13 @@ meta record persisted before this field existed has no epoch on file at all,
 which is read exactly like a receiver that has simply never been rotated —
 no migration step, no re-registration.
 
-**Design systems render only inside the same sandbox artifacts get.**
+**Design-system content renders only inside the same sandbox artifacts get.**
 Guidance Markdown, component `html`/`css` and raw token strings are never
-rendered on the hub's own origin — only inside a `srcdoc` iframe sandboxed
-without `allow-same-origin` (the style guide page) or through
-`_sandboxed_html` (`GET /ds/{ref}/starter`, the one route that serves such
-HTML directly). Reading a design system by its **slug** requires an
+rendered on the hub's own origin: the style guide renders inside a sandboxed
+iframe on a hub-chrome page — the page itself is the hub's origin, only the
+`srcdoc` iframe holding the content is sandboxed, without
+`allow-same-origin` — and `GET /ds/{ref}/starter`, the one route that serves
+such HTML directly, goes out through `_sandboxed_html` with a CSP sandbox. Reading a design system by its **slug** requires an
 authenticated credential, resolved before the lookup runs, so slugs cannot be
 enumerated anonymously; its `ds_…` **id** is a public capability URL exactly
 like an artifact's, and slugs are otherwise enumerable by any accepted

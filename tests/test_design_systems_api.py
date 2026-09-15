@@ -564,3 +564,43 @@ def test_css_authenticates_a_slug_before_validating_mode(api):
         api.client.get("/ds/corp/css?mode=sepia", headers=AUTH_HEADERS).status_code
         == 422
     )
+
+
+def test_reader_is_503_while_the_index_is_unhydrated(api):
+    """A reader must not report 404 for a design system it simply cannot see.
+
+    The check sits *after* the slug/credential branch, so an unhydrated index
+    can never be used as an oracle for whether a slug exists.
+    """
+    ds_id = _register(api.client).json()["id"]
+    designs = api.client.app.state.designs
+    designs.hydrated = False
+    try:
+        r = api.client.get(f"/ds/{ds_id}/bundle")
+        assert r.status_code == 503, r.text
+        assert "retry" in r.json()["detail"]
+        # Still 401 before the lookup: no hydration oracle for a slug.
+        assert api.client.get("/ds/corp/bundle").status_code == 401
+        # Hydration state is reported by /health, it is not a failure there.
+        assert api.client.get("/health").status_code == 200
+    finally:
+        designs.hydrated = True
+    assert api.client.get(f"/ds/{ds_id}/bundle").status_code == 200
+
+
+def test_stored_bundle_that_no_longer_renders_is_502_not_500(api, monkeypatch):
+    """Lowering a token limit after a bundle was stored must not be a 500."""
+    from src import main
+
+    ds_id = _register(api.client).json()["id"]
+    monkeypatch.setattr(
+        main, "settings", dataclasses.replace(main.settings, ds_max_tokens=1)
+    )
+    main._DS_DERIVED.clear()
+    r = api.client.get(f"/ds/{ds_id}/css")
+    assert r.status_code == 502, r.text
+    assert r.json()["error"] == "stored design system cannot be rendered"
+    page = api.client.get(f"/ds/{ds_id}")
+    assert page.status_code == 502, page.text
+    assert page.json()["error"] == "stored design system cannot be rendered"
+    main._DS_DERIVED.clear()
