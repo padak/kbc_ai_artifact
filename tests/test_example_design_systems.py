@@ -177,3 +177,22 @@ def test_starter_exposes_the_stable_role_variables(path: Path):
     )
     for variable in ("--ds-background", "--ds-accent"):
         assert f"{variable}:var(--" in starter, f"{path.stem} starter has no {variable}"
+
+
+def test_data_dashboard_chart_panel_draws_something():
+    """A style guide renders a component's HTML as-is and runs no chart code.
+
+    The panel used to ship a bare ``<canvas>``, which reads as a broken
+    component in the gallery: nothing on the page ever draws into it. It now
+    carries a static inline SVG sample instead, and its ``when_to_use`` says
+    a real chart replaces that SVG with a chart.js canvas.
+    """
+    bundle = _load(EXAMPLES_DIR / "data-dashboard.json")["bundle"]
+    (panel,) = [c for c in bundle["components"] if c["name"] == "chart-panel"]
+    assert "<canvas" not in panel["html"], "chart-panel still ships an undrawn canvas"
+    assert "<svg" in panel["html"]
+    assert "Requests per minute" in panel["html"]
+    assert "last 6 hours" in panel["html"]
+    assert "#" not in panel["html"], "sample bars must use var(--…), not hex"
+    assert "var(--color-chart-" in panel["html"]
+    assert "chart.js" in panel["when_to_use"]
