@@ -11188,10 +11188,44 @@ def _ds_reader(
 
 
 def _ds_response(request: Request, response: Response) -> Response:
-    """A slug-resolved read was credentialed, so no shared cache may keep it."""
+    """Mark a design-system read according to how it was resolved.
+
+    A slug-resolved read was credentialed, so no shared cache may keep it —
+    and it is never readable cross-origin either, or a page on any origin
+    could spend the reader's credential for its own content.
+
+    An id-resolved read is the opposite: the id *is* the capability, the
+    answer is already public, and a browser page on another origin
+    (the switcher demo above all) must be able to read it. Only a `GET` with
+    no custom headers reaches here, which is a CORS simple request — so no
+    preflight handling is needed, just the two response headers.
+    """
     if getattr(request.state, "ds_private", False):
         response.headers["Cache-Control"] = "private, no-store"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
     return response
+
+
+#: Where the role -> ``--ds-*`` map lives inside a bundle's ``variables``.
+#: The token map is the older contract and keeps every key it already owns,
+#: so a design system with a token path literally named ``roles`` pushes the
+#: role map aside to ``role_variables`` rather than losing its own entry.
+DS_ROLE_MAP_KEY = "roles"
+DS_ROLE_MAP_FALLBACK_KEY = "role_variables"
+
+
+def _ds_variables(version: DesignSystemVersion, base: TokenSet) -> dict[str, Any]:
+    """``variables`` for one version: the token map plus the role alias map."""
+    variables: dict[str, Any] = dict(base.variables())
+    key = (
+        DS_ROLE_MAP_FALLBACK_KEY
+        if DS_ROLE_MAP_KEY in variables
+        else DS_ROLE_MAP_KEY
+    )
+    variables[key] = designkit.role_variable_names(version.bundle)
+    return variables
 
 
 @app.get("/ds/{ref}", response_class=HTMLResponse, tags=["design systems"])
@@ -11271,7 +11305,7 @@ def design_system_bundle(
                 "created_at": version.created_at,
                 "note": version.note,
                 "bundle": version.bundle,
-                "variables": base.variables(),
+                "variables": _ds_variables(version, base),
                 "warnings": version.warnings,
                 "urls": _ds_urls(base_url(request), meta.id, version.version),
             }
@@ -11316,11 +11350,16 @@ def design_system_css(
         raise HTTPException(
             status_code=404, detail="this design system has no dark mode"
         )
+    # The alias block goes after the token CSS in every mode: the aliases are
+    # var() references, so one block follows whichever mode the document ends
+    # up in -- there is nothing mode-specific to emit twice.
+    def build_css() -> str:
+        aliases = designkit.role_css_vars(version.bundle, base)
+        body = to_css(base, dark, mode=mode)
+        return f"{body}\n{aliases}" if aliases else body
+
     with _deriving(version):
-        css = _ds_cached(
-            ("css", version.id, version.version, mode),
-            lambda: to_css(base, dark, mode=mode),
-        )
+        css = _ds_cached(("css", version.id, version.version, mode), build_css)
     return _ds_response(
         request, Response(css, media_type="text/css; charset=utf-8")
     )

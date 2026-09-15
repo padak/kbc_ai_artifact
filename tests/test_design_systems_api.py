@@ -604,3 +604,73 @@ def test_stored_bundle_that_no_longer_renders_is_502_not_500(api, monkeypatch):
     assert page.status_code == 502, page.text
     assert page.json()["error"] == "stored design system cannot be rendered"
     main._DS_DERIVED.clear()
+
+
+# --------------------------------------------------------------------------
+# 0.17.0: role variables and CORS on public reads
+# --------------------------------------------------------------------------
+
+CORS_ORIGIN = "access-control-allow-origin"
+CORS_EXPOSE = "access-control-expose-headers"
+
+
+def test_id_resolved_reads_are_readable_cross_origin(api):
+    """An id is a public capability, so a page on any origin may fetch it."""
+    ds_id = _register(api.client).json()["id"]
+    for suffix in ("", "/versions", "/bundle", "/tokens", "/css", "/starter", "/guidance"):
+        r = api.client.get(f"/ds/{ds_id}{suffix}")
+        assert r.status_code == 200, suffix
+        assert r.headers[CORS_ORIGIN] == "*", suffix
+        assert r.headers[CORS_EXPOSE] == "X-Hub-Version", suffix
+
+
+def test_slug_resolved_reads_are_not_readable_cross_origin(api):
+    """A slug read is credentialed; a credentialed answer is never shared."""
+    _register(api.client)
+    r = api.client.get("/ds/corp/bundle", headers=AUTH_HEADERS)
+    assert r.status_code == 200
+    assert CORS_ORIGIN not in r.headers and CORS_EXPOSE not in r.headers
+    assert r.headers["Cache-Control"] == "private, no-store"
+
+
+def test_api_routes_are_not_readable_cross_origin(api):
+    _register(api.client)
+    for path in ("/api/design-systems", "/api/design-systems/corp"):
+        r = api.client.get(path, headers=AUTH_HEADERS)
+        assert r.status_code == 200, path
+        assert CORS_ORIGIN not in r.headers, path
+
+
+def test_css_carries_the_role_alias_block_in_every_mode(api):
+    ds_id = _register(api.client).json()["id"]
+    for mode in ("all", "light", "dark"):
+        css = api.client.get(f"/ds/{ds_id}/css?mode={mode}").text
+        assert "--ds-background:var(--color-bg)" in css, mode
+        assert "--ds-chart-1:var(--color-c1)" in css, mode
+        assert "--ds-chart-count:2" in css, mode
+
+
+def test_bundle_reports_the_role_variable_map(api):
+    ds_id = _register(api.client).json()["id"]
+    body = api.client.get(f"/ds/{ds_id}/bundle").json()
+    roles = body["variables"]["roles"]
+    assert roles["background"] == "--ds-background"
+    assert roles["font_body"] == "--ds-font-body"
+    assert roles["chart_palette_2"] == "--ds-chart-2"
+    assert roles["chart_palette_count"] == "--ds-chart-count"
+    # the token map itself is untouched
+    assert body["variables"]["color.bg"] == "--color-bg"
+
+
+def test_role_map_moves_aside_for_a_token_literally_named_roles(api):
+    """A token path 'roles' would collide with the sub-map's key.
+
+    The token map wins — it is the older contract — and the role map moves to
+    'role_variables'. Documented in /context so an agent reads the right key.
+    """
+    bundle = good_bundle()
+    bundle["tokens"]["roles"] = {"$type": "color", "$value": "#123456"}
+    ds_id = _register(api.client, bundle=bundle).json()["id"]
+    body = api.client.get(f"/ds/{ds_id}/bundle").json()
+    assert body["variables"]["roles"] == "--roles"
+    assert body["variables"]["role_variables"]["background"] == "--ds-background"
