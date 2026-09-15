@@ -1,0 +1,327 @@
+{
+  "slug": "oldschool-memo",
+  "name": "Old-School Memo",
+  "description": "A 1990s internal memorandum: black Georgia on cream, TO/FROM/DATE/SUBJECT header, ruled tables, underlined links, square corners, no shadows.",
+  "note": "Initial version: light + dark, four components, diagrams deliberately disabled.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#fdfaf0"
+          },
+          "card": {
+            "$value": "#fdfaf0"
+          },
+          "subtle": {
+            "$value": "#f2ece0"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#1a1a1a"
+          },
+          "secondary": {
+            "$value": "#4a4a4a"
+          },
+          "inverse": {
+            "$value": "#fdfaf0"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#1a1a1a"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#00008b",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#fdfaf0"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#006400"
+          },
+          "warn": {
+            "$value": "#8b6508"
+          },
+          "danger": {
+            "$value": "#8b0000"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#1a1a1a"
+          },
+          "2": {
+            "$value": "#4a4a4a"
+          },
+          "3": {
+            "$value": "#7a7a7a"
+          },
+          "4": {
+            "$value": "#00008b"
+          },
+          "5": {
+            "$value": "#8b0000"
+          },
+          "6": {
+            "$value": "#006400"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Georgia",
+              "Times New Roman",
+              "Times",
+              "serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Georgia",
+              "Times New Roman",
+              "Times",
+              "serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "Courier New",
+              "Courier",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "0px"
+        },
+        "md": {
+          "$value": "0px"
+        },
+        "lg": {
+          "$value": "0px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "3px"
+        },
+        "sm": {
+          "$value": "8px"
+        },
+        "md": {
+          "$value": "14px"
+        },
+        "lg": {
+          "$value": "24px"
+        },
+        "xl": {
+          "$value": "36px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.8125rem"
+        },
+        "body": {
+          "$value": "1rem"
+        },
+        "h3": {
+          "$value": "1.0625rem"
+        },
+        "h2": {
+          "$value": "1.25rem"
+        },
+        "h1": {
+          "$value": "1.5rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.2
+        },
+        "body": {
+          "$value": 1.45
+        }
+      },
+      "rule": {
+        "$type": "border",
+        "hard": {
+          "$value": {
+            "width": "2px",
+            "style": "solid",
+            "color": "{color.text.primary}"
+          }
+        },
+        "hair": {
+          "$value": {
+            "width": "1px",
+            "style": "solid",
+            "color": "{color.text.primary}"
+          }
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#141210"
+            },
+            "card": {
+              "$value": "#141210"
+            },
+            "subtle": {
+              "$value": "#1f1c18"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#efe9dc"
+            },
+            "secondary": {
+              "$value": "#b6ada0"
+            },
+            "inverse": {
+              "$value": "#141210"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#efe9dc"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#9fb0e8"
+            },
+            "on-primary": {
+              "$value": "#141210"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#7fbf7f"
+            },
+            "warn": {
+              "$value": "#d4b45a"
+            },
+            "danger": {
+              "$value": "#e08a8a"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#efe9dc"
+            },
+            "2": {
+              "$value": "#b6ada0"
+            },
+            "3": {
+              "$value": "#8d8578"
+            },
+            "4": {
+              "$value": "#9fb0e8"
+            },
+            "5": {
+              "$value": "#e08a8a"
+            },
+            "6": {
+              "$value": "#7fbf7f"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.md}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Old-School Memo\n\nAn internal memorandum with the feel of a 1994 corporate print-out: black\nserif on cream, ruled tables, underlined links, square corners, no shadows.\nUsed deliberately — for policy notices, formal internal announcements and\nanything that should read as a matter of record rather than a message.\n\n## Principles\n\n1. **It is a document, not a page.** It should look right printed and faxed.\n   Nothing may depend on hover, colour or screen width.\n2. **Header block first, always.** TO, FROM, DATE, SUBJECT, in that order, in\n   caps, above a hard rule. The reader must be able to file it.\n3. **No ornament whatsoever.** No rounded corners, no shadows, no icons, no\n   background fills except the cream page.\n\n## Layout grid\n\nSingle column at `max-width: 40rem` — roughly a typed page — left-aligned,\nwith `--space-lg` between sections. Paragraph spacing, not indentation, marks\na new paragraph. Tables run the full column and are ruled on every side.\nNothing is ever centred except a table caption.\n\n## Typography\n\nGeorgia (falling back to Times) everywhere, at `--size-body` with\n`--line-body`. Headings are the same family, bold, at `--size-h1` /\n`--size-h2` / `--size-h3` — barely larger than the body, distinguished by\nweight and a rule. Section headings are numbered (\"1.\", \"1.1\"). Monospace is\nCourier and is used only for reference numbers and code.\n\n## Colour usage\n\nBlack (`--color-text-primary`) on cream (`--color-bg-page`). Rules and table\nborders are black, never grey. Links are the dark blue `--color-brand-primary`\nand are always underlined — never a colour change alone. Status colours appear\nonly in the rare status column of a table and always alongside the word. In\npractice a correct memo is monochrome.\n\n## Charts\n\nChart.js only if truly necessary, and then greyscale: bar charts using the\nfirst three chart tokens, with hatch-free solid fills, a black axis and the\nvalues printed above each bar. A ruled table is almost always the better\nchoice here.\n\n## Diagrams\n\nNone. If a process needs a picture, write a numbered list. Mermaid is\ndeliberately disabled for this design system.\n\n## Components and when to use each\n\n- `memo-header` — the TO/FROM/DATE/SUBJECT block. Required, exactly once, at\n  the very top.\n- `ruled-table` — any tabular data. Fully ruled, caption above.\n- `numbered-section` — a numbered heading with its body; the only heading\n  form.\n- `signature-block` — the closing name, title and distribution list.\n\n## Do / don't\n\n- **Do** write in complete sentences and the third person where it is formal.\n- **Do** give the memo a reference number if your organisation uses them.\n- **Don't** use emoji, exclamation marks, bold for emphasis mid-sentence, or\n  any colour other than black and the link blue.\n- **Don't** add a logo, a banner image or a coloured header bar.\n- **Don't** use collapsible sections, tabs or anything interactive.\n",
+    "components": [
+      {
+        "name": "memo-header",
+        "description": "The TO/FROM/DATE/SUBJECT block.",
+        "when_to_use": "Required, exactly once, at the very top of every memo.",
+        "html": "<div class=\"om-head\">\n  <h1>MEMORANDUM</h1>\n  <dl>\n    <dt>TO</dt><dd>All staff, Data Platform</dd>\n    <dt>FROM</dt><dd>P. Simecek, Operations</dd>\n    <dt>DATE</dt><dd>15 September 2026</dd>\n    <dt>SUBJECT</dt><dd>Retention of published artifacts</dd>\n  </dl>\n</div>",
+        "css": ".om-head{border-bottom:var(--rule-hard);padding-bottom:var(--space-md);margin-bottom:var(--space-lg)}\n.om-head h1{margin:0 0 var(--space-md);font-size:var(--size-h1);line-height:var(--line-tight);letter-spacing:.12em;text-transform:uppercase}\n.om-head dl{display:grid;grid-template-columns:6rem 1fr;gap:var(--space-xs) var(--space-sm);margin:0}\n.om-head dt{font-weight:var(--font-weight-bold);letter-spacing:.08em}\n.om-head dd{margin:0}"
+      },
+      {
+        "name": "ruled-table",
+        "description": "Fully ruled table with the caption above.",
+        "when_to_use": "All tabular data; prefer it to any chart.",
+        "html": "<table class=\"om-table\">\n  <caption>Table 1. Retention periods by artifact class</caption>\n  <thead><tr><th>Class</th><th>Period</th><th>Authority</th></tr></thead>\n  <tbody>\n    <tr><td>Published</td><td>7 years</td><td>Policy 4.2</td></tr>\n    <tr><td>Draft</td><td>90 days</td><td>Policy 4.3</td></tr>\n  </tbody>\n</table>",
+        "css": ".om-table{width:100%;border-collapse:collapse;margin:var(--space-lg) 0;border:var(--rule-hard)}\n.om-table caption{caption-side:top;text-align:left;font-weight:var(--font-weight-bold);padding-bottom:var(--space-sm)}\n.om-table th,.om-table td{border:var(--rule-hair);padding:var(--space-sm);text-align:left;vertical-align:top}\n.om-table th{font-weight:var(--font-weight-bold);background:var(--color-bg-subtle)}"
+      },
+      {
+        "name": "numbered-section",
+        "description": "A numbered heading with its body text.",
+        "when_to_use": "The only heading form in a memo. Number every section.",
+        "html": "<section class=\"om-section\">\n  <h2>2. Scope</h2>\n  <p>This memorandum applies to every artifact published through the hub on or after 1 October 2026.</p>\n</section>",
+        "css": ".om-section{margin:var(--space-lg) 0}\n.om-section h2{font-size:var(--size-h2);line-height:var(--line-tight);font-weight:var(--font-weight-bold);margin:0 0 var(--space-sm);border-bottom:var(--rule-hair);padding-bottom:var(--space-xs)}\n.om-section p{margin:0 0 var(--space-md);line-height:var(--line-body)}\n.om-section a{color:var(--color-brand-primary);text-decoration:underline}"
+      },
+      {
+        "name": "signature-block",
+        "description": "Closing name, title and distribution list.",
+        "when_to_use": "The last element of every memo.",
+        "html": "<div class=\"om-sign\">\n  <p>P. Simecek<br>Head of Operations</p>\n  <p class=\"om-sign__dist\">cc: Legal, Security, Records</p>\n</div>",
+        "css": ".om-sign{margin-top:var(--space-xl);border-top:var(--rule-hard);padding-top:var(--space-md)}\n.om-sign p{margin:0 0 var(--space-sm);line-height:var(--line-body)}\n.om-sign__dist{font-size:var(--size-small);color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.06em}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Greyscale bars only, values printed above each bar; a ruled table is almost always better."
+    },
+    "diagrams": {
+      "library": "none",
+      "notes": "Deliberately disabled: describe processes as numbered lists."
+    },
+    "fonts": []
+  }
+}

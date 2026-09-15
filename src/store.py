@@ -777,6 +777,12 @@ class Envelope:
     # ISO 8601 UTC; produced by the caller, never by this module.
     created_at: str = ""
     schema: int = SCHEMA_VERSION
+    # Design-system provenance the submitter claimed for this version:
+    # {"id": "ds_...", "slug": str, "version": int}. Declared last and
+    # optional so positional construction elsewhere keeps working. It is a
+    # claim of what was used, never a proof of conformity, and it is never
+    # rewritten when the design system itself changes or is deleted.
+    design_system: dict | None = None
 
     @property
     def author_key(self) -> str:
@@ -799,6 +805,7 @@ class Envelope:
             "canonical_file_id": self.canonical_file_id,
             "created_at": self.created_at,
             "schema": self.schema,
+            "design_system": self.design_system,
         }
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -887,6 +894,11 @@ class Envelope:
             ),
             created_at=data.get("created_at") or "",
             schema=schema if isinstance(schema, int) else 1,
+            # Tolerant: absent on every pre-0.16 envelope, and anything that
+            # is not an object degrades to "no provenance claimed".
+            design_system=(
+                ds if isinstance(ds := data.get("design_system"), dict) else None
+            ),
         )
 
     def public_meta(self, is_head: bool = False) -> dict:
@@ -912,6 +924,7 @@ class Envelope:
                 "stack_host": _stack_host(str(self.author.get("stack_url") or "")),
             },
             "git": git,
+            "design_system": self.design_system,
         }
 
 

@@ -284,11 +284,18 @@ def test_health_shape(api: Api) -> None:
     resp = api.client.get("/health")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) == {"status", "version", "artifacts", "hydrated"}
+    assert set(body) == {
+        "status",
+        "version",
+        "artifacts",
+        "design_systems",
+        "hydrated",
+    }
     assert body["status"] == "ok"
     assert body["version"] == main.SERVICE_VERSION
     assert body["version"]
     assert isinstance(body["artifacts"], int)
+    assert isinstance(body["design_systems"], int)
     assert isinstance(body["hydrated"], bool)
     assert body["hydrated"] is True
     assert body["artifacts"] == 0
@@ -358,6 +365,20 @@ def test_context_lists_all_endpoints_and_stack_aliases(api: Api) -> None:
         ("POST", "/api/artifacts/{id}/comments/{tid}/replies"),
         ("POST", "/api/artifacts/{id}/comments/{tid}/resolve"),
         ("DELETE", "/api/artifacts/{id}/comments/{tid}"),
+        ("GET", "/api/design-systems"),
+        ("POST", "/api/design-systems"),
+        ("GET", "/api/design-systems/{ref}"),
+        ("PUT", "/api/design-systems/{ref}"),
+        ("POST", "/api/design-systems/{ref}/versions"),
+        ("DELETE", "/api/design-systems/{ref}/versions/{n}"),
+        ("DELETE", "/api/design-systems/{ref}"),
+        ("GET", "/ds/{ref}"),
+        ("GET", "/ds/{ref}/versions"),
+        ("GET", "/ds/{ref}/bundle"),
+        ("GET", "/ds/{ref}/tokens"),
+        ("GET", "/ds/{ref}/css"),
+        ("GET", "/ds/{ref}/starter"),
+        ("GET", "/ds/{ref}/guidance"),
     }
     assert paths == expected
     assert len(body["endpoints"]) == len(expected)
@@ -470,7 +491,14 @@ def test_openapi_json_never_leaks_the_hub_storage_token(api: Api) -> None:
 # --------------------------------------------------------------------------
 
 #: The tags declared on the app; every operation must carry exactly one.
-_TAGS = {"public", "artifacts", "versions", "comments", "service"}
+_TAGS = {
+    "public",
+    "artifacts",
+    "versions",
+    "comments",
+    "design systems",
+    "service",
+}
 
 
 def _operations(schema: dict) -> list[tuple[str, str, dict]]:

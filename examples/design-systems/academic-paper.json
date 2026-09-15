@@ -1,0 +1,332 @@
+{
+  "slug": "academic-paper",
+  "name": "Academic Paper",
+  "description": "Research notes and whitepapers in a journal voice: a narrow serif measure, numbered sections, numbered figures, footnotes and a reference list.",
+  "note": "Initial version: light + dark, five components, measure token for the column width.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#fcfcfa"
+          },
+          "card": {
+            "$value": "#f4f3ee"
+          },
+          "subtle": {
+            "$value": "#eceae2"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#1c1c1a"
+          },
+          "secondary": {
+            "$value": "#5a584f"
+          },
+          "inverse": {
+            "$value": "#fcfcfa"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#d5d2c7"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#7a2d1f",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#fcfcfa"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#3d6b3d"
+          },
+          "warn": {
+            "$value": "#8a6a12"
+          },
+          "danger": {
+            "$value": "#7a2d1f"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#1c1c1a"
+          },
+          "2": {
+            "$value": "#7a2d1f"
+          },
+          "3": {
+            "$value": "#3d5a80"
+          },
+          "4": {
+            "$value": "#3d6b3d"
+          },
+          "5": {
+            "$value": "#8a6a12"
+          },
+          "6": {
+            "$value": "#5a584f"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Crimson Pro",
+              "Georgia",
+              "Times New Roman",
+              "serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Crimson Pro",
+              "Georgia",
+              "Times New Roman",
+              "serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "1px"
+        },
+        "md": {
+          "$value": "2px"
+        },
+        "lg": {
+          "$value": "3px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "4px"
+        },
+        "sm": {
+          "$value": "9px"
+        },
+        "md": {
+          "$value": "16px"
+        },
+        "lg": {
+          "$value": "28px"
+        },
+        "xl": {
+          "$value": "48px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.8125rem"
+        },
+        "body": {
+          "$value": "1.125rem"
+        },
+        "h3": {
+          "$value": "1.1875rem"
+        },
+        "h2": {
+          "$value": "1.4375rem"
+        },
+        "h1": {
+          "$value": "1.9375rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.25
+        },
+        "body": {
+          "$value": 1.62
+        }
+      },
+      "measure": {
+        "$type": "dimension",
+        "column": {
+          "$value": "34rem"
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#16161a"
+            },
+            "card": {
+              "$value": "#1e1e23"
+            },
+            "subtle": {
+              "$value": "#26262c"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#ececea"
+            },
+            "secondary": {
+              "$value": "#a8a69c"
+            },
+            "inverse": {
+              "$value": "#16161a"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#33333a"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#e08e7c"
+            },
+            "on-primary": {
+              "$value": "#16161a"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#8cc48c"
+            },
+            "warn": {
+              "$value": "#d9b95c"
+            },
+            "danger": {
+              "$value": "#e08e7c"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#ececea"
+            },
+            "2": {
+              "$value": "#e08e7c"
+            },
+            "3": {
+              "$value": "#8fb0d9"
+            },
+            "4": {
+              "$value": "#8cc48c"
+            },
+            "5": {
+              "$value": "#d9b95c"
+            },
+            "6": {
+              "$value": "#a8a69c"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.md}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Academic Paper\n\nResearch notes, whitepapers and internal studies that should read like a\njournal article: a narrow measure, a serif with real italics, numbered\nsections, numbered figures and footnotes that are actually referenced.\n\n## Principles\n\n1. **The measure rules everything.** Roughly 65 characters per line\n   (`--measure-column`). Long lines are the single fastest way to make a paper\n   unreadable, and no amount of typography rescues them.\n2. **Every claim is attributable.** A number, a figure or an assertion either\n   carries a citation or is explicitly marked as this paper's own result.\n3. **Structure is numeric.** Sections 1, 2, 2.1; figures Figure 1, 2; tables\n   Table 1, 2. Cross-references use those numbers, never \"above\" or \"below\".\n\n## Layout grid\n\nOne column of `--measure-column`, centred, giving a two-column journal feel\nwithout the reflow problems of real columns. `--space-xl` between numbered\nsections. Figures and tables may exceed the measure by up to 25% and are\nalways centred with the caption beneath (figures) or above (tables). An\nabstract sits above section 1, indented on both sides.\n\n## Typography\n\nCrimson Pro (a Computer-Modern-adjacent serif) at `--size-body` with\n`--line-body`. Headings are the same family in small caps or bold at\n`--size-h1` / `--size-h2` / `--size-h3`; they are only slightly larger than\nthe body, as in a printed journal. Italics carry emphasis and defined terms;\nbold is reserved for run-in heads. Mathematical and code fragments are\nmonospace.\n\n## Colour usage\n\nNear-black on warm off-white. The brick accent (`--color-brand-primary`) is\nused only for internal links, footnote markers and the rule above a figure\ncaption. Charts use the palette in order but begin with black — a figure must\nsurvive photocopying. Never colour a heading and never use a coloured\nbackground for body text.\n\n## Charts\n\nChart.js. Line and scatter for results, bar for categorical comparison. Axes\nalways labelled with units, error bars where the data has them, and a\n`Figure N.` caption stating what the reader should conclude. Never a pie\nchart. Keep to four series and distinguish them by dash pattern as well as\ncolour.\n\n## Diagrams\n\nMermaid `flowchart TD` for method pipelines and `sequenceDiagram` for\nprotocols. Treat a diagram as a numbered figure with a caption, exactly like a\nchart.\n\n## Components and when to use each\n\n- `abstract` — the 150–250 word summary above section 1. Exactly one.\n- `numbered-section` — every heading; carries its own number.\n- `figure` — a chart, diagram or image with a `Figure N.` caption below.\n- `footnote` — an aside or a citation, marked in the text and collected at the\n  end of the section.\n- `reference-list` — the bibliography, numbered to match the in-text markers.\n\n## Do / don't\n\n- **Do** define every symbol and abbreviation at first use.\n- **Do** state the limitations of the result in its own section.\n- **Don't** use first person plural for work done by one person.\n- **Don't** place a figure before it is first referenced in the text.\n- **Don't** use bold for emphasis in running prose; use italics.\n",
+    "components": [
+      {
+        "name": "abstract",
+        "description": "The 150-250 word summary above section 1.",
+        "when_to_use": "Exactly once, before the first numbered section.",
+        "html": "<div class=\"ap-abstract\">\n  <h2>Abstract</h2>\n  <p>We measure the cost of rebuilding an in-memory artifact index from object-storage tags and show that it is linear in the number of tags.</p>\n</div>",
+        "css": ".ap-abstract{margin:var(--space-lg) auto var(--space-xl);max-width:var(--measure-column);padding:0 var(--space-lg);border-top:1px solid var(--color-border-default);border-bottom:1px solid var(--color-border-default)}\n.ap-abstract h2{font-size:var(--size-h3);line-height:var(--line-tight);text-transform:uppercase;letter-spacing:.1em;margin:var(--space-md) 0 var(--space-sm)}\n.ap-abstract p{margin:0 0 var(--space-md);line-height:var(--line-body);color:var(--color-text-secondary)}"
+      },
+      {
+        "name": "numbered-section",
+        "description": "A numbered section heading with its body.",
+        "when_to_use": "Every heading in the paper. Cross-reference by number only.",
+        "html": "<section class=\"ap-section\">\n  <h2>2. Method</h2>\n  <p>Each run hydrates a cold index from <em>n</em> tagged files and records wall-clock time.</p>\n</section>",
+        "css": ".ap-section{max-width:var(--measure-column);margin:var(--space-xl) auto}\n.ap-section h2{font-size:var(--size-h2);line-height:var(--line-tight);margin:0 0 var(--space-md);font-weight:var(--font-weight-bold)}\n.ap-section h3{font-size:var(--size-h3);line-height:var(--line-tight);margin:var(--space-lg) 0 var(--space-sm)}\n.ap-section p{margin:0 0 var(--space-md);line-height:var(--line-body);text-align:justify;hyphens:auto}"
+      },
+      {
+        "name": "figure",
+        "description": "A chart, diagram or image with a numbered caption below.",
+        "when_to_use": "Every visual. Place it after its first reference in the text.",
+        "html": "<figure class=\"ap-figure\">\n  <canvas id=\"fig1\" height=\"200\"></canvas>\n  <figcaption><span class=\"ap-figure__num\">Figure 1.</span> Hydration time grows linearly with tag count.</figcaption>\n</figure>",
+        "css": ".ap-figure{margin:var(--space-xl) auto;max-width:calc(var(--measure-column) * 1.25);text-align:center}\n.ap-figure canvas,.ap-figure img{max-width:100%;height:auto}\n.ap-figure figcaption{margin-top:var(--space-sm);font-size:var(--size-small);line-height:var(--line-body);color:var(--color-text-secondary);text-align:left;border-top:1px solid var(--color-brand-primary);padding-top:var(--space-xs)}\n.ap-figure__num{font-weight:var(--font-weight-bold);color:var(--color-text-primary)}"
+      },
+      {
+        "name": "footnote",
+        "description": "An aside or citation, marked in text and collected per section.",
+        "when_to_use": "For anything that would interrupt the argument; never for a required definition.",
+        "html": "<p>The index is rebuilt on every start.<sup class=\"ap-fnref\">1</sup></p>\n<ol class=\"ap-footnotes\">\n  <li id=\"fn1\">Storage Files are immutable, so no incremental rebuild exists.</li>\n</ol>",
+        "css": ".ap-fnref{color:var(--color-brand-primary);font-size:var(--size-small);line-height:1;vertical-align:super}\n.ap-footnotes{max-width:var(--measure-column);margin:var(--space-lg) auto;padding-left:var(--space-md);font-size:var(--size-small);line-height:var(--line-body);color:var(--color-text-secondary);border-top:1px solid var(--color-border-default);padding-top:var(--space-sm)}"
+      },
+      {
+        "name": "reference-list",
+        "description": "The numbered bibliography.",
+        "when_to_use": "The last section of the paper; numbers match the in-text markers.",
+        "html": "<ol class=\"ap-refs\">\n  <li>W3C Design Tokens Community Group. <em>Design Tokens Format Module</em>, 2025.10.</li>\n</ol>",
+        "css": ".ap-refs{max-width:var(--measure-column);margin:var(--space-xl) auto;padding-left:var(--space-lg);font-size:var(--size-small);line-height:var(--line-body)}\n.ap-refs li{margin-bottom:var(--space-sm)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Line and scatter for results, bar for categories; label units, distinguish series by dash as well as colour, never a pie."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart TD for method pipelines; caption it as a numbered figure."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap"
+      }
+    ]
+  }
+}

@@ -1,0 +1,319 @@
+{
+  "slug": "board-deck",
+  "name": "Board Presentation",
+  "description": "Slide-like scrolling narrative for a board or investor audience: dark-first charcoal, one vivid vermilion accent, very large type, one idea per section.",
+  "note": "Initial version: warm off-white light base, charcoal dark mode, four components.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#faf8f5"
+          },
+          "card": {
+            "$value": "#f2eee8"
+          },
+          "subtle": {
+            "$value": "#e8e2d9"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#17181c"
+          },
+          "secondary": {
+            "$value": "#5c5d64"
+          },
+          "inverse": {
+            "$value": "#ffffff"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#ddd6cc"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#dd3c1e",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#ffffff"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#157f4a"
+          },
+          "warn": {
+            "$value": "#a35c00"
+          },
+          "danger": {
+            "$value": "#dd3c1e"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#dd3c1e"
+          },
+          "2": {
+            "$value": "#a35c00"
+          },
+          "3": {
+            "$value": "#157f4a"
+          },
+          "4": {
+            "$value": "#2563eb"
+          },
+          "5": {
+            "$value": "#7c3aed"
+          },
+          "6": {
+            "$value": "#17181c"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Inter",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "Archivo",
+              "Helvetica Neue",
+              "Arial Black",
+              "sans-serif"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "IBM Plex Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "0px"
+        },
+        "md": {
+          "$value": "2px"
+        },
+        "lg": {
+          "$value": "4px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "8px"
+        },
+        "sm": {
+          "$value": "16px"
+        },
+        "md": {
+          "$value": "28px"
+        },
+        "lg": {
+          "$value": "56px"
+        },
+        "xl": {
+          "$value": "112px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.9375rem"
+        },
+        "body": {
+          "$value": "1.25rem"
+        },
+        "h3": {
+          "$value": "1.75rem"
+        },
+        "h2": {
+          "$value": "3rem"
+        },
+        "h1": {
+          "$value": "4.5rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.02
+        },
+        "body": {
+          "$value": 1.5
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#17181c"
+            },
+            "card": {
+              "$value": "#1f2126"
+            },
+            "subtle": {
+              "$value": "#2a2d34"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#f4f4f5"
+            },
+            "secondary": {
+              "$value": "#a1a1aa"
+            },
+            "inverse": {
+              "$value": "#17181c"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#35383f"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#ff4d2e"
+            },
+            "on-primary": {
+              "$value": "#17181c"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#34d399"
+            },
+            "warn": {
+              "$value": "#fbbf24"
+            },
+            "danger": {
+              "$value": "#ff4d2e"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#ff4d2e"
+            },
+            "2": {
+              "$value": "#fbbf24"
+            },
+            "3": {
+              "$value": "#34d399"
+            },
+            "4": {
+              "$value": "#60a5fa"
+            },
+            "5": {
+              "$value": "#c084fc"
+            },
+            "6": {
+              "$value": "#f4f4f5"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.md}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Board Presentation\n\nA narrative deck read as one scrolling document. Each section is a slide: one\nidea, stated at a size nobody can misread, with the evidence directly under it.\n\n## Principles\n\n1. **One idea per section.** If a section needs two headings, it is two\n   sections. The heading *is* the argument, not a topic label.\n2. **Say the number out loud.** A board remembers a figure at display size and\n   forgets the same figure inside a sentence.\n3. **Confident and quiet.** A single ground — warm off-white in light, charcoal\n   in dark — and one vivid accent. Restraint in colour buys emphasis where it\n   is spent.\n\n## Layout grid\n\nFull-bleed sections stacked vertically, each with `--space-xl` of vertical\npadding and content capped at `56rem`, centred. No columns, no sidebars. A\nsection holds a heading, at most one supporting paragraph, and at most one\nvisual (chart, table or statement block). Never two visuals in one section.\n\n## Typography\n\nHeadings are Archivo at `--size-h1` (section openers) and `--size-h2`\n(sub-points), with `--line-tight` — these are meant to look oversized. Body is\nInter at `--size-body`, which is large by web standards on purpose; a board\nmember reads this on a laptop at arm's length. Never use `--size-small` for\nanything but source attributions.\n\n## Colour usage\n\nDesigned dark-first: it reads best in dark mode, but the light base must\nremain fully usable — never hard-code dark colours. Text is\n`--color-text-primary` on `--color-bg-page`. The vermilion accent\n(`--color-brand-primary`) appears at most twice per section: the statement\nnumber, and one chart series or one underline. Everything else is greyscale.\nNever use the accent as a background for more than a badge-sized area, and\nnever for a status that is not urgent.\n\n## Charts\n\nChart.js. One chart per section, maximum three series, axis labels only where\nthey carry meaning. Start the y-axis at zero unless the section explicitly\nargues about a narrow band, and say so in the caption when it does not. No\nlegend if the series can be labelled directly.\n\n## Diagrams\n\nMermaid `flowchart LR` only, three to six nodes, for a strategy or a sequence\nof bets. If it needs more nodes, it belongs in an appendix, not the deck.\n\n## Components and when to use each\n\n- `statement` — the opening of a section: an oversized headline with one line\n  of support. Every major section starts with one.\n- `big-number` — a single figure at display size with a caption. Use when the\n  whole section exists to land that number.\n- `bullet-row` — two to four short parallel points side by side. The only\n  approved way to show a list; never a long bulleted column.\n- `source-note` — small print under a chart or table naming the data source\n  and period.\n\n## Do / don't\n\n- **Do** write headings as complete claims: \"Enterprise now funds the roadmap\".\n- **Do** keep every section readable without the one before it.\n- **Don't** put more than roughly fifty words of body copy in a section.\n- **Don't** use tables for narrative; use them only for backup figures.\n- **Don't** add a second accent colour, ever.\n",
+    "components": [
+      {
+        "name": "statement",
+        "description": "Oversized section opener: the claim plus one supporting line.",
+        "when_to_use": "The first element of every major section.",
+        "html": "<section class=\"bd-statement\">\n  <h2>Enterprise now funds the roadmap.</h2>\n  <p>Three of four new logos in Q3 were above $250k ACV.</p>\n</section>",
+        "css": ".bd-statement{padding:var(--space-xl) 0}\n.bd-statement h2{font-family:var(--font-family-heading);font-size:var(--size-h1);line-height:var(--line-tight);letter-spacing:-.02em;margin:0;color:var(--color-text-primary)}\n.bd-statement p{font-size:var(--size-body);line-height:var(--line-body);color:var(--color-text-secondary);margin:var(--space-md) 0 0;max-width:38rem}"
+      },
+      {
+        "name": "big-number",
+        "description": "A single figure at display size with a caption.",
+        "when_to_use": "When the section exists to land one number.",
+        "html": "<div class=\"bd-number\">\n  <span class=\"bd-number__value\">683%</span>\n  <span class=\"bd-number__caption\">Three-year return on investment, audited</span>\n</div>",
+        "css": ".bd-number{padding:var(--space-lg) 0;border-top:2px solid var(--color-brand-primary)}\n.bd-number__value{display:block;font-family:var(--font-family-heading);font-size:var(--size-h1);line-height:var(--line-tight);color:var(--color-brand-primary);font-variant-numeric:tabular-nums}\n.bd-number__caption{display:block;margin-top:var(--space-sm);font-size:var(--size-body);color:var(--color-text-secondary)}"
+      },
+      {
+        "name": "bullet-row",
+        "description": "Two to four parallel short points, side by side.",
+        "when_to_use": "The only approved list form. Never a long vertical column of bullets.",
+        "html": "<div class=\"bd-row\">\n  <div class=\"bd-row__item\"><h3>Land</h3><p>Two pilots per quarter.</p></div>\n  <div class=\"bd-row__item\"><h3>Expand</h3><p>Seat growth inside year one.</p></div>\n  <div class=\"bd-row__item\"><h3>Renew</h3><p>Multi-year by default.</p></div>\n</div>",
+        "css": ".bd-row{display:flex;flex-wrap:wrap;gap:var(--space-md);margin:var(--space-lg) 0}\n.bd-row__item{flex:1 1 14rem;min-width:0;border-top:1px solid var(--color-border-default);padding-top:var(--space-sm)}\n.bd-row__item h3{font-family:var(--font-family-heading);font-size:var(--size-h3);line-height:var(--line-tight);margin:0 0 var(--space-xs);color:var(--color-text-primary)}\n.bd-row__item p{margin:0;color:var(--color-text-secondary);font-size:var(--size-small)}"
+      },
+      {
+        "name": "source-note",
+        "description": "Small print naming the data source and period.",
+        "when_to_use": "Under every chart or table that uses numbers the board will quote.",
+        "html": "<p class=\"bd-source\">Source: finance close, 2026-09-30. Unaudited.</p>",
+        "css": ".bd-source{font-size:var(--size-small);color:var(--color-text-secondary);margin:var(--space-sm) 0 0;font-family:var(--font-family-mono)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "One chart per section, max three series, zero-based y-axis unless the caption says otherwise."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart LR, three to six nodes; anything larger goes to an appendix."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap"
+      }
+    ]
+  }
+}

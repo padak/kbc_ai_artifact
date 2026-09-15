@@ -2299,6 +2299,32 @@ def landing_page(
         ]
     )
 
+    design_systems = "".join(
+        [
+            _card(
+                "your brand, registered once",
+                "An organisation registers its design tokens (exported from "
+                "Figma), a written style guide and a library of HTML "
+                "components as a versioned design system. Every member's "
+                f'agent can list them with <code>GET {base}/api/design-systems</code>.',
+            ),
+            _card(
+                "presented by the hub",
+                "Each design system gets a live style guide at "
+                "<code>/ds/{id}</code> &mdash; palette, type, components, a "
+                "sample chart and a sample diagram &mdash; that you can send "
+                "to anyone.",
+            ),
+            _card(
+                "say it once to your agent",
+                '&ldquo;Publish this as a report in the corporate design, '
+                "version 1.&rdquo; The agent pulls the starter and publishes "
+                "on-brand HTML; the artifact remembers which design system "
+                "it used.",
+            ),
+        ]
+    )
+
     publish_term = _term(
         "POST /api/artifacts",
         '<span class="c"># Markdown — GFM tables, task lists, mermaid, '
@@ -2419,6 +2445,11 @@ that is the only credential you need.</p>
 
 <h2 class="label">what it does</h2>
 <div class="grid">{features}</div>
+
+<h2 class="label">design systems</h2>
+<div class="grid">{design_systems}</div>
+<p class="note">Read how in <a href="{base}/skill">/skill</a> &middot;
+machine manifest at <a href="{base}/context">/context</a></p>
 
 <h2 class="label">authentication</h2>
 <p>Everything under <code>/api/artifacts</code> is authenticated with headers,
@@ -3175,6 +3206,65 @@ def versions_page(
 </main>
 <script>{_CREDENTIAL_JS}</script>""",
     )
+
+
+# --------------------------------------------------------------------------
+# Design systems (/ds/{id})
+# --------------------------------------------------------------------------
+
+_DS_CSS = """
+.ds-frame{width:100%;height:78vh;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+.ds-picker a{margin-right:.6rem}.ds-picker a[aria-current]{font-weight:700;text-decoration:underline}
+.ds-machine code{display:block;margin:.2rem 0;word-break:break-all}
+"""
+
+
+def design_system_page(
+    base_url: str,
+    projection: dict,
+    version_rows: list[dict],
+    selected: int,
+    srcdoc: str,
+    hub_version: str,
+) -> str:
+    """Render the hub chrome around one design system's sandboxed style guide.
+
+    ``srcdoc`` is the fully-rendered ``style_guide_html`` output for the
+    selected version; it is user content and only ever reaches the browser
+    inside the sandboxed iframe below (no ``allow-same-origin``).
+    """
+    ds_id = projection["id"]
+    root = f"{base_url}/ds/{ds_id}"
+    picker = " ".join(
+        f'<a href="{html.escape(root, quote=True)}?v={r["version"]}"'
+        + (' aria-current="true"' if r["version"] == selected else "")
+        + f'>v{r["version"]}</a>'
+        for r in sorted(version_rows, key=lambda r: r["version"])
+    )
+    machine = "".join(
+        f"<code>{html.escape(root + suffix, quote=True)}?v={selected}</code>"
+        for suffix in ("/bundle", "/tokens", "/css", "/starter", "/guidance")
+    )
+    owner = projection.get("owner") or {}
+    body = (
+        "<main>"
+        f"<h1>{html.escape(projection['name'])}</h1>"
+        f"<p><code>{html.escape(projection['slug'])}</code> · {_badge(f'v{selected}')} · "
+        f"owned by {html.escape(str(owner.get('project_name') or ''))}"
+        + (f" · {html.escape(projection.get('description') or '')}" if projection.get("description") else "")
+        + "</p>"
+        f'<p class="ds-picker">Versions: {picker}</p>'
+        f'<iframe class="ds-frame" title="Design system style guide" '
+        f'sandbox="allow-scripts allow-popups allow-forms allow-downloads" '
+        f'srcdoc="{html.escape(srcdoc, quote=True)}"></iframe>'
+        "<h2>// machine access</h2>"
+        f'<div class="ds-machine">{machine}</div>'
+        "<p>Owners manage a design system through <code>PUT/POST /api/design-systems/{id}</code>; "
+        f'see <a href="{html.escape(base_url, quote=True)}/skill">/skill</a>.</p>'
+        f"<p><small>KBC Artifact Hub {html.escape(hub_version)}</small></p>"
+        "</main>"
+    )
+    return _page(f"{projection['name']} — design system", _DS_CSS, body)
 
 
 # --------------------------------------------------------------------------

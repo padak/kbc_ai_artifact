@@ -90,6 +90,34 @@ def _make_envelope(
     return Envelope(**defaults)
 
 
+def test_envelope_design_system_round_trip_and_default_none():
+    env = Envelope(
+        id="a",
+        version=1,
+        title="t",
+        html="<p>",
+        source_type="html",
+        source={},
+        author={
+            "stack_url": "https://x",
+            "project_id": 1,
+            "project_name": "p",
+            "key": "1@x",
+        },
+        design_system={"id": "ds_1", "slug": "corp", "version": 2},
+    )
+    back = Envelope.from_json(env.to_json())
+    assert back.design_system == {"id": "ds_1", "slug": "corp", "version": 2}
+    assert back.public_meta()["design_system"] == {
+        "id": "ds_1",
+        "slug": "corp",
+        "version": 2,
+    }
+    legacy = json.loads(env.to_json())
+    del legacy["design_system"]
+    assert Envelope.from_json(json.dumps(legacy).encode()).design_system is None
+
+
 def _seed_legacy(backend, artifact_id: str = "legacy1", owner_key: str = OWNER_A) -> int:
     """Write a raw schema-1 envelope tagged the old way and return its file id."""
     payload = {

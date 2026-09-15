@@ -121,6 +121,23 @@ risk and what an operator can do about it.
   project, list Storage files tagged `kbc-artifact` plus `artifact-id-{id}`
   and delete any whose artifact the hub does not serve.
 
+- **`REL-160-001` — the design-system disk cache is unbounded.**
+  `DesignSystemStore._read` (`src/designs.py`) writes one
+  `ds.{id}-{fileid}.json` per envelope it fetches into `HUB_CACHE_DIR`, and
+  removes it only when that version or the meta record is deleted. The
+  `cache_max_entries` bound applies to the in-memory map, not to the files on
+  disk, so a long-lived container accumulates one file per envelope it has
+  ever read. This is the same pattern `ArtifactStore` and `CommentStore`
+  already use and is deliberately not special-cased here: the container is a
+  single instance with an ephemeral disk (rule 4 above), the cache is a pure
+  LRU rebuildable from Storage, and the ceiling is bounded anyway by the
+  product of the per-envelope cap (≤ 2 MiB, `HUB_DS_MAX_BUNDLE_BYTES`), the
+  per-system version cap (≤ 50, `HUB_DS_MAX_VERSIONS`) and the per-project
+  system cap (`HUB_DS_MAX_PER_PROJECT`). Adding a disk reaper would be a new
+  moving part guarding a bound the deployment already enforces by restarting.
+  **Operator remedy:** delete `HUB_CACHE_DIR/ds.*` at any time, with the app
+  running or not — every entry is rebuilt from Storage on the next read.
+
 ## Secrets discipline
 
 - Client Storage tokens and `git_token` are **transient, request-scope only**.

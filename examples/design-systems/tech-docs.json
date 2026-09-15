@@ -1,0 +1,327 @@
+{
+  "slug": "tech-docs",
+  "name": "Technical Documentation",
+  "description": "Dense, code-first reference documentation for engineers: monospace headings, a single narrow column, callouts and parameter tables, one blue accent.",
+  "note": "Initial version: light + dark, five components, chart.js and mermaid.",
+  "bundle": {
+    "tokens": {
+      "color": {
+        "$type": "color",
+        "bg": {
+          "page": {
+            "$value": "#ffffff"
+          },
+          "card": {
+            "$value": "#f8fafc"
+          },
+          "subtle": {
+            "$value": "#eef2f7"
+          }
+        },
+        "text": {
+          "primary": {
+            "$value": "#0f172a"
+          },
+          "secondary": {
+            "$value": "#5b6b7f"
+          },
+          "inverse": {
+            "$value": "#ffffff"
+          }
+        },
+        "border": {
+          "default": {
+            "$value": "#d8e0ea"
+          }
+        },
+        "brand": {
+          "primary": {
+            "$value": "#2563eb",
+            "$description": "The single accent colour."
+          },
+          "on-primary": {
+            "$value": "#ffffff"
+          }
+        },
+        "status": {
+          "ok": {
+            "$value": "#15803d"
+          },
+          "warn": {
+            "$value": "#b45309"
+          },
+          "danger": {
+            "$value": "#b91c1c"
+          }
+        },
+        "chart": {
+          "1": {
+            "$value": "#2563eb"
+          },
+          "2": {
+            "$value": "#0891b2"
+          },
+          "3": {
+            "$value": "#7c3aed"
+          },
+          "4": {
+            "$value": "#b45309"
+          },
+          "5": {
+            "$value": "#15803d"
+          },
+          "6": {
+            "$value": "#be123c"
+          }
+        }
+      },
+      "font": {
+        "family": {
+          "$type": "fontFamily",
+          "body": {
+            "$value": [
+              "Inter",
+              "Helvetica Neue",
+              "Arial",
+              "sans-serif"
+            ]
+          },
+          "heading": {
+            "$value": [
+              "JetBrains Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          },
+          "mono": {
+            "$value": [
+              "JetBrains Mono",
+              "ui-monospace",
+              "SFMono-Regular",
+              "Menlo",
+              "monospace"
+            ]
+          }
+        },
+        "weight": {
+          "$type": "fontWeight",
+          "regular": {
+            "$value": 400
+          },
+          "medium": {
+            "$value": 500
+          },
+          "bold": {
+            "$value": 700
+          }
+        }
+      },
+      "radius": {
+        "$type": "dimension",
+        "sm": {
+          "$value": "2px"
+        },
+        "md": {
+          "$value": "4px"
+        },
+        "lg": {
+          "$value": "6px"
+        }
+      },
+      "space": {
+        "$type": "dimension",
+        "xs": {
+          "$value": "4px"
+        },
+        "sm": {
+          "$value": "8px"
+        },
+        "md": {
+          "$value": "12px"
+        },
+        "lg": {
+          "$value": "20px"
+        },
+        "xl": {
+          "$value": "32px"
+        }
+      },
+      "size": {
+        "$type": "dimension",
+        "small": {
+          "$value": "0.8125rem"
+        },
+        "body": {
+          "$value": "0.9375rem"
+        },
+        "h3": {
+          "$value": "1.0625rem"
+        },
+        "h2": {
+          "$value": "1.25rem"
+        },
+        "h1": {
+          "$value": "1.75rem"
+        }
+      },
+      "line": {
+        "$type": "number",
+        "tight": {
+          "$value": 1.3
+        },
+        "body": {
+          "$value": 1.6
+        }
+      }
+    },
+    "modes": {
+      "dark": {
+        "color": {
+          "bg": {
+            "page": {
+              "$value": "#0b1220"
+            },
+            "card": {
+              "$value": "#111a2b"
+            },
+            "subtle": {
+              "$value": "#16213a"
+            }
+          },
+          "text": {
+            "primary": {
+              "$value": "#e6edf6"
+            },
+            "secondary": {
+              "$value": "#93a4bb"
+            },
+            "inverse": {
+              "$value": "#0b1220"
+            }
+          },
+          "border": {
+            "default": {
+              "$value": "#22304a"
+            }
+          },
+          "brand": {
+            "primary": {
+              "$value": "#6ba4ff"
+            },
+            "on-primary": {
+              "$value": "#0b1220"
+            }
+          },
+          "status": {
+            "ok": {
+              "$value": "#4ade80"
+            },
+            "warn": {
+              "$value": "#fbbf24"
+            },
+            "danger": {
+              "$value": "#f87171"
+            }
+          },
+          "chart": {
+            "1": {
+              "$value": "#6ba4ff"
+            },
+            "2": {
+              "$value": "#22d3ee"
+            },
+            "3": {
+              "$value": "#a78bfa"
+            },
+            "4": {
+              "$value": "#fbbf24"
+            },
+            "5": {
+              "$value": "#4ade80"
+            },
+            "6": {
+              "$value": "#fb7185"
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "background": "{color.bg.page}",
+      "surface": "{color.bg.card}",
+      "text": "{color.text.primary}",
+      "muted": "{color.text.secondary}",
+      "border": "{color.border.default}",
+      "accent": "{color.brand.primary}",
+      "on_accent": "{color.brand.on-primary}",
+      "font_body": "{font.family.body}",
+      "font_heading": "{font.family.heading}",
+      "font_mono": "{font.family.mono}",
+      "radius": "{radius.md}",
+      "chart_palette": [
+        "{color.chart.1}",
+        "{color.chart.2}",
+        "{color.chart.3}",
+        "{color.chart.4}",
+        "{color.chart.5}",
+        "{color.chart.6}"
+      ]
+    },
+    "guidance": "# Technical Documentation\n\nA reference surface for engineers who are scanning, not reading. Density is a\nfeature: a page that fits one more paragraph above the fold saves a scroll.\n\n## Principles\n\n1. **Scannable before beautiful.** Every section must be findable from a\n   heading alone. Never bury an API name inside prose.\n2. **Code is the primary citizen.** Prose exists to explain a snippet, not the\n   other way round. If a paragraph can be replaced by a five-line example,\n   replace it.\n3. **No decoration.** No shadows, no gradients, no illustrations. Rules and\n   whitespace carry the structure.\n\n## Layout grid\n\nSingle column, `max-width: 46rem`, centred, `--space-xl` between top-level\nsections and `--space-lg` between a heading and its body. Do not add a\nsidebar or a table of contents column — the hub page is already framed.\nCode blocks and tables may break the column to `56rem` when a line would\notherwise wrap.\n\n## Typography\n\nHeadings are monospace (`--font-family-heading`, JetBrains Mono) at\n`--size-h1` / `--size-h2` / `--size-h3`; they are deliberately small — the\nmonospace texture, not the size, marks a heading. Body text is Inter at\n`--size-body` with `--line-body`. Never go above three heading levels; a\nfourth level means the page should be split.\n\n## Colour usage\n\nText is `--color-text-primary` on `--color-bg-page`. The blue accent\n(`--color-brand-primary`) is for links and a single left border on a callout\nand nothing else. Status colours mark deprecation (`danger`), beta (`warn`)\nand stable (`ok`) badges only. Never colour a heading.\n\n## Charts\n\nChart.js, bar and line only. One series per colour from the chart palette in\norder; never more than four series on one canvas. No pie, no doughnut, no\narea fills — an engineer reads exact values, so always print the numbers in a\ntable underneath the chart.\n\n## Diagrams\n\nMermaid `flowchart LR` for request paths and `sequenceDiagram` for protocols.\nKeep node labels under five words. Do not apply per-node colours; the theme\nalready matches the palette.\n\n## Components and when to use each\n\n- `callout` — a note, warning or deprecation. At most two per page; a page\n  full of callouts has no callouts.\n- `api-signature` — one endpoint or function signature above its description.\n  Always the first thing in a reference section.\n- `param-table` — parameters, fields or environment variables. Prefer it to a\n  bulleted list the moment there is more than one attribute per item.\n- `code-block` — a labelled snippet with a language tag. Use for anything a\n  reader will copy.\n- `badge` — stability marker next to a signature, never free-floating.\n\n## Do / don't\n\n- **Do** put the copy-pasteable command before the explanation of it.\n- **Do** name the exact version a behaviour changed in.\n- **Don't** use emoji, exclamation marks or second-person marketing voice.\n- **Don't** centre anything. Everything is left-aligned, including tables.\n- **Don't** introduce a colour that is not a token.\n",
+    "components": [
+      {
+        "name": "callout",
+        "description": "A note, warning or deprecation notice.",
+        "when_to_use": "At most twice per page, for information a reader would otherwise miss. Swap the modifier class for the tone.",
+        "html": "<div class=\"td-callout td-callout--note\">\n  <span class=\"td-callout__label\">Note</span>\n  <p>Tokens issued before v3 are accepted until 2027-01-01.</p>\n</div>",
+        "css": ".td-callout{border-left:3px solid var(--color-brand-primary);background:var(--color-bg-subtle);padding:var(--space-md) var(--space-lg);margin:var(--space-lg) 0}\n.td-callout__label{display:block;font-family:var(--font-family-heading);font-size:var(--size-small);font-weight:var(--font-weight-bold);text-transform:uppercase;letter-spacing:.08em;color:var(--color-brand-primary);margin-bottom:var(--space-xs)}\n.td-callout p{margin:0;line-height:var(--line-body)}\n.td-callout--warn{border-left-color:var(--color-status-warn)}\n.td-callout--warn .td-callout__label{color:var(--color-status-warn)}\n.td-callout--danger{border-left-color:var(--color-status-danger)}\n.td-callout--danger .td-callout__label{color:var(--color-status-danger)}"
+      },
+      {
+        "name": "api-signature",
+        "description": "Method, path and short summary of one endpoint.",
+        "when_to_use": "The first element of every reference section, before prose.",
+        "html": "<div class=\"td-sig\">\n  <code class=\"td-sig__method\">POST</code>\n  <code class=\"td-sig__path\">/api/design-systems/{slug}/versions</code>\n  <p class=\"td-sig__summary\">Append an immutable version to a design system.</p>\n</div>",
+        "css": ".td-sig{border:1px solid var(--color-border-default);border-radius:var(--radius-md);padding:var(--space-md) var(--space-lg);background:var(--color-bg-card);margin:var(--space-lg) 0}\n.td-sig__method{font-family:var(--font-family-mono);font-weight:var(--font-weight-bold);color:var(--color-brand-primary);margin-right:var(--space-sm)}\n.td-sig__path{font-family:var(--font-family-mono);color:var(--color-text-primary);word-break:break-all}\n.td-sig__summary{margin:var(--space-sm) 0 0;color:var(--color-text-secondary);font-size:var(--size-small)}"
+      },
+      {
+        "name": "param-table",
+        "description": "Parameters, fields or environment variables.",
+        "when_to_use": "Whenever an item has more than one attribute — always prefer it to a list.",
+        "html": "<table class=\"td-params\">\n  <thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead>\n  <tbody>\n    <tr><td><code>slug</code></td><td>string</td><td>Hub-unique, immutable.</td></tr>\n    <tr><td><code>note</code></td><td>string?</td><td>Up to 500 characters.</td></tr>\n  </tbody>\n</table>",
+        "css": ".td-params{width:100%;border-collapse:collapse;margin:var(--space-lg) 0;font-size:var(--size-small)}\n.td-params th{text-align:left;font-family:var(--font-family-heading);font-weight:var(--font-weight-bold);border-bottom:2px solid var(--color-border-default);padding:var(--space-sm) var(--space-md)}\n.td-params td{border-bottom:1px solid var(--color-border-default);padding:var(--space-sm) var(--space-md);vertical-align:top}\n.td-params code{font-family:var(--font-family-mono)}"
+      },
+      {
+        "name": "code-block",
+        "description": "A labelled, copy-pasteable snippet.",
+        "when_to_use": "Any command or example a reader will copy; always label the language.",
+        "html": "<figure class=\"td-code\">\n  <figcaption class=\"td-code__lang\">bash</figcaption>\n  <pre><code>curl -H \"X-Storage-Stack: $KBC_STACK\" \"$HUB_URL/api/design-systems\"</code></pre>\n</figure>",
+        "css": ".td-code{margin:var(--space-lg) 0;border:1px solid var(--color-border-default);border-radius:var(--radius-md);overflow:hidden;background:var(--color-bg-subtle)}\n.td-code__lang{font-family:var(--font-family-heading);font-size:var(--size-small);color:var(--color-text-secondary);padding:var(--space-xs) var(--space-md);border-bottom:1px solid var(--color-border-default)}\n.td-code pre{margin:0;padding:var(--space-md);overflow-x:auto}\n.td-code code{font-family:var(--font-family-mono);font-size:var(--size-small)}"
+      },
+      {
+        "name": "badge",
+        "description": "Stability marker: stable, beta or deprecated.",
+        "when_to_use": "Inline next to a signature or heading. Never free-floating.",
+        "html": "<span class=\"td-badge td-badge--beta\">beta</span>",
+        "css": ".td-badge{display:inline-block;font-family:var(--font-family-heading);font-size:var(--size-small);line-height:1;padding:var(--space-xs) var(--space-sm);border-radius:var(--radius-sm);border:1px solid currentColor;color:var(--color-status-ok);text-transform:lowercase}\n.td-badge--beta{color:var(--color-status-warn)}\n.td-badge--deprecated{color:var(--color-status-danger)}"
+      }
+    ],
+    "charts": {
+      "library": "chart.js",
+      "notes": "Bar and line only, at most four series, always print the underlying numbers in a table below the canvas."
+    },
+    "diagrams": {
+      "library": "mermaid",
+      "notes": "flowchart LR for request paths, sequenceDiagram for protocols; no per-node colours."
+    },
+    "fonts": [
+      {
+        "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap"
+      },
+      {
+        "href": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+      }
+    ]
+  }
+}
