@@ -762,3 +762,20 @@ def test_gallery_route_wins_over_the_ref_route(api):
     paths = [r.path for r in main.app.routes if getattr(r, "path", "") == "/ds"]
     assert paths == ["/ds"]
     assert api.client.get("/ds").status_code == 200
+
+
+def test_context_documents_the_gallery_and_the_role_variables(api):
+    body = api.client.get("/context").json()
+    paths = {(e["method"], e["path"]) for e in body["endpoints"]}
+    assert ("GET", "/ds") in paths and ("GET", "/ds?format=json") in paths
+    ds = body["design_systems"]
+    assert "/ds" in ds["gallery"]
+    prose = ds["role_variables"]
+    assert "--ds-" in prose and "variables.roles" in prose
+    assert "role_variables" in prose  # the collision rule is documented
+
+
+def test_llms_txt_names_the_public_gallery(api):
+    text = api.client.get("/llms.txt").text
+    assert "/ds)" in text or "/ds " in text
+    assert "gallery" in text.lower()

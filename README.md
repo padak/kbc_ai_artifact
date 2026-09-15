@@ -106,6 +106,11 @@ content, source, or metadata over a small JSON API.
   them and pull a ready starter document, and the hub presents each one as a
   live style guide. Artifacts record which design system version they were
   written in (`design_system`)
+- **One document, ten looks**: every design system also emits a shared
+  `--ds-*` variable layer (`--ds-background`, `--ds-accent`, `--ds-chart-1…N`,
+  …) for the roles it declares, so a document styled only with those aliases
+  re-skins by pointing at another system's `/ds/{id}/css`. `GET /ds` is the
+  public gallery of every design system on the hub
 - Markdown rendering with GFM tables, task lists, mermaid diagrams, and
   syntax-highlighted code
 - Survives restarts: the only durable state is Keboola Storage Files; local
@@ -234,17 +239,26 @@ Public (no auth):
 | GET | `/a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault (versions, comments, reasoning timeline), streamed rather than held in memory; 413 above `HUB_EXPORT_MAX_BYTES`, 429 above `HUB_MAX_EXPORTS_PER_HOUR` |
 | GET | `/changelog` / `/changelog.md` | Rendered changelog (hub's own design) / raw source |
 | GET | `/health` | Liveness check + service version + index stats |
+| GET | `/ds` | Public gallery: every design system with at least one version, newest change first, with a resolved colour strip per system — no credential |
+| GET | `/ds?format=json` | The same list as JSON (`id`, `slug`, `name`, `description`, `owner.project_name`, `head_version`, `updated_at`, `swatches`, `urls`), readable cross-origin |
 | GET | `/ds/{ref}` | A design system's style guide — palette, typography, live components, sample chart/diagram, guidance; the style guide renders inside a sandboxed iframe on a hub-chrome page |
 | GET | `/ds/{ref}/versions` | Design-system version history JSON |
-| GET | `/ds/{ref}/bundle?v=n` | The stored, normalised bundle for one version, plus `variables` (token path → CSS custom property) and `warnings` |
+| GET | `/ds/{ref}/bundle?v=n` | The stored, normalised bundle for one version, plus `variables` (token path → CSS custom property, and `variables.roles`: role → `--ds-*` alias) and `warnings` |
 | GET | `/ds/{ref}/tokens` | `{tokens, modes}` — the raw DTCG token tree |
-| GET | `/ds/{ref}/css?mode=all\|light\|dark` | Generated CSS custom properties for the requested mode |
+| GET | `/ds/{ref}/css?mode=all\|light\|dark` | Generated CSS custom properties for the requested mode, followed by the `--ds-*` role alias block |
 | GET | `/ds/{ref}/starter` | Skeleton with `{{TITLE}}`/`{{BODY}}`, every token/role/component CSS and font already in place, served with a CSP sandbox |
 | GET | `/ds/{ref}/guidance` | `text/markdown` — the brand's written rules |
 
 `{ref}` may also be the design system's slug, in which case a credential is
 required (a slug-shaped `ref` on a reader route answers 401 without one — the
 same answer whether or not the slug exists).
+
+The gallery at `GET /ds` deliberately makes every registered design system's
+name, slug, description, owner project name and head version public on this
+hub — that is what a gallery is. It lists nothing the credentialed catalogue
+would not show (and less: no owner project id, no stack host, no `mine`), and
+it does not change the slug rule above: `/ds/{slug}` reader routes still
+answer 401 without a credential.
 
 **Authorization is per project, by design.** Ownership is `(stack, project)`:
 any valid credential from the owning project carries full owner authority
@@ -1040,7 +1054,11 @@ rendered on the hub's own origin: the style guide renders inside a sandboxed
 iframe on a hub-chrome page — the page itself is the hub's origin, only the
 `srcdoc` iframe holding the content is sandboxed, without
 `allow-same-origin` — and `GET /ds/{ref}/starter`, the one route that serves
-such HTML directly, goes out through `_sandboxed_html` with a CSP sandbox. Reading a design system by its **slug** requires an
+such HTML directly, goes out through `_sandboxed_html` with a CSP sandbox.
+An **id-resolved** design-system read (and `GET /ds?format=json`) answers with
+`Access-Control-Allow-Origin: *`, so a browser page on any origin can read
+what is already public; a slug-resolved read is credentialed and carries no
+such header, and neither does any `/api/*` route. Reading a design system by its **slug** requires an
 authenticated credential, resolved before the lookup runs, so slugs cannot be
 enumerated anonymously; its `ds_…` **id** is a public capability URL exactly
 like an artifact's, and slugs are otherwise enumerable by any accepted

@@ -4834,6 +4834,24 @@ def context(request: Request) -> dict:
             },
             {
                 "method": "GET",
+                "path": "/ds",
+                "auth": "none",
+                "purpose": (
+                    "public gallery: every design system with at least one "
+                    "version, newest change first (HTML)"
+                ),
+            },
+            {
+                "method": "GET",
+                "path": "/ds?format=json",
+                "auth": "none",
+                "purpose": (
+                    "the same list as JSON, readable cross-origin; carries "
+                    "swatches and reader urls, not owner project id or stack"
+                ),
+            },
+            {
+                "method": "GET",
                 "path": "/ds/{ref}",
                 "auth": "none (id) / any token (slug)",
                 "purpose": "human-facing style guide (HTML)",
@@ -5313,6 +5331,31 @@ def context(request: Request) -> dict:
                     "CSS variable)"
                 ),
             },
+            "gallery": (
+                "GET /ds lists every design system with at least one version, "
+                "newest first, with no credential; GET /ds?format=json is the "
+                "same list for machines and is readable cross-origin. It "
+                "carries name, slug, description, owner project name, head "
+                "version, updated_at, resolved swatches and reader urls — not "
+                "the owner project id, the stack host or a `mine` flag. Agents "
+                "that hold a Keboola credential should still use GET "
+                "/api/design-systems, which reports both."
+            ),
+            "role_variables": (
+                "Every declared role is also emitted as a stable alias in "
+                "/ds/{ref}/css and in the starter: --ds-background, "
+                "--ds-surface, --ds-text, --ds-muted, --ds-border, "
+                "--ds-accent, --ds-on-accent, --ds-font-body, "
+                "--ds-font-heading, --ds-font-mono, --ds-radius, plus "
+                "--ds-chart-1..N and --ds-chart-count. Each is var(<this "
+                "system's own token variable>), so it follows the mode. A "
+                "document styled only with --ds-* re-skins by pointing at "
+                "another system's /css. The exact names are reported in "
+                "`variables.roles` of /ds/{ref}/bundle — read them, never "
+                "derive them; in the one case a token path is literally named "
+                "'roles' the token map keeps that key and the role map moves "
+                "to `variables.role_variables`."
+            ),
             "provenance": (
                 "publish/update/version bodies accept design_system: 'ref' or "
                 "'ref@n'; the hub stores {id, slug, version} on the version "
@@ -5481,6 +5524,9 @@ def llms_txt_document(base: str) -> str:
         "the organisation's design systems (`GET /api/design-systems`, Keboola "
         "credential required), picks one and publishes on-brand HTML; every "
         f"design system has a public style guide at {base}/ds/{{id}}\n"
+        f"- [Design-system gallery]({base}/ds): the public, uncredentialed "
+        "list of every design system registered here, with "
+        f"{base}/ds?format=json as its machine form\n"
         f"- [Human landing page]({base}/) and [changelog]({base}/changelog)\n"
         "\n"
         "## Optional\n"

@@ -52,3 +52,19 @@ def test_showcase_document_covers_all_sample_systems():
 
     assert "/api/design-systems" in showcase
     assert "design_system" in showcase
+
+
+def test_skill_and_agent_explain_the_role_variables_and_the_gallery():
+    """0.17.0: one document, ten looks -- and a list anyone can open."""
+    for doc in (SKILL, AGENT):
+        section = doc.split("## Design systems", 1)[1]
+        assert "--ds-" in section
+        assert "variables.roles" in section or "`roles`" in section
+        assert "/ds`" in section or "/ds " in section
+        assert "gallery" in section.lower()
+
+
+def test_readme_documents_the_gallery_and_the_role_variables():
+    assert "GET /ds" in README
+    assert "?format=json" in README
+    assert "--ds-" in README
