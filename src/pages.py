@@ -39,6 +39,8 @@ import html
 import json
 import re
 
+from src.designkit import is_safe_css_color
+
 #: Google Fonts, linked with ``display=swap``. Both families have full local
 #: fallback stacks in ``--font-*`` below, so a blocked CDN costs nothing but
 #: the exact letterforms.
@@ -2457,7 +2459,7 @@ that is the only credential you need.</p>
 
 <h2 class="label">design systems</h2>
 <div class="grid">{design_systems}</div>
-<p class="note">{design_demo_link}Read how in <a href="{base}/skill">/skill</a> &middot;
+<p class="note"><a href="{base}/ds">Browse the gallery</a> &middot; {design_demo_link}Read how in <a href="{base}/skill">/skill</a> &middot;
 machine manifest at <a href="{base}/context">/context</a></p>
 
 <h2 class="label">authentication</h2>
@@ -3215,6 +3217,119 @@ def versions_page(
 </main>
 <script>{_CREDENTIAL_JS}</script>""",
     )
+
+
+# --------------------------------------------------------------------------
+# Design systems: the public gallery (/ds)
+# --------------------------------------------------------------------------
+
+_GALLERY_CSS = """
+.gal-card h3 { margin-bottom: .35rem; }
+.gal-card h3 a { text-decoration: none; }
+.gal-meta { margin: 0 0 .5rem; font-family: var(--font-mono); font-size: .72rem;
+  letter-spacing: .04em; color: var(--muted); }
+.gal-desc { margin: 0 0 .7rem; font-size: .9rem; color: var(--ink-2); }
+.gal-strip { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0 0 .7rem; }
+.gal-strip i { display: block; width: 1.4rem; height: 1.4rem; border-radius: 4px;
+  border: 1px solid var(--line); }
+.gal-links { margin: 0; font-size: .85rem; }
+.gal-links a { margin-right: .7rem; }
+"""
+
+
+def design_systems_gallery_page(
+    base_url: str, rows: list[dict], hub_version: str
+) -> str:
+    """The public list of design systems registered on this hub.
+
+    ``rows`` is exactly what ``GET /ds?format=json`` answers with: the server
+    has already resolved every swatch to a concrete colour and dropped any
+    value that is not plainly one, so nothing here parses tokens. The strip
+    keeps the order the server built (scalar roles first, then the palette)
+    rather than repeating that list. Every value is escaped -- a name, a slug,
+    a description and a colour all come from a design system's author -- and
+    a colour is additionally re-checked before it is interpolated into an
+    inline ``style``, because that one lands on the hub's own origin.
+    """
+    base = html.escape(base_url.rstrip("/"), quote=True)
+    cards = []
+    for row in rows:
+        urls = row.get("urls") or {}
+        owner = row.get("owner") or {}
+        swatches = row.get("swatches") or {}
+        chips = []
+
+        def chip(label: str, colour: object) -> None:
+            if not is_safe_css_color(colour):
+                return
+            chips.append(
+                f'<i title="{html.escape(label, quote=True)}" '
+                f'style="background:{html.escape(str(colour), quote=True)}"></i>'
+            )
+
+        for role, colour in swatches.items():
+            if role != "chart":
+                chip(role, colour)
+        for index, colour in enumerate(swatches.get("chart") or [], start=1):
+            chip(f"chart {index}", colour)
+        meta_bits = [f"<code>{html.escape(str(row.get('slug') or ''))}</code>"]
+        if row.get("head_version") is not None:
+            meta_bits.append(_badge(f"v{row['head_version']}"))
+        if owner.get("project_name"):
+            meta_bits.append(html.escape(str(owner["project_name"])))
+        # Dates are stored as ISO-8601 UTC; the day is all a reader needs.
+        updated = str(row.get("updated_at") or "")[:10]
+        if updated:
+            meta_bits.append(f"updated {html.escape(updated)}")
+        description = (
+            f'<p class="gal-desc">{html.escape(str(row["description"]))}</p>'
+            if row.get("description")
+            else ""
+        )
+        strip = f'<div class="gal-strip">{"".join(chips)}</div>' if chips else ""
+        links = []
+        if urls.get("page"):
+            links.append(
+                f'<a href="{html.escape(str(urls["page"]), quote=True)}">style guide</a>'
+            )
+        if urls.get("bundle"):
+            links.append(
+                f'<a href="{html.escape(str(urls["bundle"]), quote=True)}">bundle</a>'
+            )
+        heading = html.escape(str(row.get("name") or row.get("slug") or ""))
+        page_url = html.escape(str(urls.get("page") or ""), quote=True)
+        cards.append(
+            '<div class="card gal-card">'
+            f'<h3><a href="{page_url}">{heading}</a></h3>'
+            f'<p class="gal-meta">{" &middot; ".join(meta_bits)}</p>'
+            f'{description}{strip}'
+            f'<p class="gal-links">{"".join(links)}</p>'
+            "</div>"
+        )
+    listing = (
+        f'<div class="grid">{"".join(cards)}</div>'
+        if cards
+        else '<p class="note">No design system is registered on this hub yet. '
+        "A project registers one with <code>POST /api/design-systems</code>.</p>"
+    )
+    body = (
+        "<main>"
+        "<h1>Design systems</h1>"
+        "<p>Every design system registered on this hub, newest change first. "
+        "Open one for its live style guide, or point a document at its "
+        "<code>/css</code> and style it with the shared "
+        "<code>--ds-*</code> variables.</p>"
+        f"{listing}"
+        "<h2 class=\"label\">// machine access</h2>"
+        f'<p><code>{base}/ds?format=json</code> answers the same list as JSON, '
+        "readable from any origin. Agents with a Keboola credential should use "
+        f'<code>{base}/api/design-systems</code>, which also reports ownership.</p>'
+        f'<p><a href="{base}/">Back to the hub</a> &middot; '
+        f'<a href="{base}/skill">/skill</a></p>'
+        f"<p><small>KBC Artifact Hub {html.escape(hub_version)}</small></p>"
+        "</main>"
+    )
+    return _page("Design systems — KBC Artifact Hub", _GALLERY_CSS, body)
 
 
 # --------------------------------------------------------------------------

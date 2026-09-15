@@ -832,6 +832,24 @@ already carries one. Otherwise publish exactly as you do today.
    `/meta` and use exactly that `id@n`. If that version no longer exists,
    tell the user — do not silently switch to the head.
 
+**Stable role variables.** Besides its own token variables (whose names differ
+from system to system), every design system's `/ds/{id}/css` and starter emit
+one `:root` block of shared aliases: `--ds-background`, `--ds-surface`,
+`--ds-text`, `--ds-muted`, `--ds-border`, `--ds-accent`, `--ds-on-accent`,
+`--ds-font-body`, `--ds-font-heading`, `--ds-font-mono`, `--ds-radius`, plus
+`--ds-chart-1` … `--ds-chart-N` and `--ds-chart-count`. Only the roles a system
+declares are emitted, each aliasing that system's own token, so the value still
+follows light/dark. `variables.roles` in `/ds/{id}/bundle` lists the exact
+names — read them there, never derive them (if a token path is literally named
+`roles`, the map moves to `variables.role_variables`). A document styled only
+with `--ds-*` re-skins to another design system by pointing at that system's
+`/ds/{other-id}/css`, with no edit to its markup.
+
+**Public gallery.** `GET $HUB/ds` is a human-facing list of every design system
+registered on the hub, needing no credential (`?format=json` for the same rows);
+agents should keep using `GET $HUB/api/design-systems`, which is the only one
+that reports ownership and `mine`.
+
 ### Register a design system
 
 Only the owning project can do this; anyone on the hub can then use it.

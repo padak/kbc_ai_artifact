@@ -53,6 +53,91 @@ _ROLE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("muted",), ".ds-muted{{color:var({muted})}}"),
 )
 
+#: A colour the hub is willing to place in an inline ``style`` attribute on
+#: its *own* origin. A token's ``$value`` is author-controlled text that
+#: ``src.tokens._color`` passes through verbatim, and escaping only stops the
+#: attribute from being closed -- ``;``, ``:``, ``(`` and ``)`` all survive it,
+#: so an unvalidated value could append declarations of its own. Three
+#: notations are allowed and nothing else: hex (3, 6 or 8 digits), an
+#: ``rgb()``/``rgba()`` function in either the comma or the space/slash form
+#: ``src.tokens`` itself emits, and a bare CSS keyword.
+SAFE_CSS_COLOR_RE = re.compile(
+    r"^(?:"
+    r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?(?:[0-9a-fA-F]{2})?"
+    r"|rgba?\(\s*\d{1,3}(?:\s*,\s*|\s+)\d{1,3}(?:\s*,\s*|\s+)\d{1,3}"
+    r"(?:\s*(?:,|/)\s*(?:0|1|0?\.\d+))?\s*\)"
+    r"|[a-zA-Z]{3,20}"
+    r")$"
+)
+
+
+def is_safe_css_color(value: object) -> bool:
+    """Whether ``value`` may be interpolated into an inline ``style``.
+
+    Deliberately narrow: a value that is a real colour in some broader sense
+    but does not match is simply not shown, which costs a swatch. A value that
+    is not a colour at all must never reach the hub's own origin.
+    """
+    return isinstance(value, str) and bool(SAFE_CSS_COLOR_RE.match(value))
+
+
+#: The one role whose value is a list rather than a single alias, and whose
+#: variables are therefore numbered (``--ds-chart-1`` …) rather than named.
+PALETTE_ROLE = "chart_palette"
+#: The stable prefix every role alias carries. Token variable names differ
+#: from system to system (``--color-bg`` here, ``--color-page`` there); these
+#: do not, which is what lets one document be re-skinned by pointing at
+#: another system's ``/ds/{id}/css``.
+ROLE_VAR_PREFIX = "--ds-"
+
+
+def role_variable_names(bundle: dict) -> dict[str, str]:
+    """Map each declared role to the stable ``--ds-*`` variable it is aliased to.
+
+    Scalar roles keep their own name with ``_`` turned into ``-``
+    (``font_body`` -> ``--ds-font-body``). ``chart_palette`` expands to one
+    numbered entry per colour (``chart_palette_1`` -> ``--ds-chart-1``) plus
+    ``chart_palette_count`` -> ``--ds-chart-count``, so a template can read
+    how many there are without counting. Roles the bundle does not declare
+    are absent: nothing here is invented.
+    """
+    names: dict[str, str] = {}
+    for role, ref in (bundle.get("roles") or {}).items():
+        if role == PALETTE_ROLE or isinstance(ref, list):
+            entries = ref if isinstance(ref, list) else []
+            for index in range(1, len(entries) + 1):
+                names[f"{role}_{index}"] = f"{ROLE_VAR_PREFIX}chart-{index}"
+            if entries:
+                names[f"{role}_count"] = f"{ROLE_VAR_PREFIX}chart-count"
+        else:
+            names[role] = ROLE_VAR_PREFIX + role.replace("_", "-")
+    return names
+
+
+def role_css_vars(bundle: dict, base: TokenSet) -> str:
+    """One ``:root`` block aliasing every declared role to its token variable.
+
+    Each alias is ``var(<target>)`` rather than a concrete value, so it keeps
+    following the mode: when the dark block redefines ``--color-bg``,
+    ``--ds-background`` follows without a second alias block. Returns ``""``
+    when the bundle declares no roles, so no empty rule is emitted.
+    """
+    roles = bundle.get("roles") or {}
+    pairs: list[str] = []
+    for role, ref in roles.items():
+        if role == PALETTE_ROLE or isinstance(ref, list):
+            entries = ref if isinstance(ref, list) else []
+            for index, item in enumerate(entries, start=1):
+                pairs.append(f"{ROLE_VAR_PREFIX}chart-{index}:var({_var(base, item)})")
+            if entries:
+                pairs.append(f"{ROLE_VAR_PREFIX}chart-count:{len(entries)}")
+        else:
+            name = ROLE_VAR_PREFIX + role.replace("_", "-")
+            pairs.append(f"{name}:var({_var(base, ref)})")
+    if not pairs:
+        return ""
+    return ":root{" + ";".join(pairs) + "}"
+
 
 def _var(ts: TokenSet, alias: str) -> str:
     return variable_name(alias_target(alias))
@@ -69,11 +154,19 @@ def role_values(bundle: dict, ts: TokenSet) -> dict[str, str | list[str]]:
 
 
 def _role_css(bundle: dict, base: TokenSet) -> str:
+    """The starter's own role rules, written against the ``--ds-*`` aliases.
+
+    They deliberately do *not* name this system's token variables: a document
+    built from this starter re-skins by swapping in another system's CSS,
+    which only works while every rule goes through the stable alias layer
+    :func:`role_css_vars` defines.
+    """
     roles = bundle.get("roles") or {}
+    names = role_variable_names(bundle)
     rules = []
     for needed, template in _ROLE_RULES:
         if all(r in roles for r in needed):
-            rules.append(template.format(**{r: _var(base, roles[r]) for r in needed}))
+            rules.append(template.format(**{r: names[r] for r in needed}))
     return "\n".join(rules)
 
 
@@ -158,10 +251,12 @@ def _mermaid_script(bundle: dict, base: TokenSet, dark: TokenSet | None, url: st
 
 def starter_html(bundle: dict, base: TokenSet, dark: TokenSet | None, *, chartjs_url: str, mermaid_url: str) -> str:
     tokens_css = to_css(base, dark, mode="all")
+    alias_css = role_css_vars(bundle, base)
     role_css = _role_css(bundle, base)
     _refuse_style_breakout(tokens_css, where="tokens css")
+    _refuse_style_breakout(alias_css, where="role variables css")
     _refuse_style_breakout(role_css, where="role css")
-    css_parts = [tokens_css, role_css]
+    css_parts = [tokens_css, alias_css, role_css]
     for component in bundle.get("components") or []:
         comp_css = component.get("css")
         if not comp_css:

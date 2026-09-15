@@ -4,6 +4,34 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.17.0 — One document, ten looks (2026-09-15)
+
+- Every design system now emits a second, **shared** set of CSS variables
+  beside its own: `--ds-background`, `--ds-surface`, `--ds-text`,
+  `--ds-muted`, `--ds-border`, `--ds-accent`, `--ds-on-accent`,
+  `--ds-font-body`, `--ds-font-heading`, `--ds-font-mono`, `--ds-radius`, and
+  `--ds-chart-1` … `--ds-chart-N` with `--ds-chart-count`. Until now a
+  document written against one design system could not be shown in another,
+  because each one names its own tokens — `--color-bg` here, `--color-page`
+  there. A document styled only with the `--ds-*` names re-skins by pointing
+  at another system's `/ds/{id}/css`, with no edit to its markup. Only the
+  roles a system actually declares are emitted, each one aliasing that
+  system's own token, so light and dark still follow by themselves.
+- `GET /ds/{id}/bundle` reports the exact names in `variables.roles`, so an
+  agent reads them instead of guessing. The starter's own rules now go
+  through the same aliases.
+- **A gallery anyone can open.** `GET /ds` lists every design system
+  registered on the hub — name, slug, description, owning project, head
+  version, when it last changed, and a strip of its resolved colours —
+  without a credential. `GET /ds?format=json` is the same list for machines.
+  The catalogue API is unchanged and still credentialed: it remains the only
+  view that says who owns what.
+- Reads addressed by a design system's public `ds_…` id are now readable from
+  a browser page on any origin. The id already *is* the capability and the
+  answer was already public; the missing header only stopped a page from
+  fetching it. Reads by slug are credentialed and stay same-origin, as does
+  everything under `/api/`.
+
 ## 0.16.1 — The landing page keeps its demo and gains a second one (2026-09-15)
 
 - The design-systems card on the landing page quoted the hub's full URL inside

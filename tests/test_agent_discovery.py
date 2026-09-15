@@ -222,6 +222,11 @@ def test_landing_page_mentions_design_systems(api: Api) -> None:
     assert "/skill" in page
 
 
+def test_landing_page_links_the_public_gallery(api: Api) -> None:
+    page = api.client.get("/").text
+    assert '<a href="https://testserver/ds">Browse the gallery</a>' in page
+
+
 def test_landing_page_design_systems_card_keeps_paths_short_and_links_the_demo(api, monkeypatch):
     """The card quotes the route, never the absolute URL (it overflowed the card),
     and the design-systems walkthrough gets its own link when configured."""

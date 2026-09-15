@@ -372,6 +372,8 @@ def test_context_lists_all_endpoints_and_stack_aliases(api: Api) -> None:
         ("POST", "/api/design-systems/{ref}/versions"),
         ("DELETE", "/api/design-systems/{ref}/versions/{n}"),
         ("DELETE", "/api/design-systems/{ref}"),
+        ("GET", "/ds"),
+        ("GET", "/ds?format=json"),
         ("GET", "/ds/{ref}"),
         ("GET", "/ds/{ref}/versions"),
         ("GET", "/ds/{ref}/bundle"),

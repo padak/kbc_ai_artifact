@@ -604,3 +604,281 @@ def test_stored_bundle_that_no_longer_renders_is_502_not_500(api, monkeypatch):
     assert page.status_code == 502, page.text
     assert page.json()["error"] == "stored design system cannot be rendered"
     main._DS_DERIVED.clear()
+
+
+# --------------------------------------------------------------------------
+# 0.17.0: role variables and CORS on public reads
+# --------------------------------------------------------------------------
+
+CORS_ORIGIN = "access-control-allow-origin"
+CORS_EXPOSE = "access-control-expose-headers"
+
+
+def test_id_resolved_reads_are_readable_cross_origin(api):
+    """An id is a public capability, so a page on any origin may fetch it."""
+    ds_id = _register(api.client).json()["id"]
+    for suffix in ("/versions", "/bundle", "/tokens", "/css", "/starter", "/guidance"):
+        r = api.client.get(f"/ds/{ds_id}{suffix}")
+        assert r.status_code == 200, suffix
+        assert r.headers[CORS_ORIGIN] == "*", suffix
+        assert r.headers[CORS_EXPOSE] == "X-Hub-Version", suffix
+
+
+def test_slug_resolved_reads_are_not_readable_cross_origin(api):
+    """A slug read is credentialed; a credentialed answer is never shared."""
+    _register(api.client)
+    r = api.client.get("/ds/corp/bundle", headers=AUTH_HEADERS)
+    assert r.status_code == 200
+    assert CORS_ORIGIN not in r.headers and CORS_EXPOSE not in r.headers
+    assert r.headers["Cache-Control"] == "private, no-store"
+
+
+def test_api_routes_are_not_readable_cross_origin(api):
+    _register(api.client)
+    for path in ("/api/design-systems", "/api/design-systems/corp"):
+        r = api.client.get(path, headers=AUTH_HEADERS)
+        assert r.status_code == 200, path
+        assert CORS_ORIGIN not in r.headers, path
+
+
+def test_css_carries_the_role_alias_block_in_every_mode(api):
+    ds_id = _register(api.client).json()["id"]
+    for mode in ("all", "light", "dark"):
+        css = api.client.get(f"/ds/{ds_id}/css?mode={mode}").text
+        assert "--ds-background:var(--color-bg)" in css, mode
+        assert "--ds-chart-1:var(--color-c1)" in css, mode
+        assert "--ds-chart-count:2" in css, mode
+
+
+def test_bundle_reports_the_role_variable_map(api):
+    ds_id = _register(api.client).json()["id"]
+    body = api.client.get(f"/ds/{ds_id}/bundle").json()
+    roles = body["variables"]["roles"]
+    assert roles["background"] == "--ds-background"
+    assert roles["font_body"] == "--ds-font-body"
+    assert roles["chart_palette_2"] == "--ds-chart-2"
+    assert roles["chart_palette_count"] == "--ds-chart-count"
+    # the token map itself is untouched
+    assert body["variables"]["color.bg"] == "--color-bg"
+
+
+def test_role_map_moves_aside_for_a_token_literally_named_roles(api):
+    """A token path 'roles' would collide with the sub-map's key.
+
+    The token map wins — it is the older contract — and the role map moves to
+    'role_variables'. Documented in /context so an agent reads the right key.
+    """
+    bundle = good_bundle()
+    bundle["tokens"]["roles"] = {"$type": "color", "$value": "#123456"}
+    ds_id = _register(api.client, bundle=bundle).json()["id"]
+    body = api.client.get(f"/ds/{ds_id}/bundle").json()
+    assert body["variables"]["roles"] == "--roles"
+    assert body["variables"]["role_variables"]["background"] == "--ds-background"
+
+
+# --------------------------------------------------------------------------
+# 0.17.0: the public gallery
+# --------------------------------------------------------------------------
+
+
+def test_gallery_json_lists_registered_systems_in_the_public_shape(api):
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get("/ds?format=json")
+    assert r.status_code == 200
+    assert r.headers[CORS_ORIGIN] == "*"
+    assert r.headers[CORS_EXPOSE] == "X-Hub-Version"
+    assert r.headers["Cache-Control"] == "no-cache"
+    rows = r.json()["design_systems"]
+    assert [x["id"] for x in rows] == [ds_id]
+    row = rows[0]
+    assert set(row) == {
+        "id", "slug", "name", "description", "owner", "head_version",
+        "updated_at", "swatches", "urls",
+    }
+    assert row["slug"] == "corp" and row["name"] == "Corp"
+    assert row["head_version"] == 1 and row["updated_at"]
+    # the public shape carries no project id and no stack host
+    assert set(row["owner"]) == {"project_name"}
+    assert set(row["urls"]) == {"page", "bundle", "css", "starter"}
+    assert row["urls"]["css"].endswith(f"/ds/{ds_id}/css?v=1")
+    assert row["swatches"]["background"] == "#ffffff"
+    assert row["swatches"]["text"] == "#111111"
+    assert row["swatches"]["accent"] == "#1442e0"
+    assert row["swatches"]["chart"] == ["#ff0000", "#00ff00"]
+
+
+def test_gallery_json_swatch_palette_is_capped(api):
+    from src import main
+
+    _register(api.client)
+    assert main.settings.ds_gallery_swatches >= 1
+    rows = api.client.get("/ds?format=json").json()["design_systems"]
+    assert len(rows[0]["swatches"]["chart"]) <= main.settings.ds_gallery_swatches
+
+
+def test_gallery_skips_a_meta_only_record_and_needs_no_credential(api):
+    """Only systems with at least one version are listed."""
+    ds_id = _register(api.client).json()["id"]
+    second = _register(api.client, slug="other").json()["id"]
+    api.client.delete(f"/api/design-systems/{second}", headers=AUTH_HEADERS)
+    rows = api.client.get("/ds?format=json").json()["design_systems"]
+    assert [x["id"] for x in rows] == [ds_id]
+
+
+def test_gallery_page_is_hub_chrome_listing_every_system(api):
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get("/ds")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    page = r.text
+    assert f'href="https://testserver/ds/{ds_id}"' in page
+    assert "Corp" in page and "corp" in page and "Brand" in page
+    assert "background:#1442e0" in page and 'title="accent"' in page
+    assert f'href="https://testserver/ds/{ds_id}/bundle?v=1"' in page
+    assert "KBC Artifact Hub" in page
+
+
+def test_gallery_page_has_an_empty_state(api):
+    page = api.client.get("/ds").text
+    assert "No design system" in page
+
+
+def test_gallery_answers_503_while_the_index_is_unhydrated(api):
+    from src import main
+
+    designs = main.app.state.designs
+    designs.hydrated = False
+    try:
+        assert api.client.get("/ds").status_code == 503
+        assert api.client.get("/ds?format=json").status_code == 503
+    finally:
+        designs.hydrated = True
+
+
+def test_gallery_route_wins_over_the_ref_route(api):
+    """`/ds` is the gallery, never a design system whose id is 'ds'."""
+    from src import main
+
+    paths = [r.path for r in main.app.routes if getattr(r, "path", "") == "/ds"]
+    assert paths == ["/ds"]
+    assert api.client.get("/ds").status_code == 200
+
+
+def test_context_documents_the_gallery_and_the_role_variables(api):
+    body = api.client.get("/context").json()
+    paths = {(e["method"], e["path"]) for e in body["endpoints"]}
+    assert ("GET", "/ds") in paths and ("GET", "/ds?format=json") in paths
+    ds = body["design_systems"]
+    assert "/ds" in ds["gallery"]
+    prose = ds["role_variables"]
+    assert "--ds-" in prose and "variables.roles" in prose
+    assert "role_variables" in prose  # the collision rule is documented
+
+
+def test_llms_txt_names_the_public_gallery(api):
+    text = api.client.get("/llms.txt").text
+    assert "/ds)" in text or "/ds " in text
+    assert "gallery" in text.lower()
+
+
+# --------------------------------------------------------------------------
+# Fix round 1: colour validation, X-Hub-Version, bounded gallery
+# --------------------------------------------------------------------------
+
+
+def _bundle_with_background(colour):
+    bundle = good_bundle()
+    bundle["tokens"]["color"] = dict(bundle["tokens"]["color"])
+    bundle["tokens"]["color"]["bg"] = {"$value": colour}
+    return bundle
+
+
+def test_gallery_drops_a_swatch_that_is_not_a_plain_colour(api):
+    """A token value is author-controlled text; the strip is on the hub origin.
+
+    html.escape stops attribute breakout, but ';' ':' '(' ')' survive it, so
+    an unvalidated value could add declarations of its own to the inline
+    style. The value is dropped server-side, so the JSON the demo consumes is
+    clean too -- and the card still renders, just without that chip.
+    """
+    # src.tokens already refuses ';', '}' and '<' at submit time, so the
+    # reachable value is one that needs none of them: a url() makes the hub's
+    # own gallery fetch a remote resource for every anonymous visitor.
+    injection = "url(https://attacker.example/pixel)"
+    registered = _register(api.client, bundle=_bundle_with_background(injection))
+    assert registered.status_code == 201, registered.text
+    ds_id = registered.json()["id"]
+    row = api.client.get("/ds?format=json").json()["design_systems"][0]
+    assert "background" not in row["swatches"]
+    # the other roles are untouched
+    assert row["swatches"]["accent"] == "#1442e0"
+    page = api.client.get("/ds").text
+    assert "attacker.example" not in page
+    assert f'href="https://testserver/ds/{ds_id}"' in page
+
+
+def test_gallery_keeps_a_functional_colour_notation(api):
+    _register(api.client, bundle=_bundle_with_background("rgb(18 52 86 / 0.5)"))
+    row = api.client.get("/ds?format=json").json()["design_systems"][0]
+    assert row["swatches"]["background"] == "rgb(18 52 86 / 0.5)"
+
+
+def test_public_reads_send_the_version_they_expose(api):
+    """Exposing X-Hub-Version is only useful if it is actually sent."""
+    from src import main
+
+    ds_id = _register(api.client).json()["id"]
+    for suffix in ("/versions", "/bundle", "/tokens", "/css", "/starter", "/guidance"):
+        r = api.client.get(f"/ds/{ds_id}{suffix}")
+        assert r.headers["X-Hub-Version"] == main.SERVICE_VERSION, suffix
+        assert r.headers[CORS_EXPOSE] == "X-Hub-Version", suffix
+    gallery = api.client.get("/ds?format=json")
+    assert gallery.headers["X-Hub-Version"] == main.SERVICE_VERSION
+
+
+def test_the_style_guide_page_is_not_a_cross_origin_read(api):
+    """CORS is for machine reads; the HTML page has no cross-origin consumer."""
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get(f"/ds/{ds_id}")
+    assert r.status_code == 200
+    assert CORS_ORIGIN not in r.headers and CORS_EXPOSE not in r.headers
+
+
+def test_gallery_is_bounded_and_says_when_it_truncated(api, monkeypatch):
+    from src import main
+
+    def cap(n):
+        monkeypatch.setattr(
+            main, "settings", dataclasses.replace(main.settings, ds_gallery_max_rows=n)
+        )
+
+    cap(2)
+    for slug in ("one", "two", "three"):
+        assert _register(api.client, slug=slug).status_code == 201
+    body = api.client.get("/ds?format=json").json()
+    assert len(body["design_systems"]) == 2
+    assert body["truncated"] is True
+
+    cap(50)
+    body = api.client.get("/ds?format=json").json()
+    assert len(body["design_systems"]) == 3
+    assert body["truncated"] is False
+
+
+def test_gallery_page_is_kept_out_of_search_indexes(api):
+    assert api.client.get("/ds").headers["X-Robots-Tag"] == "noindex, nofollow"
+
+
+def test_gallery_refuses_a_format_it_does_not_serve(api):
+    assert api.client.get("/ds?format=xml").status_code == 422
+    assert api.client.get("/ds?format=").status_code == 200
+    assert api.client.get("/ds").status_code == 200
+    assert api.client.get("/ds?format=json").status_code == 200
+
+
+def test_context_publishes_the_gallery_limits(api):
+    from src import main
+
+    limits = api.client.get("/context").json()["limits"]
+    assert limits["ds_gallery_swatches"] == main.settings.ds_gallery_swatches
+    assert limits["ds_gallery_max_rows"] == main.settings.ds_gallery_max_rows
