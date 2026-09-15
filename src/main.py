@@ -4815,7 +4815,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/api/design-systems",
-                "auth": "any token",
+                "auth": "none (a token additionally reports 'mine')",
                 "purpose": (
                     "catalogue of every design system on this hub; 'mine' "
                     "marks the caller's own"
@@ -4830,7 +4830,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/api/design-systems/{ref}",
-                "auth": "any token",
+                "auth": "none (a token additionally reports 'mine')",
                 "purpose": "one design system with its version list",
             },
             {
@@ -4885,19 +4885,19 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "human-facing style guide (HTML)",
             },
             {
                 "method": "GET",
                 "path": "/ds/{ref}/versions",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "version history of one design system",
             },
             {
                 "method": "GET",
                 "path": "/ds/{ref}/bundle",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": (
                     "the whole bundle of one version plus 'variables' (token "
                     "path -> CSS variable)"
@@ -4906,13 +4906,13 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}/tokens",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "the raw DTCG token document and its mode overrides",
             },
             {
                 "method": "GET",
                 "path": "/ds/{ref}/css",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": (
                     "tokens compiled to CSS custom properties; "
                     "?mode=all|light|dark"
@@ -4921,7 +4921,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}/starter",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": (
                     "HTML skeleton to fill: replace {{TITLE}} and {{BODY}}"
                 ),
@@ -4929,7 +4929,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}/guidance",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "the design system's guidance, as Markdown",
             },
         ],
@@ -5344,8 +5344,8 @@ def context(request: Request) -> dict:
                 "id_prefix": "ds_",
                 "id": "public capability, like /a/{id}",
                 "slug": (
-                    "^[a-z0-9][a-z0-9-]{1,39}$, readable only with a "
-                    "credential; authenticated before lookup"
+                    "^[a-z0-9][a-z0-9-]{1,39}$, public since 0.20.0 and read "
+                    "exactly like an id"
                 ),
             },
             "bundle_fields": [
@@ -5367,6 +5367,17 @@ def context(request: Request) -> dict:
                 "colors": "sRGB only in this release",
                 "modes": "dark only; base is light",
             },
+            "access": (
+                "Reading is public: GET /api/design-systems, GET "
+                "/api/design-systems/{ref} and every /ds/{ref} reader route "
+                "answer without a credential, by id or by slug alike. A "
+                "credential is still read when offered — it is the only thing "
+                "that can report `mine`, and it makes the answer private "
+                "(Cache-Control: private, no-store instead of no-cache, and "
+                "no CORS header). Writing stays the owner's: only the owning "
+                "project may add a version, change name/description or "
+                "delete. Anyone may fork."
+            ),
             "roles": ROLE_TYPES,
             "derived": {
                 "css": "/ds/{ref}/css?mode=all|light|dark",
@@ -10832,6 +10843,20 @@ def _private(response: JSONResponse) -> JSONResponse:
     return response
 
 
+def _cacheability(caller: Owner | None, response: JSONResponse) -> JSONResponse:
+    """Mark a catalogue answer by whether a credential shaped it.
+
+    A credentialed answer carries ``mine``, which is different for every
+    caller, so no shared cache may keep it. An anonymous answer is the same
+    for everybody and only needs revalidating. The rule is about the
+    credential, never about how the reference was spelled.
+    """
+    if caller is not None:
+        return _private(response)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 async def _json_object_body(request: Request) -> dict[str, Any]:
     """The request body as a JSON object.
 
@@ -10867,15 +10892,20 @@ def _ds_require_hydrated(designs: DesignSystemStore) -> None:
 
 
 @app.get("/api/design-systems", tags=["design systems"])
-def list_design_systems(
-    request: Request, auth: tuple[Owner, str] = Depends(require_owner)
-) -> JSONResponse:
-    """The organisation's whole catalogue; ``mine`` marks the caller's own."""
+def list_design_systems(request: Request) -> JSONResponse:
+    """The organisation's whole catalogue; ``mine`` marks the caller's own.
+
+    Public since 0.20.0. ``GET /ds`` already publishes every name, slug and
+    description, so requiring a credential here protected nothing and only
+    made the machine-readable list harder to reach than the human one. A
+    credential is still *read* when one is offered: it is the only thing that
+    can answer ``mine``.
+    """
     ensure_hydrated(request.app)
-    caller, _ = auth
+    caller = caller_of(request)
     designs: DesignSystemStore = request.app.state.designs
     rows = [_ds_projection(request, m, caller) for m in designs.list_all()]
-    return _private(JSONResponse({"design_systems": rows}))
+    return _cacheability(caller, JSONResponse({"design_systems": rows}))
 
 
 @app.post("/api/design-systems", status_code=201, tags=["design systems"])
@@ -10977,22 +11007,23 @@ def create_design_system(
 
 @app.get("/api/design-systems/{ref}", tags=["design systems"])
 def read_design_system(
-    request: Request,
-    ref: str = PathParam(..., description=DS_REF_DESC),
-    auth: tuple[Owner, str] = Depends(require_owner),
+    request: Request, ref: str = PathParam(..., description=DS_REF_DESC)
 ) -> JSONResponse:
-    """One design system with its version list."""
+    """One design system with its version list. Public since 0.20.0."""
     ensure_hydrated(request.app)
-    caller, _ = auth
+    caller = caller_of(request)
     meta = _ds_resolve_for_management(request, ref)
     designs: DesignSystemStore = request.app.state.designs
-    if designs.head_version(meta.id) is None and meta.owner_key != caller.key:
+    if designs.head_version(meta.id) is None and (
+        caller is None or meta.owner_key != caller.key
+    ):
         # A meta-only record is a registration in flight: inert to everybody
         # but its owner, who still needs to see and delete it.
         raise HTTPException(status_code=404, detail="no such design system")
     rows = [v.public_row() for v in designs.list_versions(meta.id)]
-    return _private(
-        JSONResponse({**_ds_projection(request, meta, caller), "versions": rows})
+    return _cacheability(
+        caller,
+        JSONResponse({**_ds_projection(request, meta, caller), "versions": rows}),
     )
 
 
@@ -11252,30 +11283,21 @@ def _ds_reader(
 ) -> tuple[DesignSystemMeta, DesignSystemVersion]:
     """Resolve a reader reference to (meta, version), or raise.
 
-    An id is a public capability, exactly like ``/a/{id}``. A slug is not: it
-    is guessable, so reading by slug requires a Keboola credential — and the
-    credential is checked *before* the lookup, so an unauthenticated caller
-    gets the same 401 whether or not the slug exists.
+    An id is a public capability, exactly like ``/a/{id}``. Since 0.20.0 a
+    slug is readable too: ``GET /ds`` lists every slug on this hub, so the
+    credential that used to be required before the lookup was guarding an
+    existence oracle that no longer exists. Both spellings now answer the same
+    way, and only the *credential* — not the spelling — decides whether the
+    answer is private (see :func:`_ds_response`).
     """
     ensure_hydrated(request.app)
     designs: DesignSystemStore = request.app.state.designs
-    if not DesignSystemStore.is_id_shaped(ref):
-        if not SLUG_RE.match(ref):
-            raise HTTPException(status_code=404, detail="no such design system")
-        if caller_of(request) is None:
-            raise HTTPException(
-                status_code=401,
-                detail=(
-                    "a Keboola credential is required to read a design system "
-                    "by name"
-                ),
-            )
+    if not DesignSystemStore.is_id_shaped(ref) and not SLUG_RE.match(ref):
+        raise HTTPException(status_code=404, detail="no such design system")
+    # A credential is optional here, but when one is offered the answer was
+    # computed with it, so it must not land in a shared cache.
+    if caller_of(request) is not None:
         request.state.ds_private = True
-    # After the slug branch on purpose: answering 503 before the credential
-    # check would turn the hydration state into an oracle for slug existence.
-    # An unhydrated index cannot tell "no such design system" from "not loaded
-    # yet", and answering 404 for a system that does exist is a lie a reader
-    # (or an agent following a link) would cache.
     if not designs.hydrated:
         raise HTTPException(
             status_code=503,
@@ -11292,17 +11314,17 @@ def _ds_reader(
 
 
 def _ds_response(request: Request, response: Response, *, cors: bool = True) -> Response:
-    """Mark a design-system read according to how it was resolved.
+    """Mark a design-system read according to how it was *authenticated*.
 
-    A slug-resolved read was credentialed, so no shared cache may keep it —
-    and it is never readable cross-origin either, or a page on any origin
-    could spend the reader's credential for its own content.
+    A credentialed read is private: no shared cache may keep it, and it is
+    never readable cross-origin either, or a page on any origin could spend
+    the reader's credential for its own content.
 
-    An id-resolved *machine* read is the opposite: the id **is** the
-    capability, the answer is already public, and a browser page on another
-    origin (the switcher demo above all) must be able to read it. Only a `GET`
-    with no custom headers reaches here, which is a CORS simple request — so
-    no preflight handling is needed, just the headers below.
+    An anonymous *machine* read is the opposite: the answer is public whether
+    it was reached by id or by slug, and a browser page on another origin (the
+    switcher demo above all) must be able to read it. Only a `GET` with no
+    custom headers reaches here, which is a CORS simple request — so no
+    preflight handling is needed, just the headers below.
 
     ``cors=False`` is for the HTML style-guide page: nothing fetches it
     cross-origin, and a header that grants an ability nobody uses is one more

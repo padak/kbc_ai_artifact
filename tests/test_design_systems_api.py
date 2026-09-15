@@ -141,12 +141,11 @@ def test_catalogue_lists_everyone_and_marks_mine(api):
         "design_systems"
     ]
     assert {r["slug"]: r["mine"] for r in rows} == {"mine": True, "theirs": False}
-    assert (
-        api.client.get(
-            "/api/design-systems", headers={"X-Kbc-Stack": "us"}
-        ).status_code
-        == 401
-    )
+    # An unusable credential is not an error on a public read: it is simply
+    # no identity, so the catalogue answers with mine: False throughout.
+    anon = api.client.get("/api/design-systems", headers={"X-Kbc-Stack": "us"})
+    assert anon.status_code == 200
+    assert {r["mine"] for r in anon.json()["design_systems"]} == {False}
     r = api.client.get("/api/design-systems", headers=AUTH_HEADERS)
     assert r.headers["Cache-Control"] == "private, no-store"
 
@@ -285,13 +284,13 @@ def test_create_is_502_when_not_hydrated(api):
 # --------------------------------------------------------------------------
 
 
-def test_id_is_public_slug_needs_credential_and_never_leaks_existence(api):
+def test_an_id_and_a_slug_read_the_same_way(api):
+    """0.20.0: both spellings are public; only a credential makes an answer private."""
     ds_id = _register(api.client).json()["id"]
     assert api.client.get(f"/ds/{ds_id}/bundle").status_code == 200
-    assert api.client.get("/ds/corp/bundle").status_code == 401
-    # identical answer for a slug that does not exist
-    assert api.client.get("/ds/does-not-exist/bundle").status_code == 401
-    assert api.client.get("/ds/corp/bundle", headers=AUTH_HEADERS).status_code == 200
+    assert api.client.get("/ds/corp/bundle").status_code == 200
+    # An unknown ref is 404 either way, credential or not.
+    assert api.client.get("/ds/does-not-exist/bundle").status_code == 404
     assert (
         api.client.get("/ds/does-not-exist/bundle", headers=AUTH_HEADERS).status_code
         == 404
@@ -556,10 +555,10 @@ def test_concurrent_creation_cannot_exceed_the_per_project_cap(api, monkeypatch)
     assert api.client.app.state.designs.count_owner(owner_key) == 1
 
 
-def test_css_authenticates_a_slug_before_validating_mode(api):
+def test_css_validates_the_mode_of_a_slug_read(api):
     _register(api.client)
-    # A slug ref is 401 without a credential whatever the query says.
-    assert api.client.get("/ds/corp/css?mode=sepia").status_code == 401
+    # No credential needed any more; the bad mode is what answers.
+    assert api.client.get("/ds/corp/css?mode=sepia").status_code == 422
     assert (
         api.client.get("/ds/corp/css?mode=sepia", headers=AUTH_HEADERS).status_code
         == 422
@@ -569,8 +568,8 @@ def test_css_authenticates_a_slug_before_validating_mode(api):
 def test_reader_is_503_while_the_index_is_unhydrated(api):
     """A reader must not report 404 for a design system it simply cannot see.
 
-    The check sits *after* the slug/credential branch, so an unhydrated index
-    can never be used as an oracle for whether a slug exists.
+    404 would be a lie a reader (or an agent following a link) would cache,
+    so an unhydrated index answers 503 for every reference it cannot resolve.
     """
     ds_id = _register(api.client).json()["id"]
     designs = api.client.app.state.designs
@@ -579,8 +578,8 @@ def test_reader_is_503_while_the_index_is_unhydrated(api):
         r = api.client.get(f"/ds/{ds_id}/bundle")
         assert r.status_code == 503, r.text
         assert "retry" in r.json()["detail"]
-        # Still 401 before the lookup: no hydration oracle for a slug.
-        assert api.client.get("/ds/corp/bundle").status_code == 401
+        # A slug is no different: 503, never a 404 that would be wrong.
+        assert api.client.get("/ds/corp/bundle").status_code == 503
         # Hydration state is reported by /health, it is not a failure there.
         assert api.client.get("/health").status_code == 200
     finally:
@@ -624,8 +623,8 @@ def test_id_resolved_reads_are_readable_cross_origin(api):
         assert r.headers[CORS_EXPOSE] == "X-Hub-Version", suffix
 
 
-def test_slug_resolved_reads_are_not_readable_cross_origin(api):
-    """A slug read is credentialed; a credentialed answer is never shared."""
+def test_credentialed_reads_are_not_readable_cross_origin(api):
+    """A credentialed answer is never shared, whatever the ref looked like."""
     _register(api.client)
     r = api.client.get("/ds/corp/bundle", headers=AUTH_HEADERS)
     assert r.status_code == 200
@@ -989,3 +988,93 @@ def test_style_switcher_url_comes_from_the_environment(monkeypatch):
     assert config.load_settings().style_switcher_url is None
     monkeypatch.setenv("HUB_STYLE_SWITCHER_URL", " https://hub.example/a/S ")
     assert config.load_settings().style_switcher_url == "https://hub.example/a/S"
+
+
+# --------------------------------------------------------------------------
+# 0.20.0: reading the catalogue needs no credential
+# (spec: docs/superpowers/specs/2026-09-16-design-systems-0.20-amendment.md)
+# --------------------------------------------------------------------------
+
+
+def test_catalogue_list_is_readable_without_a_credential(api):
+    """Anonymous callers see the catalogue; only `mine` needs a credential."""
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get("/api/design-systems")
+    assert r.status_code == 200, r.text
+    rows = r.json()["design_systems"]
+    assert [x["id"] for x in rows] == [ds_id]
+    assert rows[0]["mine"] is False
+    # An anonymous answer is the same for everyone, so a shared cache may keep
+    # it -- unlike the credentialed one below.
+    assert r.headers["Cache-Control"] == "no-cache"
+
+    mine = api.client.get("/api/design-systems", headers=AUTH_HEADERS)
+    assert mine.json()["design_systems"][0]["mine"] is True
+    assert mine.headers["Cache-Control"] == "private, no-store"
+    other = api.client.get("/api/design-systems", headers=OTHER_AUTH_HEADERS)
+    assert other.json()["design_systems"][0]["mine"] is False
+
+
+def test_catalogue_detail_is_readable_without_a_credential(api):
+    ds_id = _register(api.client).json()["id"]
+    for ref in (ds_id, "corp"):
+        r = api.client.get(f"/api/design-systems/{ref}")
+        assert r.status_code == 200, ref
+        body = r.json()
+        assert body["id"] == ds_id and body["mine"] is False
+        assert [v["version"] for v in body["versions"]] == [1]
+        assert r.headers["Cache-Control"] == "no-cache"
+    assert (
+        api.client.get(f"/api/design-systems/{ds_id}", headers=AUTH_HEADERS).json()[
+            "mine"
+        ]
+        is True
+    )
+    assert api.client.get("/api/design-systems/nope").status_code == 404
+
+
+def _make_meta_only(api, ds_id):
+    """Strip the version pointers, as a registration that died mid-flight."""
+    api.client.app.state.designs._index[ds_id].versions.clear()
+
+
+def test_meta_only_record_stays_the_owners_alone(api):
+    ds_id = _register(api.client).json()["id"]
+    _make_meta_only(api, ds_id)
+    assert api.client.get(f"/api/design-systems/{ds_id}").status_code == 404
+    assert (
+        api.client.get(
+            f"/api/design-systems/{ds_id}", headers=OTHER_AUTH_HEADERS
+        ).status_code
+        == 404
+    )
+    owner = api.client.get(f"/api/design-systems/{ds_id}", headers=AUTH_HEADERS)
+    assert owner.status_code == 200 and owner.json()["head_version"] is None
+
+
+def test_slug_reads_need_no_credential_and_are_cross_origin(api):
+    """0.20.0 retires the 401-before-lookup rule: the gallery lists every slug."""
+    _register(api.client)
+    r = api.client.get("/ds/corp/bundle")
+    assert r.status_code == 200, r.text
+    assert r.headers[CORS_ORIGIN] == "*"
+    assert r.headers[CORS_EXPOSE] == "X-Hub-Version"
+    assert r.headers["Cache-Control"] == "no-cache"
+    for suffix in ("/versions", "/tokens", "/css", "/starter", "/guidance"):
+        anon = api.client.get(f"/ds/corp{suffix}")
+        assert anon.status_code == 200, suffix
+        assert anon.headers[CORS_ORIGIN] == "*", suffix
+    # A slug that does not exist is now plainly 404, like an unknown id.
+    assert api.client.get("/ds/does-not-exist/bundle").status_code == 404
+    assert api.client.get("/ds/Not_A_Slug/bundle").status_code == 404
+    # The HTML style guide is reachable by slug too.
+    assert api.client.get("/ds/corp").status_code == 200
+
+
+def test_an_id_read_with_a_credential_is_private(api):
+    """The rule is about the credential, not about how the ref was spelled."""
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get(f"/ds/{ds_id}/bundle", headers=AUTH_HEADERS)
+    assert r.status_code == 200
+    assert r.headers["Cache-Control"] == "private, no-store"
+    assert CORS_ORIGIN not in r.headers
