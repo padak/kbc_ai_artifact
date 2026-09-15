@@ -7,10 +7,19 @@ inlining (``_default_entry``, ``_resolve_entry``, ``_inline_images``) are
 tested directly against a plain directory tree / a local git fixture repo,
 since those helpers operate on any filesystem path and do not themselves
 require a network clone.
+
+Where the whole of ``build_from_git`` is what is under test — the order it
+does its work in, and whether it agrees with ``build_from_html`` — the clone
+is the only part stubbed out: ``_FakeClone`` copies a committed local fixture
+into the destination and ``_check_git_host`` is silenced, so no test resolves
+or reaches a host. Everything after the clone runs for real, the fixture's own
+``.git`` included.
 """
 
 import base64
+import dataclasses
 import os
+import shutil
 import subprocess
 import types
 from pathlib import Path
@@ -22,6 +31,7 @@ from src.builder import (
     BuildError,
     DEFAULT_GIT_USERNAME,
     DEFAULT_TITLE,
+    FRAME_RUNTIME_MARKER,
     HLJS_VERSION,
     MERMAID_VERSION,
     REDACTED,
@@ -35,6 +45,7 @@ from src.builder import (
     _repo_size_bytes,
     _resolve_entry,
     _scrub,
+    _unwrap_frame_runtime,
     _validate_git_ref,
     _validate_git_url,
     build_from_git,
@@ -107,6 +118,364 @@ class TestBuildFromHtml:
         html = "<body><p>no headings here</p></body>"
         result = build_from_html(html)
         assert result.title == DEFAULT_TITLE
+
+
+# --------------------------------------------------------------------------
+# Claude frame-runtime unwrapping: a page saved from claude.ai's artifact
+# viewer must be republished as the document its author wrote, not as the
+# viewer's wrapper around it.
+# --------------------------------------------------------------------------
+
+
+# A saved artifact in miniature: the injected head (bootstrap script and style
+# reset) followed by the authored document sitting in the body. The script
+# carries a title-shaped string on purpose — the real one is further down, so
+# anything reading titles before the rebuild picks the wrong one.
+_WRAPPED = (
+    "<!doctype html><html><head><!-- frame-runtime -->"
+    '<script>window.__FRAME_PREAMBLE={"v":1};'
+    'var frame_title="<title>claude.ai</title>";</script>'
+    "<!-- /frame-runtime --><meta charset=utf8>"
+    "<style>body{margin:0;font:14px system-ui;background:#faf9f5;color:#141413}"
+    "</style></head><body>\n"
+    "<title>Real Document</title>\n"
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=X">\n'
+    "<style>:root{--ink:#111}</style>\n"
+    "<main><h1>Heading</h1><p>Body copy.</p></main>\n"
+    "</body></html>"
+)
+
+
+class TestUnwrapFrameRuntime:
+    def test_wrapped_document_is_rebuilt_standalone(self):
+        out, rebuilt = _unwrap_frame_runtime(_WRAPPED)
+        assert rebuilt is True
+        assert "__FRAME_PREAMBLE" not in out
+        assert "frame-runtime" not in out
+        assert out.startswith("<!doctype html>")
+        assert out.rstrip().endswith("</html>")
+
+    def test_authored_head_elements_are_hoisted_into_head(self):
+        out, _ = _unwrap_frame_runtime(_WRAPPED)
+        head, body = out.split("</head>", 1)
+        assert "<title>Real Document</title>" in head
+        assert "fonts.googleapis.com" in head
+        assert "--ink:#111" in head
+        # The scan stops at the first non-head element: content stays content.
+        assert "<main>" not in head
+        assert "<main><h1>Heading</h1>" in body
+
+    def test_injected_reset_style_is_discarded(self):
+        """The reset forces a cream background and 14px system font."""
+        out, _ = _unwrap_frame_runtime(_WRAPPED)
+        assert "#faf9f5" not in out
+        assert "14px system-ui" not in out
+
+    def test_body_tag_with_attributes_is_handled(self):
+        out, rebuilt = _unwrap_frame_runtime(
+            _WRAPPED.replace("<body>", '<body class="x" data-y="1">')
+        )
+        assert rebuilt is True
+        assert "<title>Real Document</title>" in out
+        assert 'data-y="1"' not in out
+
+    def test_wrapper_without_authored_head_elements_still_works(self):
+        wrapped = (
+            "<!doctype html><html><head><!-- frame-runtime -->"
+            "<script>var a=1;</script></head><body><p>Just content.</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(wrapped)
+        assert rebuilt is True
+        assert "var a=1" not in out
+        assert "<p>Just content.</p>" in out.split("</head>", 1)[1]
+
+    @pytest.mark.parametrize("closing_marker", ["<!-- /frame-runtime -->", ""])
+    def test_a_tag_shaped_string_inside_the_bootstrap_is_not_markup(
+        self, closing_marker
+    ):
+        """The body is looked for past `</head>`, never inside the script.
+
+        The injected script is ~13 KB of opaque JavaScript. Splitting the
+        document at the first `<body` *substring* would cut the document in
+        half here and publish the tail of the script as content.
+        """
+        wrapped = (
+            "<!doctype html><html><head><!-- frame-runtime -->"
+            "<script>var t='<body onload=x>';</script>"
+            f"{closing_marker}</head><body>\n"
+            "<title>Real</title>\n<p>content</p>\n</body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(wrapped)
+        assert rebuilt is True
+        assert "<script>" not in out
+        assert "frame-runtime" not in out
+        assert "<title>Real</title>" in out.split("</head>", 1)[0]
+        assert "<p>content</p>" in out.split("</head>", 1)[1]
+
+    def test_plain_document_passes_through_unchanged(self):
+        plain = (
+            "<!doctype html><html><head><title>Mine</title></head>"
+            "<body><p>Hi</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(plain)
+        assert rebuilt is False
+        assert out == plain
+
+    def test_a_document_that_only_writes_about_the_marker_is_left_alone(self):
+        """The marker in the body is prose; the author's own head must survive."""
+        about = (
+            "<!doctype html><html><head><title>How the wrapper works</title>"
+            '<script src="mine.js"></script></head><body><p>Claude injects '
+            f"<code>{FRAME_RUNTIME_MARKER}</code> into the head.</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(about)
+        assert rebuilt is False
+        assert out == about
+
+    def test_a_page_with_an_implicit_head_that_mentions_the_marker_survives(self):
+        """Requiring an enclosing <head> also covers documents that have none.
+
+        Rejecting only a </head> *before* the marker left this shape exposed: a
+        page about HTML parsing, with no head tags of its own, carrying the
+        structural tags inside a script string. Rebuilding it dropped the
+        opening content and promoted an inert JS fragment to live body text.
+        """
+        about = (
+            "<!doctype html><html><body>"
+            "<h1>How saved pages are wrapped</h1>"
+            f"<p>The viewer injects <code>{FRAME_RUNTIME_MARKER}</code> first.</p>"
+            '<script>var sample = "</head><body>";</script>'
+            "<p>Keep reading.</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(about)
+        assert rebuilt is False
+        assert out == about
+
+    @pytest.mark.parametrize(
+        "malformed",
+        [
+            pytest.param(
+                "<!doctype html><html><head><!-- frame-runtime -->"
+                "<script>x</script></head>",
+                id="head-closes-but-no-body",
+            ),
+            pytest.param(FRAME_RUNTIME_MARKER, id="marker-alone"),
+            pytest.param(
+                "<!doctype html><html><head><!-- frame-runtime --></head>"
+                "<body>   </body></html>",
+                id="empty-body",
+            ),
+        ],
+    )
+    def test_malformed_wrapper_returns_the_input_unchanged(self, malformed):
+        """Unknown shapes pass through: this runs over every HTML publish."""
+        out, rebuilt = _unwrap_frame_runtime(malformed)
+        assert rebuilt is False
+        assert out == malformed
+
+
+class TestBuildFromHtmlUnwrapsFrameRuntime:
+    def test_the_rebuilt_document_is_what_gets_published(self):
+        result = build_from_html(_WRAPPED)
+        assert result.source_type == "html"
+        assert result.html == _unwrap_frame_runtime(_WRAPPED)[0]
+        assert len(result.html) < len(_WRAPPED)
+
+    def test_the_authored_title_still_wins(self):
+        """Unwrapping runs first, so the bootstrap script cannot supply it."""
+        assert build_from_html(_WRAPPED).title == "Real Document"
+
+    def test_an_explicit_title_still_wins(self):
+        result = build_from_html(_WRAPPED, title="Explicit Title")
+        assert result.title == "Explicit Title"
+        assert "__FRAME_PREAMBLE" not in result.html
+
+    def test_an_unwrapped_document_is_published_byte_for_byte(self):
+        html = "<html><head><title>Mine</title></head><body><h1>Hi</h1></body></html>"
+        assert build_from_html(html).html == html
+
+
+# --------------------------------------------------------------------------
+# The same rebuild on the git path. A saved artifact committed to a repository
+# is the same saved artifact, so publishing it by git_url rather than by html
+# must not be the difference between a wrapper stripped and a wrapper served.
+# --------------------------------------------------------------------------
+
+
+_GIT_URL = "https://git.example.com/owner/repo.git"
+
+#: The wrapper carrying a repository-relative image on both sides of the line
+#: the rebuild draws: one in the injected head it discards, one in the authored
+#: body it keeps. Both name the same file, so only the *order* of the rebuild
+#: and the image inlining can tell them apart.
+_WRAPPED_WITH_IMAGES = _WRAPPED.replace(
+    "<!-- /frame-runtime -->",
+    '<!-- /frame-runtime --><img src="images/pixel.png" alt="injected">',
+).replace(
+    "<p>Body copy.</p>",
+    '<p>Body copy.</p><img src="images/pixel.png" alt="authored">',
+)
+
+
+class _FakeClone:
+    """Stand-in for ``_clone``: copies a committed fixture into ``dest``.
+
+    The clone is the one part of ``build_from_git`` that cannot run offline.
+    Everything downstream works on whatever landed on disk, so a copied fixture
+    exercises the real path — ``_head_commit`` included, since the copy brings
+    the fixture's ``.git`` with it.
+    """
+
+    def __init__(self, fixture: Path) -> None:
+        self.fixture = fixture
+
+    def __call__(self, git_url, ref, dest, timeout_s, **kwargs) -> None:
+        shutil.copytree(self.fixture, dest)
+
+
+def _make_entry_repo(tmp_path: Path, name: str, content: str) -> Path:
+    """A committed repo whose entry is ``name``, beside ``images/pixel.png``."""
+    repo = tmp_path / "entry-repo"
+    repo.mkdir()
+    (repo / "images").mkdir()
+    (repo / "images" / "pixel.png").write_bytes(_png_bytes())
+    (repo / name).write_text(content, encoding="utf-8")
+
+    _run_git(["git", "init"], repo)
+    _run_git(["git", "config", "user.email", "test@example.com"], repo)
+    _run_git(["git", "config", "user.name", "Test User"], repo)
+    _run_git(["git", "add", "-A"], repo)
+    _run_git(["git", "commit", "-m", "initial commit"], repo)
+    return repo
+
+
+def _publish_from_git(
+    tmp_path,
+    monkeypatch,
+    settings,
+    content: str,
+    *,
+    name: str = "index.html",
+    title: str | None = None,
+):
+    """Run ``build_from_git`` end to end over a one-entry local repository."""
+    monkeypatch.setattr(builder_module, "_check_git_host", lambda *a, **k: None)
+    monkeypatch.setattr(
+        builder_module, "_clone", _FakeClone(_make_entry_repo(tmp_path, name, content))
+    )
+    return build_from_git(_GIT_URL, None, None, title, settings)
+
+
+class TestBuildFromGitUnwrapsFrameRuntime:
+    def test_a_wrapped_entry_file_is_rebuilt(self, tmp_path, monkeypatch, settings):
+        result = _publish_from_git(tmp_path, monkeypatch, settings, _WRAPPED)
+        assert result.source_type == "git-html"
+        assert "__FRAME_PREAMBLE" not in result.html
+        assert "frame-runtime" not in result.html
+        assert "#faf9f5" not in result.html  # the injected reset goes too
+        assert "<main><h1>Heading</h1>" in result.html
+
+    def test_the_git_path_stores_what_the_html_path_would(
+        self, tmp_path, monkeypatch, settings
+    ):
+        """The whole point: the same bytes, the same stored document."""
+        direct = build_from_html(_WRAPPED)
+        result = _publish_from_git(tmp_path, monkeypatch, settings, _WRAPPED)
+        assert result.html == direct.html
+        assert result.title == direct.title
+
+    def test_the_authored_title_still_wins(self, tmp_path, monkeypatch, settings):
+        """Derived from the rebuilt document, not from the bootstrap script."""
+        result = _publish_from_git(tmp_path, monkeypatch, settings, _WRAPPED)
+        assert result.title == "Real Document"
+
+    def test_an_explicit_title_still_wins(self, tmp_path, monkeypatch, settings):
+        result = _publish_from_git(
+            tmp_path, monkeypatch, settings, _WRAPPED, title="Explicit Title"
+        )
+        assert result.title == "Explicit Title"
+
+    def test_the_commit_is_still_recorded(self, tmp_path, monkeypatch, settings):
+        result = _publish_from_git(tmp_path, monkeypatch, settings, _WRAPPED)
+        assert result.git_commit is not None
+        assert len(result.git_commit) >= 40
+
+    def test_ordinary_html_is_published_byte_for_byte(
+        self, tmp_path, monkeypatch, settings
+    ):
+        plain = (
+            "<!doctype html><html><head><title>Mine</title></head>"
+            "<body><h1>Hi</h1><p>Nothing to rebuild here.</p></body></html>"
+        )
+        result = _publish_from_git(tmp_path, monkeypatch, settings, plain)
+        assert result.html == plain
+        assert result.title == "Mine"
+
+    def test_a_page_that_only_writes_about_the_marker_is_left_alone(
+        self, tmp_path, monkeypatch, settings
+    ):
+        """A repository documenting the wrapper keeps the head it committed."""
+        about = (
+            "<!doctype html><html><head><title>How the wrapper works</title>"
+            '<script src="mine.js"></script></head><body><p>Claude injects '
+            f"<code>{FRAME_RUNTIME_MARKER}</code> into the head.</p></body></html>"
+        )
+        result = _publish_from_git(tmp_path, monkeypatch, settings, about)
+        assert result.html == about
+
+    def test_a_markdown_entry_is_unaffected(self, tmp_path, monkeypatch, settings):
+        """The Markdown branch renders and inlines exactly as it did before."""
+        result = _publish_from_git(
+            tmp_path,
+            monkeypatch,
+            settings,
+            "# Fixture Repo\n\n![pixel](images/pixel.png)\n",
+            name="README.md",
+        )
+        assert result.source_type == "git-markdown"
+        assert result.title == "Fixture Repo"
+        assert "data:image/png;base64," in result.html
+        assert "images/pixel.png" not in result.html
+
+
+class TestGitRebuildRunsBeforeImageInlining:
+    """Order matters, and only one order is right.
+
+    Inlining first would rewrite ``src`` attributes inside ~13 KB of bootstrap
+    script that the rebuild is about to throw away, and spend the shared inline
+    budget doing it. Rebuilding first leaves the inliner nothing but authored
+    markup to look at.
+    """
+
+    def test_only_the_authored_image_is_inlined(
+        self, tmp_path, monkeypatch, settings
+    ):
+        result = _publish_from_git(
+            tmp_path, monkeypatch, settings, _WRAPPED_WITH_IMAGES
+        )
+        assert 'alt="injected"' not in result.html
+        assert 'alt="authored"' in result.html
+        assert result.html.count("data:image/png;base64,") == 1
+        assert "images/pixel.png" not in result.html
+
+    def test_the_discarded_wrapper_cannot_spend_the_inline_budget(
+        self, tmp_path, monkeypatch, settings
+    ):
+        """A budget for exactly one image must reach the author's image.
+
+        Inlining before the rebuild would hand that one budget to the injected
+        reference — it comes first in the document — and then discard it,
+        leaving the authored image as a dead relative link to a repository the
+        hub does not serve.
+        """
+        room_for_one = dataclasses.replace(
+            settings, max_inline_total_bytes=len(_png_bytes())
+        )
+        result = _publish_from_git(
+            tmp_path, monkeypatch, room_for_one, _WRAPPED_WITH_IMAGES
+        )
+        assert result.html.count("data:image/png;base64,") == 1
+        assert "images/pixel.png" not in result.html
 
 
 # --------------------------------------------------------------------------
