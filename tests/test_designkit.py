@@ -3,7 +3,16 @@ derived from a design-system bundle."""
 
 import pytest
 
-from src.designkit import BODY_SLOT, TITLE_SLOT, fill_starter, role_values, starter_html, style_guide_html
+from src.designkit import (
+    BODY_SLOT,
+    TITLE_SLOT,
+    fill_starter,
+    role_css_vars,
+    role_values,
+    role_variable_names,
+    starter_html,
+    style_guide_html,
+)
 from src.tokens import TokenLimits, to_css, validate_document
 
 LIMITS = TokenLimits(16, 5000, 32)
@@ -60,7 +69,7 @@ def test_starter_has_each_slot_once_and_every_variable():
         assert var + ":" in s
     assert '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter&amp;display=swap">' in s
     assert '<link rel="preconnect" href="https://fonts.googleapis.com">' in s
-    assert "body{background:var(--color-bg);color:var(--color-fg);font-family:var(--font-sans)}" in s
+    assert "body{background:var(--ds-background);color:var(--ds-text);font-family:var(--ds-font-body)}" in s
     assert ".kpi{color:var(--color-fg)}" in s
     assert "<!--" not in s  # no commented component library
 
@@ -76,6 +85,63 @@ def test_starter_omits_role_rules_and_scripts_when_absent():
     }
     s = starter_html(b, *_sets(), chartjs_url="https://cdn/x.js", mermaid_url="https://cdn/m.mjs")
     assert "body{" not in s and "<script" not in s and "<link" not in s
+    assert "--ds-" not in s
+
+
+# --- role variables (0.17.0) ----------------------------------------------
+
+
+def test_role_variable_names_covers_declared_roles_only():
+    names = role_variable_names(BUNDLE)
+    assert names["background"] == "--ds-background"
+    assert names["text"] == "--ds-text"
+    assert names["accent"] == "--ds-accent"
+    assert names["on_accent"] == "--ds-on-accent"
+    assert names["font_body"] == "--ds-font-body"
+    assert names["radius"] == "--ds-radius"
+    # chart_palette expands to one alias per entry, plus the count
+    assert names["chart_palette_1"] == "--ds-chart-1"
+    assert names["chart_palette_count"] == "--ds-chart-count"
+    # nothing is invented for a role the bundle never declared
+    assert "surface" not in names and "muted" not in names and "border" not in names
+    assert role_variable_names({"roles": {}}) == {}
+    assert role_variable_names({}) == {}
+
+
+def test_role_css_vars_aliases_the_mode_following_targets():
+    base, _ = _sets()
+    css = role_css_vars(BUNDLE, base)
+    assert css.startswith(":root{") and css.endswith("}")
+    assert css.count(":root{") == 1
+    for pair in (
+        "--ds-background:var(--color-bg)",
+        "--ds-text:var(--color-fg)",
+        "--ds-accent:var(--color-accent)",
+        "--ds-on-accent:var(--color-on)",
+        "--ds-font-body:var(--font-sans)",
+        "--ds-radius:var(--radius-md)",
+        "--ds-chart-1:var(--color-c1)",
+        "--ds-chart-count:1",
+    ):
+        assert pair in css, pair
+    assert "--ds-surface" not in css
+
+
+def test_role_css_vars_is_empty_when_no_roles_are_declared():
+    base, _ = _sets()
+    assert role_css_vars({"roles": {}}, base) == ""
+    assert role_css_vars({}, base) == ""
+
+
+def test_starter_carries_the_alias_block_and_uses_it_in_role_rules():
+    s = starter_html(BUNDLE, *_sets(), chartjs_url="https://cdn/x.js", mermaid_url="https://cdn/m.mjs")
+    assert ":root{--ds-background:var(--color-bg)" in s
+    assert "a{color:var(--ds-accent)}" in s
+    assert "code,pre,kbd{font-family:var(--ds-font-mono)}" not in s  # role not declared
+    # the alias block sits inside the one <style> block, after the token CSS
+    style = s.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert "--color-bg:" in style
+    assert style.index("--color-bg:") < style.index("--ds-background:")
 
 
 def test_chart_and_mermaid_blocks_use_resolved_colours():
