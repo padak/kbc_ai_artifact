@@ -321,12 +321,26 @@ lifecycle of an artifact:
 | `contributors` | list of `"projectId@stackhost"` | Owner keys allowed to submit versions/comments under `"allowlist"` mode — shared by both capabilities, no separate lists. |
 | `comments_mode` | `"anyone"` \| `"allowlist"` \| `"off"` | Who may open/reply to comment threads. Default `"anyone"`. |
 | `status` | `"draft"` \| `"final"` | `"final"` freezes new versions **and** new comments for everyone, owner included, and shows a banner. Reopen with `PUT {"status": "draft"}` (owner only). |
+| `reader_menu` | `true` \| `false` | Show the hub's reader menu on the artifact page. Default `true`. |
 
 ```bash
 hub -X PUT "$HUB/api/artifacts/$ID" \
   -H "Content-Type: application/json" \
   -d '{"accept_versions_mode": "allowlist", "contributors": ["1234@connection.eu-central-1.keboola.com"], "comments_mode": "allowlist"}'
 ```
+
+**The reader menu.** Every artifact page carries a small round button in its
+corner opening the hub's **reader menu**: what a reader can do here — comment,
+browse the version history, propose a new version, read the document as
+Markdown, share the link with an AI assistant — one line of how-to each, with
+the proposal row following the artifact's own `accept_versions_mode`. It is
+**on by default** for every artifact, old ones included, and it is chrome in
+the hub's wrapper page only: `/a/{id}/raw`, `/a/{id}/source` and every export
+are byte-identical whether it is on or off. Switch it off for one artifact
+with `PUT $HUB/api/artifacts/{id}` and `{"reader_menu": false}` — an ordinary
+owner setting, not a destructive one — or by unticking *show the reader menu
+on the artifact page* in the admin studio. `GET /a/{id}/meta` and
+`GET /api/artifacts` report the current value.
 
 ### Update, trash, restore, purge, list (owner project only)
 

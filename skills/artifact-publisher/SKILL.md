@@ -541,6 +541,7 @@ document is still open at all:
 | `contributors` | list of `"projectId@stackhost"` | Owner keys allowed to submit versions/comments when the matching mode is `allowlist`. Ignored otherwise. |
 | `comments_mode` | `"anyone"` \| `"allowlist"` \| `"off"` | Who may open comment threads and reply. Default `"anyone"`. |
 | `status` | `"draft"` \| `"final"` | `"final"` freezes new versions **and** new comments for everyone, the owner included, and shows a banner on the page. Reopen by `PUT`-ing `{"status": "draft"}` (owner only). |
+| `reader_menu` | `true` \| `false` | Show the hub's reader menu on the artifact page. Default `true`; see *The reader menu* below. |
 
 ```bash
 hub -X PUT "$HUB/api/artifacts/aBcD3fGhIjKlMnOpQrStUvWx" \
@@ -552,6 +553,25 @@ hub -X PUT "$HUB/api/artifacts/aBcD3fGhIjKlMnOpQrStUvWx" \
     "status": "draft"
   }'
 ```
+
+### The reader menu
+
+Every artifact page carries a small round button in its corner that opens the
+**reader menu** — the hub's own answer to "how do I comment on this?" and "how
+do I propose a new version?". It lists what a reader can do here (comment,
+browse the version history, propose a version, read the Markdown, share the
+link with an AI assistant) with a one-line how-to each, and it follows the
+artifact's own `accept_versions_mode`: a document that takes no contributions
+says so instead of teaching a route that would answer 403.
+
+It is **on by default** for every artifact, old ones included. It is hub
+chrome rendered in the wrapper page, never in the document: `/a/{id}/raw`,
+`/a/{id}/source` and every export are byte-identical whether it is on or off.
+Turn it off for one artifact with `PUT $HUB/api/artifacts/{id}` and
+`{"reader_menu": false}` (an ordinary owner setting — no special token
+authority), or by unticking **show the reader menu on the artifact page** in
+the admin studio. `GET /a/{id}/meta` and `GET /api/artifacts` report the
+current value.
 
 An `allowlist` mode shares the same `contributors` list for both versions and
 comments — there is no separate list per capability. Setting `status` to

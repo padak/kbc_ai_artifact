@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "artifact-hub",
-      "version": "0.17.0",
+      "version": "0.18.0",
       "source": "./",
       "description": "Publish, version, review and moderate HTML/Markdown documents on a KBC Artifact Hub: a Claude Code subagent plus a SKILL.md for any agent runtime",
       "category": "productivity"
