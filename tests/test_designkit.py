@@ -344,3 +344,12 @@ def test_is_safe_css_color_rejects_everything_else(value):
 def test_safe_css_color_re_is_exported_for_reuse():
     assert SAFE_CSS_COLOR_RE.match("#abc")
     assert not SAFE_CSS_COLOR_RE.match("#abc;x:y")
+
+
+def test_safe_css_color_is_exact_about_hex_length_and_trailing_newlines():
+    from src.designkit import is_safe_css_color
+    assert is_safe_css_color("#abc") and is_safe_css_color("#aabbcc") and is_safe_css_color("#aabbccdd")
+    assert not is_safe_css_color("#12345")        # 5 digits is not a colour
+    assert not is_safe_css_color("#abcd")         # nor 4
+    assert not is_safe_css_color("red\n")         # $ must not tolerate a trailing newline
+    assert not is_safe_css_color("#fff\n")

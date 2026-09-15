@@ -63,7 +63,7 @@ _ROLE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 #: ``src.tokens`` itself emits, and a bare CSS keyword.
 SAFE_CSS_COLOR_RE = re.compile(
     r"^(?:"
-    r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?(?:[0-9a-fA-F]{2})?"
+    r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})"
     r"|rgba?\(\s*\d{1,3}(?:\s*,\s*|\s+)\d{1,3}(?:\s*,\s*|\s+)\d{1,3}"
     r"(?:\s*(?:,|/)\s*(?:0|1|0?\.\d+))?\s*\)"
     r"|[a-zA-Z]{3,20}"
@@ -78,7 +78,7 @@ def is_safe_css_color(value: object) -> bool:
     but does not match is simply not shown, which costs a swatch. A value that
     is not a colour at all must never reach the hub's own origin.
     """
-    return isinstance(value, str) and bool(SAFE_CSS_COLOR_RE.match(value))
+    return isinstance(value, str) and SAFE_CSS_COLOR_RE.fullmatch(value) is not None
 
 
 #: The one role whose value is a list rather than a single alias, and whose
