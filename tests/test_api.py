@@ -7658,3 +7658,86 @@ def test_no_credential_at_all_still_reads_as_no_credential(api: Api) -> None:
     resp = api.client.get("/api/artifacts", headers={"X-Storage-Stack": "us"})
     assert resp.status_code == 401
     assert "dropped it" not in resp.json()["detail"]
+
+
+# --------------------------------------------------------------------------
+# Reader menu (0.18.0) -- pages layer
+# --------------------------------------------------------------------------
+
+READER_MENU_LABEL = "What can I do with this document?"
+
+
+def _frame_with_menu(**kwargs) -> str:
+    return pages.artifact_frame_page(
+        "Report",
+        "<h1>hi</h1>",
+        base_url="https://hub.example.com",
+        share_id="shr1",
+        **kwargs,
+    )
+
+
+def test_frame_page_has_no_reader_menu_by_default():
+    page = _frame_with_menu()
+    assert READER_MENU_LABEL not in page
+    assert "ahmenu" not in page
+
+
+def test_frame_page_with_reader_menu_renders_button_and_panel():
+    page = _frame_with_menu(reader_menu=True)
+    assert f'aria-label="{READER_MENU_LABEL}"' in page
+    assert 'id="ah-menu-panel"' in page
+    assert 'aria-expanded="false"' in page
+    # The panel must sit *after* the iframe, so it is hub chrome painted over
+    # the document rather than anything the document can reach.
+    assert page.index('id="ah-frame"') < page.index('id="ah-menu-btn"')
+
+
+def test_reader_menu_links_point_at_the_share_id():
+    page = _frame_with_menu(reader_menu=True, accept_versions_mode="anyone")
+    base = "https://hub.example.com"
+    for href in (
+        f"{base}/a/shr1/review",
+        f"{base}/a/shr1/versions?format=html",
+        f"{base}/skill#versioning",
+        f"{base}/a/shr1/export/markdown",
+        f"{base}/llms.txt",
+    ):
+        assert html.escape(href, quote=True) in page, href
+    assert f'href="{base}/"' in page
+
+
+def test_reader_menu_proposal_item_follows_accept_versions_mode():
+    off = _frame_with_menu(reader_menu=True, accept_versions_mode="off")
+    assert "does not accept proposals" in off
+    assert "/api/artifacts/shr1/versions" not in off
+    for mode in ("anyone", "allowlist"):
+        on = _frame_with_menu(reader_menu=True, accept_versions_mode=mode)
+        assert "Propose a new version" in on
+        assert "does not accept proposals" not in on
+
+
+def test_reader_menu_escapes_the_share_id():
+    page = pages.artifact_frame_page(
+        "Report",
+        "<h1>hi</h1>",
+        base_url="https://hub.example.com",
+        share_id='x"><script>bad()</script>',
+        reader_menu=True,
+    )
+    assert "<script>bad()</script>" not in page
+    assert "&lt;script&gt;bad()&lt;/script&gt;" in page
+
+
+def test_reader_menu_holds_no_credential():
+    """The menu is static markup plus open/close; it never touches a token."""
+    page = _frame_with_menu(reader_menu=True)
+    menu = page[page.index('id="ah-menu-btn"') :]
+    for forbidden in ("sessionStorage", "hubSession", "X-Storage-Token"):
+        assert forbidden not in menu
+
+
+def test_reader_menu_copy_link_has_a_visible_fallback():
+    page = _frame_with_menu(reader_menu=True)
+    assert "clipboard" in page
+    assert 'id="ah-menu-url"' in page
