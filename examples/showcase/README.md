@@ -50,7 +50,9 @@ stability badges. Built for engineers scanning for an exact name or value.
 
 ![Technical Documentation style guide](screenshots/tech-docs.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_tech-docs)
+![tech-docs components rendered live](screenshots/tech-docs-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_b_RQb77QHylDwCicEvrpf3Ho)
 
 ### exec-report — Executive Report
 
@@ -61,7 +63,9 @@ and printed.
 
 ![Executive Report style guide](screenshots/exec-report.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_exec-report)
+![exec-report components rendered live](screenshots/exec-report-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_F4RPr4Pgd_sa9kAKRBBNrV0M)
 
 ### board-deck — Board Presentation
 
@@ -72,7 +76,9 @@ than the detail.
 
 ![Board Presentation style guide](screenshots/board-deck.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_board-deck)
+![board-deck components rendered live](screenshots/board-deck-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_tSQJiemc_2cUupcf15BCgGqu)
 
 ### software-manual — Software Manual
 
@@ -82,7 +88,9 @@ at a keyboard, mid-task.
 
 ![Software Manual style guide](screenshots/software-manual.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_software-manual)
+![software-manual components rendered live](screenshots/software-manual-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_1p32R1fhe_T5Rjqfda7nmuPD)
 
 ### end-user-guide — End-User Guide
 
@@ -92,7 +100,9 @@ the software and arrived stuck.
 
 ![End-User Guide style guide](screenshots/end-user-guide.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_end-user-guide)
+![end-user-guide components rendered live](screenshots/end-user-guide-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_iqXmSYtuGgCwSchU4nQqD0Tr)
 
 ### data-dashboard — Data Dashboard
 
@@ -103,7 +113,9 @@ page that lives on a second monitor all day.
 
 ![Data Dashboard style guide](screenshots/data-dashboard.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_data-dashboard)
+![data-dashboard components rendered live](screenshots/data-dashboard-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_5unaEGmEvsz_7dumfY3WbWkf)
 
 ### keboola-website — Keboola Website
 
@@ -115,7 +127,9 @@ one-pagers.
 
 ![Keboola Website style guide](screenshots/keboola-website.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_keboola-website)
+![keboola-website components rendered live](screenshots/keboola-website-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_XUSxyvtiL03-GBbGEBXAalzb)
 
 ### oldschool-memo — Old-School Memo
 
@@ -126,7 +140,9 @@ read as a matter of record.
 
 ![Old-School Memo style guide](screenshots/oldschool-memo.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_oldschool-memo)
+![oldschool-memo components rendered live](screenshots/oldschool-memo-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_Yn5-3RRp25SRgVmCfrinbk4M)
 
 ### academic-paper — Academic Paper
 
@@ -136,7 +152,9 @@ whitepapers where claims need to be attributable.
 
 ![Academic Paper style guide](screenshots/academic-paper.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_academic-paper)
+![academic-paper components rendered live](screenshots/academic-paper-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_NMP3igiXhCxufhU5VNZHDFp-)
 
 ### incident-postmortem — Incident Post-mortem
 
@@ -146,7 +164,9 @@ who slept through the incident and must reconstruct it.
 
 ![Incident Post-mortem style guide](screenshots/incident-postmortem.png)
 
-Style guide: [open the style guide](STYLE_GUIDE_URL_incident-postmortem)
+![incident-postmortem components rendered live](screenshots/incident-postmortem-components.png)
+
+Style guide: [open the style guide](https://artifact-hub-1304628444.hub.keboola.com/ds/ds_lIJmwufj9KESkpbXD3hdiZEr)
 
 ## A fresh session, one sentence
 
@@ -205,6 +225,8 @@ that field back and keep using exactly the same version, rather than
 silently drifting to whatever is head by then.
 
 ![Published report in exec-report](screenshots/published-exec-report.png)
+
+Live: [Q3 2026 Executive Report](https://artifact-hub-1304628444.hub.keboola.com/a/5yTWldwa7LemcI6g3wYdupNS) — its [/meta](https://artifact-hub-1304628444.hub.keboola.com/a/5yTWldwa7LemcI6g3wYdupNS/meta) records `design_system: {"slug": "exec-report", "version": 1}`.
 
 ## Register your own
 
