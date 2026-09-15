@@ -4,6 +4,17 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.16.1 — The landing page keeps its demo and gains a second one (2026-09-15)
+
+- The design-systems card on the landing page quoted the hub's full URL inside
+  a code span, and the URL pushed past the card's edge. It now names the route
+  (`GET /api/design-systems`) the way the other cards do, and code inside a
+  card wraps instead of overflowing.
+- "See the demo" points again at the hub's own live demo. The design-systems
+  walkthrough has its own link, "See the design-systems demo", under the
+  design-systems section, configured with `HUB_DESIGN_DEMO_URL` next to
+  `HUB_DEMO_URL`.
+
 ## 0.16.0 — Your design system, hosted and presented (2026-09-15)
 
 - The hub now holds your organisation's **design systems**: the design
