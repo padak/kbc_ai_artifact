@@ -3661,6 +3661,13 @@ def design_systems_page(
         updated = str(row.get("updated_at") or "")[:10]
         if updated:
             meta_bits.append(f"updated {html.escape(updated)}")
+        # Credit where a fork came from. The slug is a snapshot taken when the
+        # fork was made, so it is shown as plain text, never as a link: the
+        # source may since have been re-slugged or deleted.
+        forked_from = row.get("forked_from") or {}
+        if forked_from.get("slug"):
+            origin = html.escape(str(forked_from["slug"]))
+            meta_bits.append(f"forked from <code>{origin}</code>")
         description = (
             f'<p class="gal-desc">{html.escape(str(row["description"]))}</p>'
             if row.get("description")
@@ -3753,8 +3760,9 @@ def design_systems_page(
         f'components once: <a href="{base}/skill">/skill</a> has the '
         "shape and the curl.</li>"
         "<li><b>Agent lists &amp; picks</b>"
-        f'<code>GET {base}/api/design-systems</code> (Keboola credential required) '
-        "answers every system this hub holds, with ownership and versions.</li>"
+        f'<code>GET {base}/api/design-systems</code> (no credential needed; a '
+        "credential adds <code>mine</code>) answers every system this hub holds, "
+        "with ownership and versions.</li>"
         "<li><b>Starter + components</b>The agent pulls "
         "<code>/ds/{id}/starter</code> &mdash; tokens, fonts, component CSS and the "
         "<code>--ds-*</code> roles already in place &mdash; and fills in the "
@@ -3770,8 +3778,10 @@ def design_systems_page(
         '<h2 class="label">for agents</h2>'
         f'<p>This page has a machine twin: <code>{base}/ds?format=json</code> '
         "answers the same list from any origin, and "
-        f"<code>{base}/api/design-systems</code> adds ownership for a caller with "
-        "a Keboola credential. An agent that was handed a link should start at "
+        f"<code>{base}/api/design-systems</code> — equally public — adds the full "
+        "owner and every version, and marks the caller's own with "
+        "<code>mine</code> when a Keboola credential comes along. An agent that "
+        "was handed a link should start at "
         f'<a href="{base}/llms.txt">/llms.txt</a>, read '
         f'<a href="{base}/skill">/skill</a> to publish unassisted, or install '
         f'<a href="{base}/agent">/agent</a> as a drop-in Claude Code subagent.</p>'

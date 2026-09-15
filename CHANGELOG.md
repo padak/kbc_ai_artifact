@@ -4,6 +4,36 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.20.0 — Take any design system, keep your own copy (2026-09-16)
+
+- **Reading a design system no longer needs a credential.** `GET
+  /api/design-systems`, `GET /api/design-systems/{ref}` and every `/ds/{ref}`
+  reader route now answer anonymously, by id or by slug alike. The old rule —
+  a slug was readable only with a Keboola credential, checked before the
+  lookup — existed to stop the hub confirming whether a guessed slug existed;
+  the public gallery has listed every slug since 0.17.0, so it was guarding a
+  secret that was already published, and it made the machine-readable
+  catalogue harder to reach than the human page. A credential is still read
+  when one is offered, because it is the only thing that can report `mine`,
+  and it is now the credential rather than the spelling of the reference that
+  decides whether an answer is private (`private, no-store`, no CORS header)
+  or public (`no-cache`, readable cross-origin).
+- **Anyone can fork a design system.** `POST
+  /api/design-systems/{ref}/fork` with `{slug, name?, description?, note?,
+  version?}` copies that version's bundle — the head's by default — verbatim
+  as v1 of a new design system owned by **your** project. `name` defaults to
+  the source's plus " (fork)" and `description` to the source's; the new
+  record carries `forked_from` `{id, slug, version}`, reported everywhere the
+  design system is and credited on its gallery card. Copying is all it does:
+  the source keeps its owner, its versions and its name, and owning a fork
+  grants no authority over the original. So if a brand on the hub is nearly
+  what you want, you no longer have to ask its owner to change it or
+  copy-paste the bundle out by hand — take it, change your copy, and both
+  live side by side.
+- Writing is untouched: appending a version, editing name or description and
+  both deletes are still the owning project's alone, deletes still under the
+  destructive-token policy.
+
 ## 0.19.1 — Anchors inside artifacts work again (2026-09-16)
 
 - A table of contents inside a published document — a hand-written nav, or

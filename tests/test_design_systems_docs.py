@@ -85,3 +85,23 @@ def test_skill_and_agent_explain_the_reader_menu():
 def test_readme_documents_the_reader_menu():
     assert "reader_menu" in README
     assert "HUB_READER_MENU_DEFAULT" in README
+
+
+# --------------------------------------------------------------------------
+# Public reads and fork (0.20.0)
+# --------------------------------------------------------------------------
+
+
+def test_skill_and_agent_explain_public_reads_and_forking():
+    for doc in (SKILL, AGENT):
+        section = doc.split("## Design systems", 1)[1]
+        assert "no credential" in section.lower()
+        assert "/fork" in section
+        assert "forked_from" in section
+        assert "own the copy" in section.lower() or "copy is yours" in section.lower()
+
+
+def test_readme_documents_public_reads_and_forking():
+    assert "/api/design-systems/{ref}/fork" in README
+    assert "forked_from" in README
+    assert "public to read and private to write" in README

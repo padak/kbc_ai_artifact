@@ -24,6 +24,7 @@ transient Storage outage cannot put the app into a crash loop.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import fcntl
 import functools
@@ -4815,7 +4816,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/api/design-systems",
-                "auth": "any token",
+                "auth": "none (a token additionally reports 'mine')",
                 "purpose": (
                     "catalogue of every design system on this hub; 'mine' "
                     "marks the caller's own"
@@ -4830,7 +4831,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/api/design-systems/{ref}",
-                "auth": "any token",
+                "auth": "none (a token additionally reports 'mine')",
                 "purpose": "one design system with its version list",
             },
             {
@@ -4844,6 +4845,15 @@ def context(request: Request) -> dict:
                 "path": "/api/design-systems/{ref}/versions",
                 "auth": "owner",
                 "purpose": "append a new, immutable version of the bundle",
+            },
+            {
+                "method": "POST",
+                "path": "/api/design-systems/{ref}/fork",
+                "auth": "any token",
+                "purpose": (
+                    "fork any design system: copy one version's bundle "
+                    "verbatim as v1 of a new one your project owns"
+                ),
             },
             {
                 "method": "DELETE",
@@ -4885,19 +4895,19 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "human-facing style guide (HTML)",
             },
             {
                 "method": "GET",
                 "path": "/ds/{ref}/versions",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "version history of one design system",
             },
             {
                 "method": "GET",
                 "path": "/ds/{ref}/bundle",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": (
                     "the whole bundle of one version plus 'variables' (token "
                     "path -> CSS variable)"
@@ -4906,13 +4916,13 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}/tokens",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "the raw DTCG token document and its mode overrides",
             },
             {
                 "method": "GET",
                 "path": "/ds/{ref}/css",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": (
                     "tokens compiled to CSS custom properties; "
                     "?mode=all|light|dark"
@@ -4921,7 +4931,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}/starter",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": (
                     "HTML skeleton to fill: replace {{TITLE}} and {{BODY}}"
                 ),
@@ -4929,7 +4939,7 @@ def context(request: Request) -> dict:
             {
                 "method": "GET",
                 "path": "/ds/{ref}/guidance",
-                "auth": "none (id) / any token (slug)",
+                "auth": "none",
                 "purpose": "the design system's guidance, as Markdown",
             },
         ],
@@ -5344,8 +5354,8 @@ def context(request: Request) -> dict:
                 "id_prefix": "ds_",
                 "id": "public capability, like /a/{id}",
                 "slug": (
-                    "^[a-z0-9][a-z0-9-]{1,39}$, readable only with a "
-                    "credential; authenticated before lookup"
+                    "^[a-z0-9][a-z0-9-]{1,39}$, public since 0.20.0 and read "
+                    "exactly like an id"
                 ),
             },
             "bundle_fields": [
@@ -5367,6 +5377,31 @@ def context(request: Request) -> dict:
                 "colors": "sRGB only in this release",
                 "modes": "dark only; base is light",
             },
+            "fork": (
+                "POST /api/design-systems/{ref}/fork with "
+                "{slug, name?, description?, note?, version?} and any "
+                "Keboola credential. Copies that version's bundle (default: "
+                "head) verbatim as v1 of a new design system your project "
+                "owns; name defaults to the source's plus ' (fork)', "
+                "description to the source's. The new record carries "
+                "forked_from {id, slug, version}. The source is untouched and "
+                "the fork grants no authority over it. Same 409/422/429 rules "
+                "as registering one."
+            ),
+            "access": (
+                "Reading is public: GET /api/design-systems, GET "
+                "/api/design-systems/{ref} and every /ds/{ref} reader route "
+                "answer without a credential, by id or by slug alike. A "
+                "credential is still read when offered — it is the only thing "
+                "that can report `mine`, and it makes the answer private "
+                "(Cache-Control: private, no-store instead of no-cache, and "
+                "no CORS header). Because `mine` is all a credential buys "
+                "here, a rejected or malformed one is treated as anonymous: "
+                "a public read never answers 401 or 400 over a credential it "
+                "did not need. An unhydrated index answers 503, never 404. "
+                "Writing stays the owner's: only the owning project may add a "
+                "version, change name/description or delete. Anyone may fork."
+            ),
             "roles": ROLE_TYPES,
             "derived": {
                 "css": "/ds/{ref}/css?mode=all|light|dark",
@@ -5381,10 +5416,14 @@ def context(request: Request) -> dict:
                 "newest first, with no credential; GET /ds?format=json is the "
                 "same list for machines and is readable cross-origin. It "
                 "carries name, slug, description, owner project name, head "
-                "version, updated_at, resolved swatches and reader urls — not "
-                "the owner project id, the stack host or a `mine` flag. Agents "
-                "that hold a Keboola credential should still use GET "
-                "/api/design-systems, which reports both."
+                "version, updated_at, forked_from, resolved swatches and "
+                "reader urls. GET /api/design-systems needs no credential "
+                "either and is readable cross-origin too; what it adds is the "
+                "owner's project id and stack host — public as well — and the "
+                "version list, plus `mine` for a caller who does send a "
+                "credential. `mine` is the only field a credential buys, so "
+                "an unusable one on either route is treated as anonymous "
+                "rather than refused."
             ),
             "role_variables": (
                 "Every declared role is also emitted as a stable alias in "
@@ -10695,10 +10734,19 @@ class DesignSystemVersionBody(BaseModel):
     note: str | None = None
 
 
+class DesignSystemForkBody(BaseModel):
+    slug: str
+    name: str | None = None
+    description: str | None = None
+    note: str | None = None
+    #: Which version of the source to copy. Omitted means its head.
+    version: int | None = None
+
+
 #: Shared OpenAPI descriptions for the design-system path parameters.
 DS_REF_DESC = (
-    "A design system's public id (ds_...) or its slug. A slug is readable "
-    "only with a Keboola credential."
+    "A design system's public id (ds_...) or its slug. Both are public; a "
+    "credential only adds the caller's own `mine` flag."
 )
 DS_VERSION_DESC = "Version number of the design system, starting at 1."
 DS_QUERY_V_DESC = (
@@ -10832,6 +10880,28 @@ def _private(response: JSONResponse) -> JSONResponse:
     return response
 
 
+def _cacheability(caller: Owner | None, response: JSONResponse) -> JSONResponse:
+    """Mark a catalogue answer by whether a credential shaped it.
+
+    A credentialed answer carries ``mine``, which is different for every
+    caller, so no shared cache may keep it — and it is never readable
+    cross-origin either, or a page on any origin could spend the reader's
+    credential. An anonymous answer is the same for everybody: it only needs
+    revalidating, and a browser page must be able to read it, because this is
+    the list that points at every bundle. The rule is about the credential,
+    never about how the reference was spelled.
+    """
+    if caller is not None:
+        return _private(response)
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # Exposed *and* sent, as on the reader routes: a client told to look for
+    # this header must actually find one.
+    response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
+    response.headers["X-Hub-Version"] = SERVICE_VERSION
+    return response
+
+
 async def _json_object_body(request: Request) -> dict[str, Any]:
     """The request body as a JSON object.
 
@@ -10857,6 +10927,20 @@ def _claim_ds_version_slot(app_obj: FastAPI | None, owner_key: str) -> bool:
     return used <= settings.ds_max_versions_per_day
 
 
+def _ds_reader_hydrated(designs: DesignSystemStore) -> None:
+    """A read needs the index too, and 404 would be the wrong way to say so.
+
+    An unhydrated index cannot tell "no such design system" from "not loaded
+    yet", and a 404 is a lie a reader (or an agent following a link) would
+    cache. 503 is what ``/ds`` and the reader routes already answer.
+    """
+    if not designs.hydrated:
+        raise HTTPException(
+            status_code=503,
+            detail="design-system index is not available yet; retry shortly",
+        )
+
+
 def _ds_require_hydrated(designs: DesignSystemStore) -> None:
     """A write needs the index: uniqueness cannot be proven without it."""
     if not designs.hydrated:
@@ -10867,15 +10951,21 @@ def _ds_require_hydrated(designs: DesignSystemStore) -> None:
 
 
 @app.get("/api/design-systems", tags=["design systems"])
-def list_design_systems(
-    request: Request, auth: tuple[Owner, str] = Depends(require_owner)
-) -> JSONResponse:
-    """The organisation's whole catalogue; ``mine`` marks the caller's own."""
+def list_design_systems(request: Request) -> JSONResponse:
+    """The organisation's whole catalogue; ``mine`` marks the caller's own.
+
+    Public since 0.20.0. ``GET /ds`` already publishes every name, slug and
+    description, so requiring a credential here protected nothing and only
+    made the machine-readable list harder to reach than the human one. A
+    credential is still *read* when one is offered: it is the only thing that
+    can answer ``mine``.
+    """
     ensure_hydrated(request.app)
-    caller, _ = auth
+    caller = caller_of(request)
     designs: DesignSystemStore = request.app.state.designs
+    _ds_reader_hydrated(designs)
     rows = [_ds_projection(request, m, caller) for m in designs.list_all()]
-    return _private(JSONResponse({"design_systems": rows}))
+    return _cacheability(caller, JSONResponse({"design_systems": rows}))
 
 
 @app.post("/api/design-systems", status_code=201, tags=["design systems"])
@@ -10889,15 +10979,7 @@ def create_design_system(
     owner, _ = auth
     designs: DesignSystemStore = request.app.state.designs
     _ds_require_hydrated(designs)
-    slug = body.slug.strip()
-    if not SLUG_RE.match(slug) or DesignSystemStore.is_id_shaped(slug):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "slug must match ^[a-z0-9][a-z0-9-]{1,39}$ and may not look "
-                "like an id"
-            ),
-        )
+    slug = _ds_slug_or_422(body.slug)
     name = _validated_text(
         body.name, max_chars=settings.ds_max_name_chars, what="name", required=True
     )
@@ -10977,22 +11059,24 @@ def create_design_system(
 
 @app.get("/api/design-systems/{ref}", tags=["design systems"])
 def read_design_system(
-    request: Request,
-    ref: str = PathParam(..., description=DS_REF_DESC),
-    auth: tuple[Owner, str] = Depends(require_owner),
+    request: Request, ref: str = PathParam(..., description=DS_REF_DESC)
 ) -> JSONResponse:
-    """One design system with its version list."""
+    """One design system with its version list. Public since 0.20.0."""
     ensure_hydrated(request.app)
-    caller, _ = auth
-    meta = _ds_resolve_for_management(request, ref)
+    caller = caller_of(request)
     designs: DesignSystemStore = request.app.state.designs
-    if designs.head_version(meta.id) is None and meta.owner_key != caller.key:
+    _ds_reader_hydrated(designs)
+    meta = _ds_resolve_for_management(request, ref)
+    if designs.head_version(meta.id) is None and (
+        caller is None or meta.owner_key != caller.key
+    ):
         # A meta-only record is a registration in flight: inert to everybody
         # but its owner, who still needs to see and delete it.
         raise HTTPException(status_code=404, detail="no such design system")
     rows = [v.public_row() for v in designs.list_versions(meta.id)]
-    return _private(
-        JSONResponse({**_ds_projection(request, meta, caller), "versions": rows})
+    return _cacheability(
+        caller,
+        JSONResponse({**_ds_projection(request, meta, caller), "versions": rows}),
     )
 
 
@@ -11102,6 +11186,160 @@ def add_design_system_version(
     payload = {
         **_ds_projection(request, designs.get_meta(meta.id), owner),
         "version": version.version,
+        "warnings": warnings,
+    }
+    return _private(JSONResponse(payload, status_code=201))
+
+
+def _ds_slug_or_422(slug: str) -> str:
+    """The shared slug rule for registering and for forking."""
+    slug = slug.strip()
+    if not SLUG_RE.match(slug) or DesignSystemStore.is_id_shaped(slug):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "slug must match ^[a-z0-9][a-z0-9-]{1,39}$ and may not look "
+                "like an id"
+            ),
+        )
+    return slug
+
+
+@app.post(
+    "/api/design-systems/{ref}/fork", status_code=201, tags=["design systems"]
+)
+def fork_design_system(
+    body: DesignSystemForkBody,
+    request: Request,
+    ref: str = PathParam(..., description=DS_REF_DESC),
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> JSONResponse:
+    """Copy one version of any design system into a new one you own.
+
+    Reading is public, so anybody can already lift a bundle out by hand and
+    register it again; this makes that one call and, more importantly, records
+    where the copy came from. Nothing about the source changes — not its
+    owner, not its versions — and owning a fork grants no authority over it.
+
+    The copied bundle is stored **as-is**, never re-validated: it was
+    normalised when the source stored it, and the source is proof it passed.
+    Re-validating would let a limit lowered afterwards make a design system
+    that is still readable suddenly unforkable.
+    """
+    ensure_hydrated(request.app)
+    owner, _ = auth
+    designs: DesignSystemStore = request.app.state.designs
+    _ds_require_hydrated(designs)
+    # The caller's own body is checked before anything is looked up, exactly
+    # as registration does it: a request that could never succeed says so for
+    # the reason the caller can fix, not for whatever it happened to hit first.
+    slug = _ds_slug_or_422(body.slug)
+    if body.version is not None and body.version < 1:
+        raise HTTPException(
+            status_code=422, detail="version must be a positive integer"
+        )
+    source = _ds_resolve_for_management(request, ref)
+    if designs.head_version(source.id) is None:
+        # A meta-only record has nothing to copy and is not public either.
+        raise HTTPException(status_code=404, detail="no such design system")
+    origin = designs.get_version(source.id, body.version)
+    if origin is None:
+        raise HTTPException(status_code=404, detail="no such version")
+    name = (
+        _validated_text(
+            body.name,
+            max_chars=settings.ds_max_name_chars,
+            what="name",
+            required=True,
+        )
+        if body.name is not None
+        else f"{source.name} (fork)"[: settings.ds_max_name_chars]
+    )
+    description = (
+        _validated_text(
+            body.description,
+            max_chars=settings.ds_max_description_chars,
+            what="description",
+        )
+        if body.description is not None
+        else source.description
+    )
+    note = _validated_text(
+        body.note, max_chars=settings.ds_max_note_chars, what="note"
+    )
+    # Deep copies: the store hands out the cached envelope's own objects, and
+    # the fork must never share mutable structure with the source.
+    bundle = copy.deepcopy(origin.bundle)
+    warnings = copy.deepcopy(origin.warnings)
+    forked_from = {
+        "id": source.id,
+        "slug": source.slug,
+        "version": origin.version,
+    }
+    now = _now()
+    ds_id = "ds_" + new_artifact_id()
+    # Same check-then-act pair as registration -- slug uniqueness and the
+    # caller's own count -- so the same lock, and the count is the *forker's*.
+    with _DS_CREATE_LOCK:
+        if designs.resolve_ref(slug) is not None:
+            raise HTTPException(status_code=409, detail="slug already registered")
+        if designs.count_owner(owner.key) >= settings.ds_max_per_project:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"this project already holds {settings.ds_max_per_project} "
+                    "design systems"
+                ),
+            )
+        if not _claim_ds_version_slot(request.app, owner.key):
+            raise HTTPException(
+                status_code=429,
+                detail="daily design-system version budget exhausted",
+            )
+        meta = DesignSystemMeta(
+            id=ds_id,
+            slug=slug,
+            name=name,
+            description=description,
+            owner=_identity(owner),
+            created_at=now,
+            updated_at=now,
+            forked_from=forked_from,
+        )
+        first = DesignSystemVersion(
+            id=ds_id,
+            version=1,
+            note=note,
+            author=_identity(owner),
+            created_at=now,
+            bundle=bundle,
+            warnings=warnings,
+            # A copy is a copy: the envelope keeps the schema generation it
+            # was written under, rather than claiming to be a fresh one.
+            schema=origin.schema,
+        )
+        try:
+            designs.create(meta, first)
+        except SlugTaken as exc:
+            raise HTTPException(
+                status_code=409, detail="slug already registered"
+            ) from exc
+        except NotHydrated as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="design-system index is not available yet; retry shortly",
+            ) from exc
+    logger.info(
+        "Forked design system %s v%s as %s (%s) for project %s",
+        source.id,
+        origin.version,
+        ds_id,
+        slug,
+        owner.project_id,
+    )
+    payload = {
+        **_ds_projection(request, meta, owner),
+        "version": 1,
         "warnings": warnings,
     }
     return _private(JSONResponse(payload, status_code=201))
@@ -11252,30 +11490,21 @@ def _ds_reader(
 ) -> tuple[DesignSystemMeta, DesignSystemVersion]:
     """Resolve a reader reference to (meta, version), or raise.
 
-    An id is a public capability, exactly like ``/a/{id}``. A slug is not: it
-    is guessable, so reading by slug requires a Keboola credential — and the
-    credential is checked *before* the lookup, so an unauthenticated caller
-    gets the same 401 whether or not the slug exists.
+    An id is a public capability, exactly like ``/a/{id}``. Since 0.20.0 a
+    slug is readable too: ``GET /ds`` lists every slug on this hub, so the
+    credential that used to be required before the lookup was guarding an
+    existence oracle that no longer exists. Both spellings now answer the same
+    way, and only the *credential* — not the spelling — decides whether the
+    answer is private (see :func:`_ds_response`).
     """
     ensure_hydrated(request.app)
     designs: DesignSystemStore = request.app.state.designs
-    if not DesignSystemStore.is_id_shaped(ref):
-        if not SLUG_RE.match(ref):
-            raise HTTPException(status_code=404, detail="no such design system")
-        if caller_of(request) is None:
-            raise HTTPException(
-                status_code=401,
-                detail=(
-                    "a Keboola credential is required to read a design system "
-                    "by name"
-                ),
-            )
+    if not DesignSystemStore.is_id_shaped(ref) and not SLUG_RE.match(ref):
+        raise HTTPException(status_code=404, detail="no such design system")
+    # A credential is optional here, but when one is offered the answer was
+    # computed with it, so it must not land in a shared cache.
+    if caller_of(request) is not None:
         request.state.ds_private = True
-    # After the slug branch on purpose: answering 503 before the credential
-    # check would turn the hydration state into an oracle for slug existence.
-    # An unhydrated index cannot tell "no such design system" from "not loaded
-    # yet", and answering 404 for a system that does exist is a lie a reader
-    # (or an agent following a link) would cache.
     if not designs.hydrated:
         raise HTTPException(
             status_code=503,
@@ -11292,17 +11521,17 @@ def _ds_reader(
 
 
 def _ds_response(request: Request, response: Response, *, cors: bool = True) -> Response:
-    """Mark a design-system read according to how it was resolved.
+    """Mark a design-system read according to how it was *authenticated*.
 
-    A slug-resolved read was credentialed, so no shared cache may keep it —
-    and it is never readable cross-origin either, or a page on any origin
-    could spend the reader's credential for its own content.
+    A credentialed read is private: no shared cache may keep it, and it is
+    never readable cross-origin either, or a page on any origin could spend
+    the reader's credential for its own content.
 
-    An id-resolved *machine* read is the opposite: the id **is** the
-    capability, the answer is already public, and a browser page on another
-    origin (the switcher demo above all) must be able to read it. Only a `GET`
-    with no custom headers reaches here, which is a CORS simple request — so
-    no preflight handling is needed, just the headers below.
+    An anonymous *machine* read is the opposite: the answer is public whether
+    it was reached by id or by slug, and a browser page on another origin (the
+    switcher demo above all) must be able to read it. Only a `GET` with no
+    custom headers reaches here, which is a CORS simple request — so no
+    preflight handling is needed, just the headers below.
 
     ``cors=False`` is for the HTML style-guide page: nothing fetches it
     cross-origin, and a header that grants an ability nobody uses is one more
@@ -11405,6 +11634,7 @@ def _gallery_rows(request: Request) -> list[dict[str, Any]]:
                 "owner": {"project_name": meta.owner.get("project_name")},
                 "head_version": version.version,
                 "updated_at": meta.updated_at,
+                "forked_from": meta.forked_from,
                 "swatches": _ds_swatches(version),
                 "urls": {k: urls[k] for k in ("page", "bundle", "css", "starter")},
             }
@@ -11438,9 +11668,9 @@ def design_systems_gallery(
     """Every design system with at least one version, newest change first.
 
     Public and uncredentialed, which is the point: this hub's design systems
-    are meant to be seen. It therefore makes names, slugs and descriptions
-    public -- the catalogue API stays credentialed, because only that one
-    reports ownership and the caller's own ``mine`` flag.
+    are meant to be seen. The catalogue API is public too since 0.20.0; what
+    it adds over this list is the full owner and the caller's own ``mine``
+    flag, which is what a credential still buys there.
     """
     ensure_hydrated(request.app)
     designs: DesignSystemStore = request.app.state.designs
