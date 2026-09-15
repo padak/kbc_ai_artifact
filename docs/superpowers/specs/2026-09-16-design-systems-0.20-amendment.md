@@ -35,6 +35,15 @@ from.
   credentialed request → `private, no-store`; anonymous → `no-cache`.
 - A meta-only (inert) record — a registration that died between its two
   Storage writes — stays 404 for everyone except its owner, unchanged.
+- Because `mine` is the only field a credential buys on these routes, a
+  rejected or malformed credential on a public read is treated as anonymous
+  (`mine: false`), never as 401 or 400: refusing a read over a credential the
+  read did not need would be worse than ignoring it.
+- The anonymous answers carry `Access-Control-Allow-Origin: *`,
+  `Access-Control-Expose-Headers: X-Hub-Version` and `X-Hub-Version`, like the
+  id-resolved reader routes: this is the list that points at every bundle, so
+  a browser page must be able to read it. An unhydrated index answers 503 on
+  these routes too, never a 404 a reader would cache.
 
 ### 2. Writing stays the owner's
 
@@ -68,6 +77,13 @@ immutable; nothing about ownership changes.
   JSON and tolerated when absent (every record written before 0.20.0). It is
   reported in every projection as `forked_from: {...} | null` and in the
   gallery JSON; the gallery card renders "forked from `<slug>`".
+- **Order of checks:** the caller's own body first — slug (422) and
+  `version` (422) — and only then the source and the requested version, so a
+  request that could never succeed says so for the reason the caller can fix.
+  A `forked_from` in the request body is ignored; the hub records the source
+  it actually copied.
+- **Envelope:** the new version keeps the source version's `schema` stamp
+  rather than claiming to be a fresh generation.
 - **Limits:** the same rules as registration — 409 when the slug is taken,
   422 on an invalid slug or name, 429 on the per-project cap or the daily
   version budget, all under the same `_DS_CREATE_LOCK`. `count_owner` applies

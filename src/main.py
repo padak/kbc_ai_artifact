@@ -5395,9 +5395,12 @@ def context(request: Request) -> dict:
                 "credential is still read when offered — it is the only thing "
                 "that can report `mine`, and it makes the answer private "
                 "(Cache-Control: private, no-store instead of no-cache, and "
-                "no CORS header). Writing stays the owner's: only the owning "
-                "project may add a version, change name/description or "
-                "delete. Anyone may fork."
+                "no CORS header). Because `mine` is all a credential buys "
+                "here, a rejected or malformed one is treated as anonymous: "
+                "a public read never answers 401 or 400 over a credential it "
+                "did not need. An unhydrated index answers 503, never 404. "
+                "Writing stays the owner's: only the owning project may add a "
+                "version, change name/description or delete. Anyone may fork."
             ),
             "roles": ROLE_TYPES,
             "derived": {
@@ -5413,10 +5416,14 @@ def context(request: Request) -> dict:
                 "newest first, with no credential; GET /ds?format=json is the "
                 "same list for machines and is readable cross-origin. It "
                 "carries name, slug, description, owner project name, head "
-                "version, updated_at, resolved swatches and reader urls — not "
-                "the owner project id, the stack host or a `mine` flag. Agents "
-                "that hold a Keboola credential should still use GET "
-                "/api/design-systems, which reports both."
+                "version, updated_at, forked_from, resolved swatches and "
+                "reader urls. GET /api/design-systems needs no credential "
+                "either and is readable cross-origin too; what it adds is the "
+                "owner's project id and stack host — public as well — and the "
+                "version list, plus `mine` for a caller who does send a "
+                "credential. `mine` is the only field a credential buys, so "
+                "an unusable one on either route is treated as anonymous "
+                "rather than refused."
             ),
             "role_variables": (
                 "Every declared role is also emitted as a stable alias in "
@@ -10877,13 +10884,21 @@ def _cacheability(caller: Owner | None, response: JSONResponse) -> JSONResponse:
     """Mark a catalogue answer by whether a credential shaped it.
 
     A credentialed answer carries ``mine``, which is different for every
-    caller, so no shared cache may keep it. An anonymous answer is the same
-    for everybody and only needs revalidating. The rule is about the
-    credential, never about how the reference was spelled.
+    caller, so no shared cache may keep it — and it is never readable
+    cross-origin either, or a page on any origin could spend the reader's
+    credential. An anonymous answer is the same for everybody: it only needs
+    revalidating, and a browser page must be able to read it, because this is
+    the list that points at every bundle. The rule is about the credential,
+    never about how the reference was spelled.
     """
     if caller is not None:
         return _private(response)
     response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # Exposed *and* sent, as on the reader routes: a client told to look for
+    # this header must actually find one.
+    response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
+    response.headers["X-Hub-Version"] = SERVICE_VERSION
     return response
 
 
@@ -10912,6 +10927,20 @@ def _claim_ds_version_slot(app_obj: FastAPI | None, owner_key: str) -> bool:
     return used <= settings.ds_max_versions_per_day
 
 
+def _ds_reader_hydrated(designs: DesignSystemStore) -> None:
+    """A read needs the index too, and 404 would be the wrong way to say so.
+
+    An unhydrated index cannot tell "no such design system" from "not loaded
+    yet", and a 404 is a lie a reader (or an agent following a link) would
+    cache. 503 is what ``/ds`` and the reader routes already answer.
+    """
+    if not designs.hydrated:
+        raise HTTPException(
+            status_code=503,
+            detail="design-system index is not available yet; retry shortly",
+        )
+
+
 def _ds_require_hydrated(designs: DesignSystemStore) -> None:
     """A write needs the index: uniqueness cannot be proven without it."""
     if not designs.hydrated:
@@ -10934,6 +10963,7 @@ def list_design_systems(request: Request) -> JSONResponse:
     ensure_hydrated(request.app)
     caller = caller_of(request)
     designs: DesignSystemStore = request.app.state.designs
+    _ds_reader_hydrated(designs)
     rows = [_ds_projection(request, m, caller) for m in designs.list_all()]
     return _cacheability(caller, JSONResponse({"design_systems": rows}))
 
@@ -11034,8 +11064,9 @@ def read_design_system(
     """One design system with its version list. Public since 0.20.0."""
     ensure_hydrated(request.app)
     caller = caller_of(request)
-    meta = _ds_resolve_for_management(request, ref)
     designs: DesignSystemStore = request.app.state.designs
+    _ds_reader_hydrated(designs)
+    meta = _ds_resolve_for_management(request, ref)
     if designs.head_version(meta.id) is None and (
         caller is None or meta.owner_key != caller.key
     ):
@@ -11199,16 +11230,21 @@ def fork_design_system(
     owner, _ = auth
     designs: DesignSystemStore = request.app.state.designs
     _ds_require_hydrated(designs)
+    # The caller's own body is checked before anything is looked up, exactly
+    # as registration does it: a request that could never succeed says so for
+    # the reason the caller can fix, not for whatever it happened to hit first.
+    slug = _ds_slug_or_422(body.slug)
+    if body.version is not None and body.version < 1:
+        raise HTTPException(
+            status_code=422, detail="version must be a positive integer"
+        )
     source = _ds_resolve_for_management(request, ref)
     if designs.head_version(source.id) is None:
         # A meta-only record has nothing to copy and is not public either.
         raise HTTPException(status_code=404, detail="no such design system")
-    if body.version is not None and body.version < 1:
-        raise HTTPException(status_code=422, detail="version must be a positive integer")
     origin = designs.get_version(source.id, body.version)
     if origin is None:
         raise HTTPException(status_code=404, detail="no such version")
-    slug = _ds_slug_or_422(body.slug)
     name = (
         _validated_text(
             body.name,
@@ -11278,6 +11314,9 @@ def fork_design_system(
             created_at=now,
             bundle=bundle,
             warnings=warnings,
+            # A copy is a copy: the envelope keeps the schema generation it
+            # was written under, rather than claiming to be a fresh one.
+            schema=origin.schema,
         )
         try:
             designs.create(meta, first)

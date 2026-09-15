@@ -916,7 +916,9 @@ def test_ds_page_has_a_how_it_works_strip(api):
     for step in ("Register", "Agent lists &amp; picks", "Starter + components",
                  "Publish with provenance"):
         assert step in page
-    assert "Keboola credential required" in page
+    # 0.20.0: the catalogue is public, and the page must not say otherwise.
+    assert "Keboola credential required" not in page
+    assert "no credential needed" in page
     assert 'href="https://testserver/context"' in page
 
 
@@ -1238,3 +1240,106 @@ def test_context_documents_the_fork_route(api):
     assert "token" in entry["auth"]
     assert "fork" in entry["purpose"].lower()
     assert "fork" in body["design_systems"]
+
+
+# --------------------------------------------------------------------------
+# 0.20.0, fix round 1
+# --------------------------------------------------------------------------
+
+
+def test_an_unusable_credential_on_a_public_read_is_simply_anonymous(api):
+    """`mine` is the only credentialed field, so a bad token is no error."""
+    _register(api.client)
+    bad = {"X-StorageApi-Token": "rejected-token", "X-Kbc-Stack": "us"}
+    r = api.client.get("/api/design-systems", headers=bad)
+    assert r.status_code == 200, r.text
+    assert r.json()["design_systems"][0]["mine"] is False
+    one = api.client.get("/api/design-systems/corp", headers=bad)
+    assert one.status_code == 200 and one.json()["mine"] is False
+    # a malformed project header is no different
+    malformed = {**AUTH_HEADERS, "X-Storage-Project": "not-a-number"}
+    assert api.client.get("/api/design-systems", headers=malformed).status_code == 200
+
+
+def test_anonymous_catalogue_reads_are_readable_cross_origin(api):
+    """A browser page must be able to read the list that points at the bundles."""
+    _register(api.client)
+    for path in ("/api/design-systems", "/api/design-systems/corp"):
+        from src import main
+
+        r = api.client.get(path)
+        assert r.status_code == 200, path
+        assert r.headers[CORS_ORIGIN] == "*", path
+        assert r.headers[CORS_EXPOSE] == "X-Hub-Version", path
+        assert r.headers["X-Hub-Version"] == main.SERVICE_VERSION, path
+        credentialed = api.client.get(path, headers=AUTH_HEADERS)
+        assert credentialed.headers["Cache-Control"] == "private, no-store", path
+        assert CORS_ORIGIN not in credentialed.headers, path
+
+
+def test_catalogue_is_503_while_the_index_is_unhydrated(api):
+    """404-shaped silence would be a lie; the gallery already answers 503."""
+    _register(api.client)
+    designs = api.client.app.state.designs
+    designs.hydrated = False
+    try:
+        assert api.client.get("/api/design-systems").status_code == 503
+        assert api.client.get("/api/design-systems/corp").status_code == 503
+    finally:
+        designs.hydrated = True
+    assert api.client.get("/api/design-systems").status_code == 200
+
+
+def test_fork_validates_the_slug_before_resolving_the_source(api):
+    """Registration checks the slug first; forking must answer the same way."""
+    _register(api.client)
+    r = _fork(api.client, slug="Nope", version=99)
+    assert r.status_code == 422, r.text
+    assert _fork(api.client, ref="nothing-here", slug="Nope").status_code == 422
+
+
+def test_fork_keeps_the_source_versions_schema(api):
+    """A copy is a copy: the envelope's schema stamp travels with the bundle."""
+    src = _register(api.client).json()
+    store = api.client.app.state.designs
+    # The store hands out the cached envelope itself, so stamping it here is
+    # what a version written by another schema generation would look like.
+    stored = store.get_version(src["id"], 1)
+    stored.schema += 7
+    forked = _fork(api.client).json()
+    assert store.get_version(forked["id"], 1).schema == stored.schema
+
+
+def test_fork_of_a_meta_only_source_is_404(api):
+    ds_id = _register(api.client).json()["id"]
+    _make_meta_only(api, ds_id)
+    assert _fork(api.client, ref=ds_id).status_code == 404
+
+
+def test_fork_body_cannot_dictate_its_own_provenance(api):
+    src = _register(api.client).json()
+    forked = _fork(
+        api.client, forked_from={"id": "ds_lies", "slug": "lies", "version": 9}
+    )
+    assert forked.status_code == 201
+    assert forked.json()["forked_from"] == {
+        "id": src["id"],
+        "slug": "corp",
+        "version": 1,
+    }
+
+
+def test_editing_a_fork_preserves_its_provenance(api):
+    src = _register(api.client).json()
+    forked = _fork(api.client).json()
+    r = api.client.put(
+        f"/api/design-systems/{forked['id']}",
+        json={"name": "Ours", "description": "Changed"},
+        headers=OTHER_AUTH_HEADERS,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["forked_from"] == {"id": src["id"], "slug": "corp", "version": 1}
+    api.client.app.state.designs.hydrate()
+    assert api.client.get(f"/api/design-systems/{forked['id']}").json()[
+        "forked_from"
+    ]["id"] == src["id"]

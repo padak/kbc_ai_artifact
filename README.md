@@ -286,6 +286,15 @@ ref — that makes an answer private. The one exception is a *meta-only*
 record, a registration that died between its two Storage writes: it stays 404
 for everyone but its owner, who still needs to see and delete it.
 
+Because `mine` is the only field a credential buys on these routes, a rejected
+or malformed credential on a public read is treated as **anonymous** — the
+answer is a normal 200 with `mine: false`, never a 401 or a 400. Refusing a
+read over a credential the read did not need would be worse than ignoring it.
+The anonymous answers are readable cross-origin (`Access-Control-Allow-Origin:
+*`, `Access-Control-Expose-Headers: X-Hub-Version`), because this is the list
+that points at every bundle; while the index is still loading they answer 503,
+never a 404 a reader would cache.
+
 Writing is unchanged and stays the owning project's: only it may append a
 version, edit the name or description, or delete. What anyone with a
 credential may now do instead is **fork** — `POST
