@@ -26,3 +26,14 @@ def test_ds_env_overrides(monkeypatch):
     s = load_settings()
     assert s.ds_max_per_project == 3
     assert s.ds_font_hosts == ("fonts.googleapis.com", "fonts.bunny.net")
+
+
+def test_reader_menu_default_is_on(monkeypatch):
+    """HUB_READER_MENU_DEFAULT decides what a *new* artifact gets."""
+    monkeypatch.delenv("HUB_READER_MENU_DEFAULT", raising=False)
+    assert load_settings().reader_menu_default is True
+
+
+def test_reader_menu_default_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv("HUB_READER_MENU_DEFAULT", "0")
+    assert load_settings().reader_menu_default is False

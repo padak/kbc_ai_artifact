@@ -509,6 +509,17 @@ class ArtifactMeta:
     # reason ``invitations`` is: positional ArtifactMeta(...) construction
     # elsewhere keeps meaning what it meant before this field existed.
     webhook_key_epochs: dict[str, dict] = field(default_factory=dict)
+    # Does the hub's own reader menu -- the small corner control on
+    # /a/{share_id} that tells a reader how to comment, see the history or
+    # propose a version -- appear on this artifact's frame page? True for
+    # every artifact, including every meta file written before 0.18.0, because
+    # :meth:`from_json` reads a missing key as the default its caller passes
+    # (True). It is hub chrome, never part of the published bytes: /a/{id}/raw
+    # and every export are identical whichever way this is set. Declared last,
+    # after ``webhook_key_epochs``, for the same reason that field is declared
+    # after ``version_high_water``: positional ArtifactMeta(...) construction
+    # elsewhere keeps meaning what it meant before this field existed.
+    reader_menu: bool = True
 
     def __post_init__(self) -> None:
         """Normalize the enum-ish fields so an unknown value can never leak in."""
@@ -543,6 +554,7 @@ class ArtifactMeta:
         else:
             self.webhooks = []
         self.webhook_key_epochs = _clean_webhook_key_epochs(self.webhook_key_epochs)
+        self.reader_menu = bool(self.reader_menu)
         self.invitations = _clean_invitations(self.invitations)
 
     @property
@@ -620,6 +632,7 @@ class ArtifactMeta:
             "invitations": self.invitations,
             "version_high_water": self.version_high_water,
             "webhook_key_epochs": self.webhook_key_epochs,
+            "reader_menu": self.reader_menu,
         }
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -717,6 +730,11 @@ class ArtifactMeta:
             # the "never rotated" state — the receiver keeps verifying under
             # its original epoch-less key with no migration needed.
             webhook_key_epochs=data.get("webhook_key_epochs"),
+            # Absent in every meta file written before 0.18.0, and that has to
+            # mean "on": the menu is the answer to "how do I comment on this?",
+            # and an artifact published last month deserves it as much as one
+            # published today. __post_init__ coerces whatever is here to bool.
+            reader_menu=data.get("reader_menu", True),
         )
 
 
