@@ -4,6 +4,31 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.19.0 — A front door for design systems (2026-09-15)
+
+- **`/ds` is now a page that explains itself.** It used to be a bare list of
+  cards: someone handed the link saw names and colour strips, and no reason to
+  care. It now opens with what a hosted design system actually buys you —
+  register your brand once (tokens exported from Figma, a written guide, HTML
+  components) and every document your agents publish comes out on-brand,
+  versioned and presented by the hub — followed by three reasons it holds up,
+  the gallery itself, a four-step walk through how a document gets styled, and
+  where an agent starts reading.
+- **The live style switcher is embedded on the page.** One document, ten looks:
+  pick a design system in the demo's top bar and only the CSS link changes. It
+  is the published switcher artifact, shown through its `/raw` view inside a
+  sandboxed frame with no same-origin access — the same treatment every
+  artifact page gives the document it wraps — and configured with the new
+  optional `HUB_STYLE_SWITCHER_URL`. Leave it unset and the section is simply
+  not there.
+- **The landing page links it.** "Design systems" now sits in the hero's link
+  row, next to the demo.
+- **Sample fix.** The `data-dashboard` sample's `chart-panel` component shipped
+  an empty `<canvas>`, which a style guide renders as a blank box because
+  nothing ever draws into it. It now shows a static inline SVG bar strip in the
+  system's own chart colours, and says in so many words that a real dashboard
+  replaces that SVG with a chart.js canvas.
+
 ## 0.18.1 — Every artifact explains itself (2026-09-15)
 
 _(0.18.0 was never released: its tag landed on the 0.17.0 commit by a scripting

@@ -1290,10 +1290,12 @@ names — read them there, never derive them (if a token path is literally named
 with `--ds-*` re-skins to another design system by pointing at that system's
 `/ds/{other-id}/css`, with no edit to its markup.
 
-**Public gallery.** `GET $HUB/ds` is a human-facing list of every design system
-registered on the hub, needing no credential (`?format=json` for the same rows);
-agents should keep using `GET $HUB/api/design-systems`, which is the only one
-that reports ownership and `mine`.
+**Public gallery.** `GET $HUB/ds` is the human front door for design systems --
+what they are, a live style switcher, how to register one, and the list of every
+design system registered on the hub -- needing no credential (`?format=json` for
+the same rows); agents should keep using `GET $HUB/api/design-systems`, which is
+the only one that reports ownership and `mine`. Send a person `$HUB/ds`, not the
+JSON.
 
 ### Registering a design system
 
