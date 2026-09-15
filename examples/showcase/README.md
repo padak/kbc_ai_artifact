@@ -29,6 +29,8 @@ field so the artifact carries its provenance. The style guide at `GET
 
 ## The ten sample systems
 
+Browse every registered design system, with swatches and links, in the public gallery: [artifact-hub-1304628444.hub.keboola.com/ds](https://artifact-hub-1304628444.hub.keboola.com/ds).
+
 | Slug | Name | For whom | Look |
 |---|---|---|---|
 | `tech-docs` | Technical Documentation | Engineers reading API/architecture references | Dense single column, monospace headings, one blue accent |
@@ -238,7 +240,7 @@ change to the document's markup. It is a good way to feel the difference
 between the ten sample systems above before committing one to a real
 publish.
 
-Live: [Style switcher demo](SWITCHER_DEMO_URL)
+Live: [Style switcher demo](https://artifact-hub-1304628444.hub.keboola.com/a/OZVHD9MvbkJqvwmiql5pcIkB)
 
 ## Register your own
 
