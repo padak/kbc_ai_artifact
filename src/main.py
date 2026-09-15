@@ -139,7 +139,14 @@ from src.security import (
     new_artifact_id,
 )
 from src.statedb import StateDB, foreign_writer_detected
-from src.tokens import EMITTED_TYPES, PRESERVED_TYPES, TokenSet, to_css, validate_document
+from src.tokens import (
+    EMITTED_TYPES,
+    PRESERVED_TYPES,
+    TokenSet,
+    TokenValidationError,
+    to_css,
+    validate_document,
+)
 from src.store import (
     ACCEPT_ALLOWLIST,
     ACCEPT_ANYONE,
@@ -1610,8 +1617,8 @@ app.openapi = custom_openapi
 def ensure_hydrated(app_obj: FastAPI) -> None:
     """Retry index hydration once per call while the indexes are not hydrated.
 
-    Covers both the artifact index and the comment-thread index; the single
-    flag flips only when both rebuilt. A failure here is not fatal: both stores
+    Covers all three indexes -- artifact, comment-thread and design-system;
+    the single flag flips only when all three rebuilt. A failure here is not fatal: both stores
     fall back to a per-artifact Storage lookup, so individual reads still work
     while the full index is missing.
     """
@@ -2012,6 +2019,54 @@ async def backend_error_handler(request: Request, exc: BackendError) -> Response
     return JSONResponse(
         status_code=502,
         content={"error": "storage backend unavailable", "detail": str(exc)},
+    )
+
+
+class DerivedOutputError(RuntimeError):
+    """A *stored* design-system version could not be re-derived for a read.
+
+    Submitting a bundle validates it (422 on the way in, see
+    ``_bundle_or_422``); reading one derives from it again, under whatever
+    limits are configured *now*. An operator who lowers ``HUB_DS_MAX_TOKENS``
+    (or either depth bound) after a version was stored, a defensive
+    ``ValueError`` from :mod:`src.designkit`, or an envelope that has lost a
+    key are all failures of stored content, not of the request -- 502, not
+    500, and never a stack trace to the caller.
+    """
+
+
+#: What both derivation failures answer with. The detail never carries bundle
+#: content: an operator reads the log line, a caller only learns *that* the
+#: stored version cannot be rendered.
+_DERIVED_ERROR = "stored design system cannot be rendered"
+
+
+@app.exception_handler(TokenValidationError)
+async def token_validation_error_handler(
+    request: Request, exc: TokenValidationError
+) -> Response:
+    """A stored token document that no longer validates is a 502.
+
+    Reached only from a read path: a *submitted* document is validated inside
+    ``_bundle_or_422`` and answers 422 long before this handler.
+    """
+    logger.error("Stored token document no longer validates on %s", request.url.path)
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": _DERIVED_ERROR,
+            "detail": "stored token document no longer validates under the "
+            "configured limits",
+        },
+    )
+
+
+@app.exception_handler(DerivedOutputError)
+async def derived_output_error_handler(
+    request: Request, exc: DerivedOutputError
+) -> Response:
+    return JSONResponse(
+        status_code=502, content={"error": _DERIVED_ERROR, "detail": str(exc)}
     )
 
 
@@ -11027,6 +11082,32 @@ def _ds_cached(key: tuple, build):
     return value
 
 
+@contextmanager
+def _deriving(version: DesignSystemVersion):
+    """Derive an output from a *stored* version, mapping failure to 502.
+
+    A stored version is immutable but the environment around it is not: the
+    token limits can be lowered under it, :mod:`src.designkit` keeps defensive
+    ``ValueError`` guards, and an envelope written by an older shape can be
+    missing a key. None of those is the caller's fault, so none of them may
+    surface as a 500. The log line carries the identity of the version and the
+    exception type -- never bundle content.
+    """
+    try:
+        yield
+    except (TokenValidationError, ValueError, KeyError) as exc:
+        logger.error(
+            "Design system %s v%s cannot be rendered: %s",
+            version.id,
+            version.version,
+            type(exc).__name__,
+        )
+        raise DerivedOutputError(
+            f"{type(exc).__name__} while deriving design system "
+            f"{version.id} v{version.version}"
+        ) from exc
+
+
 def _ds_sets(version: DesignSystemVersion) -> tuple[TokenSet, TokenSet | None]:
     """The parsed (base, dark) token sets of one version."""
 
@@ -11038,7 +11119,8 @@ def _ds_sets(version: DesignSystemVersion) -> tuple[TokenSet, TokenSet | None]:
         )
         return base, dark
 
-    return _ds_cached(("sets", version.id, version.version), build)
+    with _deriving(version):
+        return _ds_cached(("sets", version.id, version.version), build)
 
 
 def _parse_v(v: str | None) -> int | None:
@@ -11083,6 +11165,16 @@ def _ds_reader(
                 ),
             )
         request.state.ds_private = True
+    # After the slug branch on purpose: answering 503 before the credential
+    # check would turn the hydration state into an oracle for slug existence.
+    # An unhydrated index cannot tell "no such design system" from "not loaded
+    # yet", and answering 404 for a system that does exist is a lie a reader
+    # (or an agent following a link) would cache.
+    if not designs.hydrated:
+        raise HTTPException(
+            status_code=503,
+            detail="design-system index is not available yet; retry shortly",
+        )
     ds_id = designs.resolve_ref(ref)
     meta = designs.get_meta(ds_id) if ds_id else None
     if meta is None or designs.head_version(meta.id) is None:
@@ -11111,19 +11203,25 @@ def design_system_style_guide(
     base, dark = _ds_sets(version)
     projection = _ds_projection(request, meta, caller_of(request))
     rows = [x.public_row() for x in request.app.state.designs.list_versions(meta.id)]
-    srcdoc = designkit.style_guide_html(
-        projection,
-        {**version.public_row(), "warnings": version.warnings},
-        version.bundle,
-        base,
-        dark,
-        chartjs_url=builder.CHARTJS_JS,
-        mermaid_url=builder.MERMAID_ESM,
-        render_markdown=builder._render_markdown_body,
-    )
-    html_out = pages.design_system_page(
-        base_url(request), projection, rows, version.version, srcdoc, SERVICE_VERSION
-    )
+    with _deriving(version):
+        srcdoc = designkit.style_guide_html(
+            projection,
+            {**version.public_row(), "warnings": version.warnings},
+            version.bundle,
+            base,
+            dark,
+            chartjs_url=builder.CHARTJS_JS,
+            mermaid_url=builder.MERMAID_ESM,
+            render_markdown=builder._render_markdown_body,
+        )
+        html_out = pages.design_system_page(
+            base_url(request),
+            projection,
+            rows,
+            version.version,
+            srcdoc,
+            SERVICE_VERSION,
+        )
     return _ds_response(request, HTMLResponse(html_out))
 
 
@@ -11216,10 +11314,11 @@ def design_system_css(
         raise HTTPException(
             status_code=404, detail="this design system has no dark mode"
         )
-    css = _ds_cached(
-        ("css", version.id, version.version, mode),
-        lambda: to_css(base, dark, mode=mode),
-    )
+    with _deriving(version):
+        css = _ds_cached(
+            ("css", version.id, version.version, mode),
+            lambda: to_css(base, dark, mode=mode),
+        )
     return _ds_response(
         request, Response(css, media_type="text/css; charset=utf-8")
     )
@@ -11234,16 +11333,17 @@ def design_system_starter(
     """A ready HTML skeleton with two slots to fill: {{TITLE}} and {{BODY}}."""
     _, version = _ds_reader(request, ref, v)
     base, dark = _ds_sets(version)
-    starter = _ds_cached(
-        ("starter", version.id, version.version),
-        lambda: designkit.starter_html(
-            version.bundle,
-            base,
-            dark,
-            chartjs_url=builder.CHARTJS_JS,
-            mermaid_url=builder.MERMAID_ESM,
-        ),
-    )
+    with _deriving(version):
+        starter = _ds_cached(
+            ("starter", version.id, version.version),
+            lambda: designkit.starter_html(
+                version.bundle,
+                base,
+                dark,
+                chartjs_url=builder.CHARTJS_JS,
+                mermaid_url=builder.MERMAID_ESM,
+            ),
+        )
     return _ds_response(request, _sandboxed_html(starter))
 
 

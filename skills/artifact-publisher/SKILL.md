@@ -1336,12 +1336,14 @@ The style guide at `GET /ds/<id>` (public, capability URL) shows the palette,
 typography, scale, live components, a sample chart and diagram, and the
 guidance — send that link to a human who asks what the brand looks like.
 
-Every reader route under `/ds/{ref}` also answers `HEAD`, and accepts `?v=N`
-to pin a specific version (omitted = head):
+Every reader route under `/ds/{ref}` also answers `HEAD`. The routes that
+serve a version — the style-guide page, `/bundle`, `/tokens`, `/css`,
+`/starter` and `/guidance` — accept `?v=N` to pin a specific version
+(omitted = head); `/versions` takes no `?v`, it lists them all.
 
 | Endpoint | Returns |
 |---|---|
-| `GET /ds/{ref}` | Style-guide page (HTML), sandboxed like a published artifact |
+| `GET /ds/{ref}` | Style-guide page: the style guide renders inside a sandboxed iframe on a hub-chrome page |
 | `GET /ds/{ref}/versions` | Version history JSON |
 | `GET /ds/{ref}/bundle` | `{..., version, head_version, bundle, variables, warnings, urls}` — the stored normalised bundle |
 | `GET /ds/{ref}/tokens` | `{tokens, modes}` |
