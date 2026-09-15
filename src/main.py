@@ -4096,6 +4096,7 @@ def landing(request: Request) -> HTMLResponse:
             SERVICE_VERSION,
             GITHUB_REPO_URL,
             settings.demo_url,
+            settings.design_demo_url,
         )
     )
 
@@ -5476,9 +5477,10 @@ def llms_txt_document(base: str) -> str:
         "update, review and moderate artifacts\n"
         f"- [Claude Code subagent]({base}/agent): a ready-to-install agent "
         "definition with the same knowledge\n"
-        f"- [Design systems]({base}/api/design-systems): catalogue of the "
-        "organisation's design systems (token required); each has a public "
-        f"style guide at {base}/ds/{{id}}\n"
+        f"- [Design systems]({base}/skill#design-systems): how an agent lists "
+        "the organisation's design systems (`GET /api/design-systems`, Keboola "
+        "credential required), picks one and publishes on-brand HTML; every "
+        f"design system has a public style guide at {base}/ds/{{id}}\n"
         f"- [Human landing page]({base}/) and [changelog]({base}/changelog)\n"
         "\n"
         "## Optional\n"

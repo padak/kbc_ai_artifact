@@ -146,6 +146,7 @@ h3 { font-size: .95rem; margin: 0 0 .35rem; }
 p { margin: .7rem 0; color: var(--ink-2); }
 
 code, pre, .mono { font-family: var(--font-mono); font-size: .85rem; }
+.card code, .note code { overflow-wrap: anywhere; }
 code { background: var(--accent-soft); color: var(--accent-ink);
   padding: .08rem .32rem; border-radius: 4px; }
 
@@ -2206,11 +2207,13 @@ def landing_page(
     service_version: str,
     github_url: str,
     demo_url: str | None = None,
+    design_demo_url: str | None = None,
 ) -> str:
     """Render the public landing page: what the hub is and how to drive it.
 
-    ``demo_url`` points at a published showcase artifact. It is optional:
-    when it is not configured the link is simply absent.
+    ``demo_url`` points at a published showcase artifact of the hub itself
+    and ``design_demo_url`` at the design-systems walkthrough. Both are
+    optional: when one is not configured its link is simply absent.
     """
     base = html.escape(base_url.rstrip("/"))
     version = html.escape(service_version)
@@ -2218,6 +2221,12 @@ def landing_page(
     demo_link = (
         f'<a class="primary" href="{html.escape(demo_url.rstrip("/"))}">See the demo</a>'
         if demo_url
+        else ""
+    )
+    design_demo_link = (
+        f'<a class="primary" href="{html.escape(design_demo_url.rstrip("/"))}">'
+        "See the design-systems demo</a> &middot; "
+        if design_demo_url
         else ""
     )
 
@@ -2306,7 +2315,7 @@ def landing_page(
                 "An organisation registers its design tokens (exported from "
                 "Figma), a written style guide and a library of HTML "
                 "components as a versioned design system. Every member's "
-                f'agent can list them with <code>GET {base}/api/design-systems</code>.',
+                "agent can list them with <code>GET /api/design-systems</code>.",
             ),
             _card(
                 "presented by the hub",
@@ -2448,7 +2457,7 @@ that is the only credential you need.</p>
 
 <h2 class="label">design systems</h2>
 <div class="grid">{design_systems}</div>
-<p class="note">Read how in <a href="{base}/skill">/skill</a> &middot;
+<p class="note">{design_demo_link}Read how in <a href="{base}/skill">/skill</a> &middot;
 machine manifest at <a href="{base}/context">/context</a></p>
 
 <h2 class="label">authentication</h2>

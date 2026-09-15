@@ -220,3 +220,21 @@ def test_landing_page_mentions_design_systems(api: Api) -> None:
     assert "/api/design-systems" in page
     assert "/ds/{id}" in page
     assert "/skill" in page
+
+
+def test_landing_page_design_systems_card_keeps_paths_short_and_links_the_demo(api, monkeypatch):
+    """The card quotes the route, never the absolute URL (it overflowed the card),
+    and the design-systems walkthrough gets its own link when configured."""
+    import dataclasses
+    from src import main
+
+    html_text = api.client.get("/").text
+    assert "<code>GET /api/design-systems</code>" in html_text
+    assert "/api/design-systems</code>" in html_text
+    assert "See the design-systems demo" not in html_text
+    monkeypatch.setattr(main, "settings", dataclasses.replace(
+        main.settings, demo_url="https://hub.example/a/hub-demo",
+        design_demo_url="https://hub.example/a/ds-demo"))
+    html_text = api.client.get("/").text
+    assert 'href="https://hub.example/a/hub-demo">See the demo</a>' in html_text
+    assert 'href="https://hub.example/a/ds-demo">See the design-systems demo</a>' in html_text
