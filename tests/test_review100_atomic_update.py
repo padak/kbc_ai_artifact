@@ -525,6 +525,9 @@ def test_successful_mixed_update_returns_the_unchanged_response_body(
         # Added with hosted design systems: the provenance this version
         # claims, or null. Still not a contract change to the ordering.
         "design_system",
+        # Added with the reader menu (0.18.0): whether the hub's corner menu
+        # is shown on this artifact's page. Owner-facing chrome, not ordering.
+        "reader_menu",
         *main.artifact_urls("https://testserver", artifact_id),
     }
 

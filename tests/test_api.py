@@ -7741,3 +7741,132 @@ def test_reader_menu_copy_link_has_a_visible_fallback():
     page = _frame_with_menu(reader_menu=True)
     assert "clipboard" in page
     assert 'id="ah-menu-url"' in page
+
+
+# --------------------------------------------------------------------------
+# Reader menu (0.18.0) -- API layer
+# --------------------------------------------------------------------------
+
+
+def test_reader_menu_is_on_for_a_new_artifact(api: Api) -> None:
+    resp = api.client.post(
+        "/api/artifacts", json={"markdown": "# Hi"}, headers=AUTH_HEADERS
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["reader_menu"] is True
+
+
+def test_reader_menu_put_toggles_and_echoes(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Hi")
+    off = api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": False},
+        headers=AUTH_HEADERS,
+    )
+    assert off.status_code == 200, off.text
+    assert off.json()["reader_menu"] is False
+    back = api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": True},
+        headers=AUTH_HEADERS,
+    )
+    assert back.json()["reader_menu"] is True
+
+
+def test_reader_menu_survives_a_restart(api: Api) -> None:
+    """The flag is in the meta file, so the rebuilt index still has it."""
+    artifact_id = _publish_markdown(api, "# Hi")
+    api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": False},
+        headers=AUTH_HEADERS,
+    )
+    meta = api.client.app.state.store.get_meta(artifact_id)
+    assert meta is not None and meta.reader_menu is False
+
+
+def test_reader_menu_reported_by_meta_and_listing(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Hi")
+    assert api.client.get(f"/a/{artifact_id}/meta").json()["reader_menu"] is True
+    api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": False},
+        headers=AUTH_HEADERS,
+    )
+    assert api.client.get(f"/a/{artifact_id}/meta").json()["reader_menu"] is False
+    rows = api.client.get("/api/artifacts", headers=AUTH_HEADERS).json()["artifacts"]
+    row = next(r for r in rows if r["id"] == artifact_id)
+    assert row["reader_menu"] is False
+
+
+def test_reader_menu_appears_on_the_artifact_page(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Hi")
+    page = api.client.get(f"/a/{artifact_id}").text
+    assert READER_MENU_LABEL in page
+    assert f"/a/{artifact_id}/review" in page
+    version = api.client.get(f"/a/{artifact_id}/v/1").text
+    assert READER_MENU_LABEL in version
+
+
+def test_reader_menu_can_be_switched_off_for_one_artifact(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Hi")
+    api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": False},
+        headers=AUTH_HEADERS,
+    )
+    assert READER_MENU_LABEL not in api.client.get(f"/a/{artifact_id}").text
+
+
+def test_reader_menu_never_touches_raw_or_export(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Hi")
+    raw_on = api.client.get(f"/a/{artifact_id}/raw").content
+    export_on = api.client.get(f"/a/{artifact_id}/export/markdown").content
+    assert READER_MENU_LABEL not in raw_on.decode()
+    api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": False},
+        headers=AUTH_HEADERS,
+    )
+    assert api.client.get(f"/a/{artifact_id}/raw").content == raw_on
+    assert api.client.get(f"/a/{artifact_id}/export/markdown").content == export_on
+
+
+def test_reader_menu_proposal_row_follows_the_artifact_setting(api: Api) -> None:
+    artifact_id = _publish_markdown(api, "# Hi")
+    assert "does not accept proposals" in api.client.get(f"/a/{artifact_id}").text
+    api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"accept_versions_mode": "anyone"},
+        headers=AUTH_HEADERS,
+    )
+    page = api.client.get(f"/a/{artifact_id}").text
+    assert "Propose a new version" in page
+    assert "does not accept proposals" not in page
+
+
+def test_reader_menu_is_not_a_destructive_route(api: Api, monkeypatch) -> None:
+    """The strictest destructive policy must not gate an ordinary setting."""
+    monkeypatch.setattr(
+        main,
+        "settings",
+        dataclasses.replace(api.settings, destructive_token_policy="admin"),
+    )
+    artifact_id = _publish_markdown(api, "# Hi")
+    resp = api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": False},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_context_reports_the_reader_menu_default(api: Api) -> None:
+    body = api.client.get("/context").json()
+    assert body["limits"]["reader_menu_default"] is True
+
+
+def test_admin_studio_has_a_reader_menu_checkbox(api: Api) -> None:
+    page = api.client.get("/admin").text
+    assert "reader_menu" in page
+    assert "reader menu" in page

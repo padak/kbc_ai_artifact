@@ -1182,6 +1182,34 @@ _ADMIN_JS = """
     toggleLabel.appendChild(el("span", null, "accept versions from other projects"));
     controls.appendChild(toggleLabel);
 
+    /* Reader menu: hub chrome on the artifact page, not an access setting.
+       Same PUT, same optimistic-revert-on-error shape as the toggle above. */
+    var menuLabel = el("label", "switch");
+    var menuBox = document.createElement("input");
+    menuBox.type = "checkbox";
+    menuBox.checked = data.reader_menu !== false;
+    menuBox.addEventListener("change", async function () {
+      menuBox.disabled = true;
+      setError(errBox, "");
+      try {
+        await request("/api/artifacts/" + id, {
+          method: "PUT",
+          body: { reader_menu: menuBox.checked }
+        });
+        refresh();
+      } catch (err) {
+        menuBox.checked = !menuBox.checked;
+        setError(errBox, err.message);
+      } finally {
+        menuBox.disabled = false;
+      }
+    });
+    menuLabel.appendChild(menuBox);
+    menuLabel.appendChild(
+      el("span", null, "show the reader menu on the artifact page")
+    );
+    controls.appendChild(menuLabel);
+
     var openLink = el("a", "btn btn-sm", "Open artifact");
     openLink.href = publicUrl;
     openLink.target = "_blank";
