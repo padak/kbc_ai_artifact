@@ -2470,6 +2470,7 @@ that is the only credential you need.</p>
 {hero_term}
 <div class="hero-links">
 {demo_link}
+<a class="primary" href="{base}/ds">Design systems</a>
 <a class="primary" href="{base}/login">Sign in</a>
 <a class="primary" href="{base}/admin">Admin studio</a>
 <a href="{repo}">GitHub repo</a>
@@ -3515,13 +3516,34 @@ _GALLERY_CSS = """
   border: 1px solid var(--line); }
 .gal-links { margin: 0; font-size: .85rem; }
 .gal-links a { margin-right: .7rem; }
+.ds-switcher { display: block; width: 100%; height: 42rem; border: 1px solid
+  var(--line); border-radius: var(--radius); background: var(--panel); }
+.ds-caption { margin: .6rem 0 0; font-size: .85rem; color: var(--muted); }
+.ds-steps { display: grid; gap: .6rem; margin: 0 0 1rem; padding: 0;
+  list-style: none;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+.ds-steps li { border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); padding: .7rem .8rem; font-size: .88rem;
+  line-height: 1.6; color: var(--muted); }
+.ds-steps li b { display: block; font-family: var(--font-mono);
+  font-size: .7rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: .3rem; }
 """
 
 
-def design_systems_gallery_page(
-    base_url: str, rows: list[dict], hub_version: str
+def design_systems_page(
+    base_url: str,
+    rows: list[dict],
+    hub_version: str,
+    style_switcher_url: str | None = None,
+    design_demo_url: str | None = None,
 ) -> str:
-    """The public list of design systems registered on this hub.
+    """The public front door for this hub's design systems.
+
+    More than a list: a visitor who was handed the link should understand what
+    a hosted design system buys them before they scroll into the catalogue.
+    Hence the hero, the three ``why`` cards, the embedded switcher and the
+    how-it-works strip around the gallery, which is unchanged.
 
     ``rows`` is exactly what ``GET /ds?format=json`` answers with: the server
     has already resolved every swatch to a concrete colour and dropped any
@@ -3531,6 +3553,13 @@ def design_systems_gallery_page(
     a description and a colour all come from a design system's author -- and
     a colour is additionally re-checked before it is interpolated into an
     inline ``style``, because that one lands on the hub's own origin.
+
+    ``style_switcher_url`` and ``design_demo_url`` are published artifacts
+    configured on the hub, both optional: when one is absent its link -- and,
+    for the switcher, the whole embed section -- is simply not rendered. The
+    switcher is embedded through the artifact's ``/raw`` route inside a
+    sandbox with no ``allow-same-origin``, the same opaque-origin treatment
+    ``/a/{id}`` gives a document it wraps.
     """
     base = html.escape(base_url.rstrip("/"), quote=True)
     cards = []
@@ -3593,20 +3622,113 @@ def design_systems_gallery_page(
         else '<p class="note">No design system is registered on this hub yet. '
         "A project registers one with <code>POST /api/design-systems</code>.</p>"
     )
+
+    switcher = html.escape(style_switcher_url.rstrip("/"), quote=True) if style_switcher_url else ""
+    walkthrough = html.escape(design_demo_url.rstrip("/"), quote=True) if design_demo_url else ""
+
+    hero_links = []
+    if switcher:
+        hero_links.append(
+            f'<a class="primary" href="{switcher}">Try the live switcher</a>'
+        )
+    if walkthrough:
+        hero_links.append(
+            f'<a class="primary" href="{walkthrough}">Read the walkthrough</a>'
+        )
+    hero_links.append(f'<a href="{base}/skill">Register yours</a>')
+    hero_links.append(f'<a href="{base}/">Back to the hub</a>')
+
+    why = "".join(
+        [
+            _card(
+                "Say it once",
+                "&ldquo;Publish this as a report in the corporate design, "
+                "version 2.&rdquo; That sentence is the whole instruction: the "
+                "agent lists the hub's design systems, pulls the one you named "
+                "and writes the document against it.",
+            ),
+            _card(
+                "Never drifts",
+                "A design system version is immutable, and every artifact "
+                "records the version it was written in. A brand refresh is a "
+                "new version, not a silent edit under everything already "
+                "published.",
+            ),
+            _card(
+                "Presented, not just stored",
+                "Each system gets a live style guide at <code>/ds/{id}</code>, "
+                "a place in this gallery, and a shared "
+                "<code>--ds-*</code> variable layer any document can be "
+                "re-skinned with.",
+            ),
+        ]
+    )
+
+    live = ""
+    if switcher:
+        live = (
+            '<h2 class="label">see it live</h2>'
+            f'<iframe class="ds-switcher" src="{switcher}/raw" '
+            'sandbox="allow-scripts allow-popups allow-forms allow-downloads" '
+            'title="Style switcher demo" loading="lazy"></iframe>'
+            '<p class="ds-caption">One document, ten looks &mdash; pick a design '
+            "system in the demo's top bar. Only the CSS link changes. "
+            f'<a href="{switcher}">Open full screen</a></p>'
+        )
+
+    steps = (
+        '<h2 class="label">how it works</h2>'
+        '<ol class="ds-steps">'
+        "<li><b>Register</b>Post your DTCG tokens, a written guide and your HTML "
+        f'components once: <a href="{base}/skill">/skill</a> has the '
+        "shape and the curl.</li>"
+        "<li><b>Agent lists &amp; picks</b>"
+        f'<code>GET {base}/api/design-systems</code> (Keboola credential required) '
+        "answers every system this hub holds, with ownership and versions.</li>"
+        "<li><b>Starter + components</b>The agent pulls "
+        "<code>/ds/{id}/starter</code> &mdash; tokens, fonts, component CSS and the "
+        "<code>--ds-*</code> roles already in place &mdash; and fills in the "
+        "document.</li>"
+        "<li><b>Publish with provenance</b>The artifact stores "
+        "<code>design_system</code>, so a reader and the next agent both know "
+        "which brand version it speaks. The machine manifest is "
+        f'<a href="{base}/context">/context</a>.</li>'
+        "</ol>"
+    )
+
+    agents = (
+        '<h2 class="label">for agents</h2>'
+        f'<p>This page has a machine twin: <code>{base}/ds?format=json</code> '
+        "answers the same list from any origin, and "
+        f"<code>{base}/api/design-systems</code> adds ownership for a caller with "
+        "a Keboola credential. An agent that was handed a link should start at "
+        f'<a href="{base}/llms.txt">/llms.txt</a>, read '
+        f'<a href="{base}/skill">/skill</a> to publish unassisted, or install '
+        f'<a href="{base}/agent">/agent</a> as a drop-in Claude Code subagent.</p>'
+    )
+
     body = (
         "<main>"
+        '<section class="hero">'
         "<h1>Design systems</h1>"
+        '<p class="lead">Register your brand once &mdash; design tokens exported '
+        "from Figma, a written style guide, a library of HTML components &mdash; "
+        "and every document an agent publishes to this hub comes out on-brand: "
+        "versioned, stamped with the design system it used, and presented here "
+        "as a live style guide you can send to anyone.</p>"
+        f'<div class="hero-links">{"".join(hero_links)}</div>'
+        "</section>"
+        '<h2 class="label">why</h2>'
+        f'<div class="grid">{why}</div>'
+        f"{live}"
+        '<h2 class="label">the gallery</h2>'
         "<p>Every design system registered on this hub, newest change first. "
         "Open one for its live style guide, or point a document at its "
         "<code>/css</code> and style it with the shared "
         "<code>--ds-*</code> variables.</p>"
         f"{listing}"
-        "<h2 class=\"label\">// machine access</h2>"
-        f'<p><code>{base}/ds?format=json</code> answers the same list as JSON, '
-        "readable from any origin. Agents with a Keboola credential should use "
-        f'<code>{base}/api/design-systems</code>, which also reports ownership.</p>'
-        f'<p><a href="{base}/">Back to the hub</a> &middot; '
-        f'<a href="{base}/skill">/skill</a></p>'
+        f"{steps}"
+        f"{agents}"
         f"<p><small>KBC Artifact Hub {html.escape(hub_version)}</small></p>"
         "</main>"
     )

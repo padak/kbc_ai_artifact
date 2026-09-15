@@ -114,8 +114,10 @@ content, source, or metadata over a small JSON API.
 - **One document, ten looks**: every design system also emits a shared
   `--ds-*` variable layer (`--ds-background`, `--ds-accent`, `--ds-chart-1…N`,
   …) for the roles it declares, so a document styled only with those aliases
-  re-skins by pointing at another system's `/ds/{id}/css`. `GET /ds` is the
-  public gallery of every design system on the hub
+  re-skins by pointing at another system's `/ds/{id}/css`
+- **A front door for design systems** (`GET /ds`): what a hosted design system
+  buys you, a live style switcher embedded from `HUB_STYLE_SWITCHER_URL`, the
+  gallery of every design system on the hub, and how to register your own
 - Markdown rendering with GFM tables, task lists, mermaid diagrams, and
   syntax-highlighted code
 - Survives restarts: the only durable state is Keboola Storage Files; local
@@ -244,7 +246,7 @@ Public (no auth):
 | GET | `/a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault (versions, comments, reasoning timeline), streamed rather than held in memory; 413 above `HUB_EXPORT_MAX_BYTES`, 429 above `HUB_MAX_EXPORTS_PER_HOUR` |
 | GET | `/changelog` / `/changelog.md` | Rendered changelog (hub's own design) / raw source |
 | GET | `/health` | Liveness check + service version + index stats |
-| GET | `/ds` | Public gallery: the newest design systems with at least one version, with a resolved colour strip per system — no credential |
+| GET | `/ds` | The human front door for design systems: the pitch, an embedded live style switcher (when `HUB_STYLE_SWITCHER_URL` is set), the public gallery of the newest design systems with at least one version and a resolved colour strip per system, how it works, and where an agent starts — no credential |
 | GET | `/ds?format=json` | The same list as JSON (`id`, `slug`, `name`, `description`, `owner.project_name`, `head_version`, `updated_at`, `swatches`, `urls`) plus `truncated`, readable cross-origin. At most `HUB_DS_GALLERY_MAX_ROWS` systems; any other `format` value is 422 |
 | GET | `/ds/{ref}` | A design system's style guide — palette, typography, live components, sample chart/diagram, guidance; the style guide renders inside a sandboxed iframe on a hub-chrome page |
 | GET | `/ds/{ref}/versions` | Design-system version history JSON |
@@ -706,6 +708,7 @@ are missing. Everything else has a documented default, overridable via env.
 | `HUB_STACK_URL` | *required* | Base URL of the host project's Keboola stack |
 | `HUB_SECRET_KEY` | *required* | Master secret. Two independent subkeys are derived from it by HMAC-SHA256 over a label (see `src/security.py`'s `derive_key`): one signs password-unlock cookies, the other signs webhook deliveries — so disclosing the webhook key to a receiver never exposes the cookie-signing key |
 | `HUB_PUBLIC_BASE_URL` | unset | Absolute base URL used when building returned artifact URLs, if the app can't infer it from the request |
+| `HUB_STYLE_SWITCHER_URL` | unset | URL of the published "one document, ten looks" style-switcher artifact. When set, `GET /ds` embeds its `/raw` view in a sandboxed iframe and links it from the hero; when unset, that section is simply absent |
 | `HUB_CACHE_DIR` | `/tmp/artifact-cache` | Local disk LRU cache directory (not a source of truth) |
 | `HUB_MAX_HTML_BYTES` | `15728640` (15 MB) | Max size of built HTML per artifact |
 | `HUB_MAX_INLINE_IMAGE_BYTES` | `5242880` (5 MB) | Max size of a single image inlined as a data URI |
@@ -765,7 +768,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.18.1 \
+  --git-branch v0.19.0 \
   --git-public
 ```
 

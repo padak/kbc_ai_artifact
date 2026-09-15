@@ -131,6 +131,10 @@ class Settings:
     # HUB_DESIGN_DEMO_URL: the published design-systems walkthrough the landing
     # page links next to the hub's own demo. Optional, like demo_url.
     design_demo_url: str | None = None
+    # HUB_STYLE_SWITCHER_URL: the published "one document, ten looks" style
+    # switcher, embedded on /ds so a visitor can see a design system change a
+    # document without leaving the page. Optional, like design_demo_url.
+    style_switcher_url: str | None = None
     cache_dir: Path = field(default_factory=lambda: Path("/tmp/artifact-cache"))
 
     # Limits (bytes / seconds / counts)
@@ -491,6 +495,8 @@ def load_settings() -> Settings:
         public_base_url=os.environ.get("HUB_PUBLIC_BASE_URL", "").rstrip("/") or None,
         demo_url=os.environ.get("HUB_DEMO_URL", "").strip() or None,
         design_demo_url=os.environ.get("HUB_DESIGN_DEMO_URL", "").strip() or None,
+        style_switcher_url=os.environ.get("HUB_STYLE_SWITCHER_URL", "").strip()
+        or None,
         cache_dir=Path(os.environ.get("HUB_CACHE_DIR", "/tmp/artifact-cache")),
         max_html_bytes=_int_env("HUB_MAX_HTML_BYTES", 15 * 1024 * 1024),
         max_inline_image_bytes=_int_env("HUB_MAX_INLINE_IMAGE_BYTES", 5 * 1024 * 1024),
