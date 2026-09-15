@@ -255,10 +255,14 @@ Public (no auth):
 | GET | `/ds/{ref}/css?mode=all\|light\|dark` | Generated CSS custom properties for the requested mode, followed by the `--ds-*` role alias block |
 | GET | `/ds/{ref}/starter` | Skeleton with `{{TITLE}}`/`{{BODY}}`, every token/role/component CSS and font already in place, served with a CSP sandbox |
 | GET | `/ds/{ref}/guidance` | `text/markdown` — the brand's written rules |
+| GET | `/api/design-systems` | The machine catalogue: every registered design system with at least one version, ordered by `updated_at` desc then `slug` asc. A credential is optional and adds only `mine` |
+| GET | `/api/design-systems/{ref}` | Full projection (including `forked_from`) plus `versions`. A credential is optional and adds only `mine` |
 
-`{ref}` may also be the design system's slug, in which case a credential is
-required (a slug-shaped `ref` on a reader route answers 401 without one — the
-same answer whether or not the slug exists).
+`{ref}` is the `ds_…` id or the slug; since 0.20.0 both read the same way and
+neither needs a credential. When a credential *is* offered, the answer is
+computed with it — it can report `mine` — so it is marked `Cache-Control:
+private, no-store` and carries no CORS header; an anonymous answer is
+`no-cache` and readable cross-origin.
 
 A design system's token values are author-controlled text, and the gallery is
 the one place a resolved token value reaches an inline `style` attribute on the
@@ -269,12 +273,25 @@ server-side, so the JSON a browser consumes is clean as well. Anything else
 loses its chip silently rather than being escaped and hoped about; `src.tokens`
 separately refuses `;`, `}`, `<` and comment markers at submit time.
 
-The gallery at `GET /ds` deliberately makes every registered design system's
-name, slug, description, owner project name and head version public on this
-hub — that is what a gallery is. It lists nothing the credentialed catalogue
-would not show (and less: no owner project id, no stack host, no `mine`), and
-it does not change the slug rule above: `/ds/{slug}` reader routes still
-answer 401 without a credential.
+**Design systems are public to read and private to write.** The gallery at
+`GET /ds` has published every registered design system's name, slug and
+description since 0.17.0 — that is what a gallery is — so the rule that used
+to require a credential on `/ds/{slug}` was guarding an existence oracle that
+no longer existed. Since 0.20.0 the whole read side is open: `GET
+/api/design-systems`, `GET /api/design-systems/{ref}` and every `/ds/{ref}`
+reader route answer without a credential, by id or by slug alike. A
+credential is still read when one is offered, because it is the only thing
+that can report `mine`, and it is the credential — not the spelling of the
+ref — that makes an answer private. The one exception is a *meta-only*
+record, a registration that died between its two Storage writes: it stays 404
+for everyone but its owner, who still needs to see and delete it.
+
+Writing is unchanged and stays the owning project's: only it may append a
+version, edit the name or description, or delete. What anyone with a
+credential may now do instead is **fork** — `POST
+/api/design-systems/{ref}/fork` copies one version's bundle into a new design
+system the caller owns, recording `forked_from`. The source is untouched by
+it, and owning a fork grants no authority over the original.
 
 **Authorization is per project, by design.** Ownership is `(stack, project)`:
 any valid credential from the owning project carries full owner authority
@@ -317,17 +334,17 @@ also fires any webhooks the artifact has registered (`X-Hub-Signature-256`
 HMAC-signed JSON, keyed per receiver, or Slack's `{"text": ...}` shape for a
 `hooks.slack.com` URL) — see *Outbound webhooks* above.
 
-**Design-system management** (same auth as above; `{ref}` is the `ds_…` id or
-the slug; **owner** = the project that registered it; **D** = the
+**Design-system management** — the writing half; reading is public and lives
+in the table above (same auth as the rest of this section; `{ref}` is the
+`ds_…` id or the slug; **owner** = the project that registered it; **D** = the
 destructive-token policy applies too):
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/design-systems` | List every registered design system with at least one version, ordered by `updated_at` desc then `slug` asc — any credential |
 | POST | `/api/design-systems` | Register one `{slug, name, description?, note?, bundle}` → 201 `{..., version: 1, warnings}` (409 slug taken, 422 validation, 429 past the per-project or daily cap) — any credential |
-| GET | `/api/design-systems/{ref}` | Full projection plus `versions` — any credential |
 | PUT | `/api/design-systems/{ref}` | Update `{name?, description?}` metadata only — omitted fields unchanged, `description: ""` clears, `null` is 422 — owner |
 | POST | `/api/design-systems/{ref}/versions` | Append a version `{bundle, note?}` → 201 `{..., version, warnings}` (409 at the version cap, 429 past the daily cap) — owner |
+| POST | `/api/design-systems/{ref}/fork` | Fork it: `{slug, name?, description?, note?, version?}` copies that version's bundle (default: head) verbatim as v1 of a new design system **your** project owns, recording `forked_from` `{id, slug, version}`. Same 409/422/429 rules as registering one, counted against the forker — any credential |
 | DELETE | `/api/design-systems/{ref}/versions/{n}` | Delete one version (409 when it is the only version) — owner, **D** |
 | DELETE | `/api/design-systems/{ref}` | Delete the whole design system, permanently — owner, **D** |
 
@@ -768,7 +785,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.19.1 \
+  --git-branch v0.20.0 \
   --git-public
 ```
 

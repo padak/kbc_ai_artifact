@@ -783,12 +783,13 @@ browser session.
 
 An organisation's hub can hold its **design systems**: DTCG design tokens
 (exported from Figma), a written guide for how a document in that brand is
-laid out, and a small library of HTML components. Any credential this hub
-accepts can read them; only the owning project can change them. Each one has
-a `slug` (a name typed by a person) and an `id` starting with `ds_` (a public
-capability URL, like an artifact's). Versions are linear and immutable: pin
-with `id@n`. Reader routes take `{ref}` — the `ds_…` id (public) or the slug
-(authenticated first).
+laid out, and a small library of HTML components. **Reading one needs no
+credential at all**; only the owning project can change it, and anyone with a
+credential can fork it. Each one has a `slug` (a name typed by a person) and
+an `id` starting with `ds_`. Versions are linear and immutable: pin with
+`id@n`. Reader routes take `{ref}` — either spelling, and both are public. A
+credential is still worth sending on the catalogue routes: it is the only
+thing that adds `mine`.
 
 ### Use one when authoring an artifact
 
@@ -801,7 +802,7 @@ already carries one. Otherwise publish exactly as you do today.
    hub "$HUB/api/design-systems"
    ```
    Each row has `id`, `slug`, `name`, `description`, `owner`, `head_version`,
-   `mine`, `urls`. Pick the exact slug the user named. If several rows match
+   `mine`, `forked_from`, `urls`. Pick the exact slug the user named. If several rows match
    the words the user used (by `name`, `description` or `owner`), **ask which
    one — never guess**.
 2. Resolve the version once:
@@ -862,9 +863,28 @@ with `--ds-*` re-skins to another design system by pointing at that system's
 **Public gallery.** `GET $HUB/ds` is the human front door for design systems --
 what they are, a live style switcher, how to register one, and the list of every
 design system registered on the hub -- needing no credential (`?format=json` for
-the same rows); agents should keep using `GET $HUB/api/design-systems`, which is
-the only one that reports ownership and `mine`. Send a person `$HUB/ds`, not the
-JSON.
+the same rows); agents should keep using `GET $HUB/api/design-systems`, which
+reports the full owner and `mine`. Send a person `$HUB/ds`, not the JSON.
+
+### Make your own version of someone else's design system
+
+If the user likes a design system on the hub but wants it changed: **fork it
+— you own the copy, the original stays the author's.** Do not ask its owner,
+and do not try to edit it; a non-owner is refused with 403.
+
+```bash
+hub -X POST "$HUB/api/design-systems/<ref>/fork" -H "Content-Type: application/json" \
+  -d '{"slug": "our-take", "name": "Our take", "note": "forked to darken the accent"}'
+```
+
+`version` picks which version to copy (default: the head); `name` defaults to
+the source's plus `" (fork)"` and `description` to the source's. The response
+is the new design system's projection plus `"version": 1`, and its
+`forked_from` records `{id, slug, version}` — shown on the gallery card too.
+Append your own changes as v2 with `POST
+/api/design-systems/<new-id>/versions`. The same 409 (slug taken), 422 (bad
+slug/name) and 429 (per-project or daily cap) rules as registering one apply,
+counted against **your** project.
 
 ### Register a design system
 

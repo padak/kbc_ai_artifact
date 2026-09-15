@@ -10738,8 +10738,8 @@ class DesignSystemForkBody(BaseModel):
 
 #: Shared OpenAPI descriptions for the design-system path parameters.
 DS_REF_DESC = (
-    "A design system's public id (ds_...) or its slug. A slug is readable "
-    "only with a Keboola credential."
+    "A design system's public id (ds_...) or its slug. Both are public; a "
+    "credential only adds the caller's own `mine` flag."
 )
 DS_VERSION_DESC = "Version number of the design system, starting at 1."
 DS_QUERY_V_DESC = (
@@ -11629,9 +11629,9 @@ def design_systems_gallery(
     """Every design system with at least one version, newest change first.
 
     Public and uncredentialed, which is the point: this hub's design systems
-    are meant to be seen. It therefore makes names, slugs and descriptions
-    public -- the catalogue API stays credentialed, because only that one
-    reports ownership and the caller's own ``mine`` flag.
+    are meant to be seen. The catalogue API is public too since 0.20.0; what
+    it adds over this list is the full owner and the caller's own ``mine``
+    flag, which is what a credential still buys there.
     """
     ensure_hydrated(request.app)
     designs: DesignSystemStore = request.app.state.designs
