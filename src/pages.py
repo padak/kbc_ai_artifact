@@ -3635,7 +3635,7 @@ def design_systems_page(
         hero_links.append(
             f'<a class="primary" href="{walkthrough}">Read the walkthrough</a>'
         )
-    hero_links.append(f'<a href="{base}/skill#design-systems">Register yours</a>')
+    hero_links.append(f'<a href="{base}/skill">Register yours</a>')
     hero_links.append(f'<a href="{base}/">Back to the hub</a>')
 
     why = "".join(
@@ -3680,7 +3680,7 @@ def design_systems_page(
         '<h2 class="label">how it works</h2>'
         '<ol class="ds-steps">'
         "<li><b>Register</b>Post your DTCG tokens, a written guide and your HTML "
-        f'components once: <a href="{base}/skill#design-systems">/skill</a> has the '
+        f'components once: <a href="{base}/skill">/skill</a> has the '
         "shape and the curl.</li>"
         "<li><b>Agent lists &amp; picks</b>"
         f'<code>GET {base}/api/design-systems</code> (Keboola credential required) '

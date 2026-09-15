@@ -5565,7 +5565,7 @@ def llms_txt_document(base: str) -> str:
         "update, review and moderate artifacts\n"
         f"- [Claude Code subagent]({base}/agent): a ready-to-install agent "
         "definition with the same knowledge\n"
-        f"- [Design systems]({base}/skill#design-systems): how an agent lists "
+        f"- [Design systems]({base}/skill): how an agent lists "
         "the organisation's design systems (`GET /api/design-systems`, Keboola "
         "credential required), picks one and publishes on-brand HTML; every "
         f"design system has a public style guide at {base}/ds/{{id}}\n"

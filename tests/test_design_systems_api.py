@@ -902,7 +902,7 @@ def test_ds_page_leads_with_a_hero_that_pitches_the_feature(api):
     page = api.client.get("/ds").text
     assert "<h1>Design systems</h1>" in page
     assert "Register your brand once" in page
-    assert 'href="https://testserver/skill#design-systems"' in page
+    assert 'href="https://testserver/skill"' in page
 
 
 def test_ds_page_carries_the_three_why_cards(api):
