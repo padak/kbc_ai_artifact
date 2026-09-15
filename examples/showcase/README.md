@@ -228,6 +228,18 @@ silently drifting to whatever is head by then.
 
 Live: [Q3 2026 Executive Report](https://artifact-hub-1304628444.hub.keboola.com/a/5yTWldwa7LemcI6g3wYdupNS) — its [/meta](https://artifact-hub-1304628444.hub.keboola.com/a/5yTWldwa7LemcI6g3wYdupNS/meta) records `design_system: {"slug": "exec-report", "version": 1}`.
 
+## Try switching styles live
+
+The same static report, restyled by swapping one CSS link: the switcher
+demo fetches the public gallery (`GET /ds?format=json`), lets you pick any
+registered design system from a dropdown, and re-skins a KPI report in
+place — tokens, fonts, colours and the chart palette all follow, with no
+change to the document's markup. It is a good way to feel the difference
+between the ten sample systems above before committing one to a real
+publish.
+
+Live: [Style switcher demo](SWITCHER_DEMO_URL)
+
 ## Register your own
 
 Only the owning project can register or update a design system; once
