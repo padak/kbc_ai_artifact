@@ -4867,7 +4867,9 @@ def context(request: Request) -> dict:
                 "path": "/ds",
                 "auth": "none",
                 "purpose": (
-                    "public gallery: every design system with at least one "
+                    "the human front door for design systems: what they are, "
+                    "a live style switcher, how to register one, and the "
+                    "public gallery of every design system with at least one "
                     "version, newest change first (HTML)"
                 ),
             },
@@ -11465,8 +11467,12 @@ def design_systems_gallery(
         response.headers["X-Hub-Version"] = SERVICE_VERSION
     else:
         response = HTMLResponse(
-            pages.design_systems_gallery_page(
-                base_url(request), rows, SERVICE_VERSION
+            pages.design_systems_page(
+                base_url(request),
+                rows,
+                SERVICE_VERSION,
+                style_switcher_url=settings.style_switcher_url,
+                design_demo_url=settings.design_demo_url,
             )
         )
     # /ds is not under /ds/, so the artifact_headers middleware does not set

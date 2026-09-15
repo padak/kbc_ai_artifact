@@ -882,3 +882,110 @@ def test_context_publishes_the_gallery_limits(api):
     limits = api.client.get("/context").json()["limits"]
     assert limits["ds_gallery_swatches"] == main.settings.ds_gallery_swatches
     assert limits["ds_gallery_max_rows"] == main.settings.ds_gallery_max_rows
+
+
+# --------------------------------------------------------------------------
+# 0.19.0: /ds is a front door, not just a list
+# --------------------------------------------------------------------------
+
+
+def _with_switcher(monkeypatch, url="https://hub.example/a/SwItChEr"):
+    from src import main
+
+    monkeypatch.setattr(
+        main, "settings", dataclasses.replace(main.settings, style_switcher_url=url)
+    )
+    return url
+
+
+def test_ds_page_leads_with_a_hero_that_pitches_the_feature(api):
+    page = api.client.get("/ds").text
+    assert "<h1>Design systems</h1>" in page
+    assert "Register your brand once" in page
+    assert 'href="https://testserver/skill#design-systems"' in page
+
+
+def test_ds_page_carries_the_three_why_cards(api):
+    page = api.client.get("/ds").text
+    for heading in ("Say it once", "Never drifts", "Presented, not just stored"):
+        assert f"<h3>{heading}</h3>" in page
+
+
+def test_ds_page_has_a_how_it_works_strip(api):
+    page = api.client.get("/ds").text
+    for step in ("Register", "Agent lists &amp; picks", "Starter + components",
+                 "Publish with provenance"):
+        assert step in page
+    assert "Keboola credential required" in page
+    assert 'href="https://testserver/context"' in page
+
+
+def test_ds_page_points_agents_at_their_own_entry_points(api):
+    page = api.client.get("/ds").text
+    for path in ("/skill", "/agent", "/llms.txt"):
+        assert f'href="https://testserver{path}"' in page
+
+
+def test_ds_page_still_lists_the_gallery_and_its_empty_state(api):
+    assert "No design system" in api.client.get("/ds").text
+    ds_id = _register(api.client).json()["id"]
+    page = api.client.get("/ds").text
+    assert f'href="https://testserver/ds/{ds_id}"' in page
+    assert "background:#1442e0" in page
+
+
+def test_ds_page_omits_the_switcher_when_none_is_configured(api):
+    from src import main
+
+    assert main.settings.style_switcher_url is None
+    page = api.client.get("/ds").text
+    assert 'class="ds-switcher"' not in page
+    assert "<iframe" not in page
+    assert "see it live" not in page
+
+
+def test_ds_page_embeds_the_switcher_raw_in_an_opaque_sandbox(api, monkeypatch):
+    url = _with_switcher(monkeypatch)
+    page = api.client.get("/ds").text
+    assert f'src="{url}/raw"' in page
+    assert 'class="ds-switcher"' in page
+    frame = page.split('class="ds-switcher"', 1)[1].split(">", 1)[0]
+    assert "sandbox=" in frame
+    assert "allow-same-origin" not in frame
+    assert "One document, ten looks" in page
+    assert f'href="{url}">Open full screen' in page
+
+
+def test_ds_page_hero_offers_the_switcher_only_when_configured(api, monkeypatch):
+    assert "Try the live switcher" not in api.client.get("/ds").text
+    _with_switcher(monkeypatch)
+    assert "Try the live switcher" in api.client.get("/ds").text
+
+
+def test_ds_page_hero_offers_the_walkthrough_only_when_configured(api, monkeypatch):
+    from src import main
+
+    assert "Read the walkthrough" not in api.client.get("/ds").text
+    monkeypatch.setattr(
+        main,
+        "settings",
+        dataclasses.replace(main.settings, design_demo_url="https://hub.example/a/Walk"),
+    )
+    page = api.client.get("/ds").text
+    assert "Read the walkthrough" in page
+    assert 'href="https://hub.example/a/Walk"' in page
+
+
+def test_landing_page_links_the_design_systems_front_door(api):
+    page = api.client.get("/").text
+    hero = page.split('<div class="hero-links">', 1)[1].split("</div>", 1)[0]
+    assert '<a class="primary" href="https://testserver/ds">Design systems</a>' in hero
+
+
+def test_style_switcher_url_comes_from_the_environment(monkeypatch):
+    from src import config
+
+    monkeypatch.delenv("HUB_STYLE_SWITCHER_URL", raising=False)
+    assert config.load_settings().style_switcher_url is None
+    monkeypatch.setenv("HUB_STYLE_SWITCHER_URL", " https://hub.example/a/S ")
+    assert config.load_settings().style_switcher_url == "https://hub.example/a/S"
