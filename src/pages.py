@@ -2757,6 +2757,56 @@ reload keeps you signed in and closing the tab forgets the token.
 #: anything else raises the banner and waits for a click. On ``/a/{id}/v/{n}``
 #: the reader asked for one specific version, so there is no automatic swap at
 #: all: the banner points at the new head and says so.
+
+#: Injected into the sandboxed ``srcdoc`` document next to the scroll
+#: reporter. A ``srcdoc`` document inherits the *parent's* URL as its base, so
+#: a plain ``<a href="#section">`` does not scroll -- the browser tries to
+#: navigate the frame to ``/a/{id}#section`` instead, which the sandbox then
+#: blocks. Every in-page table of contents (hand-written or the Markdown
+#: template's heading anchors) was dead on ``/a/{id}``. This shim performs the
+#: jump itself and tells the shell which section is showing so the address bar
+#: can carry a shareable ``#fragment``; the shell forwards an incoming
+#: fragment back down on load. It never reads or sends anything else.
+_ANCHOR_JS = """
+(function () {
+  "use strict";
+
+  function target(id) {
+    if (!id) { return null; }
+    return document.getElementById(id) || document.getElementsByName(id)[0] || null;
+  }
+
+  function jump(id) {
+    var t = target(id);
+    if (!t) { return false; }
+    t.scrollIntoView({ block: "start" });
+    if (!t.hasAttribute("tabindex")) { t.setAttribute("tabindex", "-1"); }
+    try { t.focus({ preventScroll: true }); } catch (err) { /* not focusable */ }
+    return true;
+  }
+
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href^="#"]') : null;
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) { return; }
+    var raw = String(a.getAttribute("href") || "").slice(1);
+    var id = raw;
+    try { id = decodeURIComponent(raw); } catch (err) { /* keep raw */ }
+    if (jump(id)) {
+      e.preventDefault();
+      try { parent.postMessage({ type: "ah-anchor", id: id }, "*"); } catch (err) { /* no parent */ }
+    }
+  }, true);
+
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (d && d.type === "ah-anchor-go" && typeof d.id === "string") { jump(d.id); }
+  });
+})();
+"""
+
+#: Everything the shell injects into the artifact's own document.
+_SRCDOC_JS = _SCROLL_REPORTER_JS + _ANCHOR_JS
+
 _FRAME_JS = """
 (function () {
   "use strict";
@@ -2770,6 +2820,26 @@ _FRAME_JS = """
 
   var frame = document.getElementById("ah-frame");
   var banner = document.getElementById("ah-live");
+
+  /* In-page anchors. The document below cannot honour #fragments itself (see
+     _ANCHOR_JS); the shell forwards the address bar's fragment down after
+     each load and mirrors the section the reader jumped to back up. */
+  function forwardHash() {
+    var h = String(window.location.hash || "").slice(1);
+    if (!h || !frame || !frame.contentWindow) { return; }
+    var id = h;
+    try { id = decodeURIComponent(h); } catch (err) { /* keep raw */ }
+    try { frame.contentWindow.postMessage({ type: "ah-anchor-go", id: id }, "*"); } catch (err) { /* detached */ }
+  }
+  if (frame) { frame.addEventListener("load", forwardHash); }
+  window.addEventListener("hashchange", forwardHash);
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (!frame || e.source !== frame.contentWindow) { return; }
+    if (d && d.type === "ah-anchor" && typeof d.id === "string" && d.id.length <= 200) {
+      try { history.replaceState(null, "", "#" + encodeURIComponent(d.id)); } catch (err) { /* ignore */ }
+    }
+  });
   var label = document.getElementById("ah-live-text");
   var button = document.getElementById("ah-live-go");
   var reporter = document.getElementById("ah-reporter");
@@ -3280,7 +3350,7 @@ def artifact_frame_page(
         # source is kept in a text/plain block so the shell can re-inject it
         # into whatever it swaps in later.
         document_html = _inject_before_body_end(
-            artifact_html, _SCROLL_REPORTER_JS
+            artifact_html, _SRCDOC_JS
         )
         pinned = "null" if pinned_version is None else str(int(pinned_version))
         live = (
@@ -3291,7 +3361,7 @@ def artifact_frame_page(
             "Show it</button>\n"
             "</div>\n"
             '<script type="text/plain" id="ah-reporter">'
-            + _SCROLL_REPORTER_JS
+            + _SRCDOC_JS
             + "</script>\n"
             "<script>"
             f'window.AH_BASE = "{html.escape(base_url.rstrip("/"), quote=True)}";'

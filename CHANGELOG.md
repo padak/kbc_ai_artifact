@@ -4,6 +4,17 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.19.1 — Anchors inside artifacts work again (2026-09-16)
+
+- A table of contents inside a published document — a hand-written nav, or
+  the heading links the Markdown template generates — did nothing on
+  `/a/{id}`: the document runs in a sandboxed `srcdoc` frame that inherits
+  the page's own URL, so `#section` tried to navigate the frame away instead
+  of scrolling. The frame now carries a small shim that performs the jump
+  itself, and the page mirrors the section into the address bar and honours
+  an incoming `#fragment` on load, so a deep link into a section is
+  shareable. `/a/{id}/raw` is untouched, byte for byte.
+
 ## 0.19.0 — A front door for design systems (2026-09-15)
 
 - **`/ds` is now a page that explains itself.** It used to be a bare list of

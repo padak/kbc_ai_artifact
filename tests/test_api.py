@@ -881,7 +881,7 @@ def test_read_artifact_sandboxes_the_document_in_an_iframe(api: Api) -> None:
     # The whole document is inside srcdoc, html-escaped — with the shell's own
     # scroll reporter appended to it, which is the only way a frame that has no
     # allow-same-origin can tell the wrapper whether the reader has scrolled.
-    embedded = pages._inject_before_body_end(raw.text, pages._SCROLL_REPORTER_JS)
+    embedded = pages._inject_before_body_end(raw.text, pages._SRCDOC_JS)
     assert f'srcdoc="{html.escape(embedded, quote=True)}"' in page.text
     # ...so none of the artifact's own markup is live at top level.
     assert "<h1" not in page.text
@@ -6306,7 +6306,7 @@ def test_artifact_wrapper_ships_the_poller_and_the_scroll_reporter(
     assert 'id="ah-reporter"' in page
     assert "ah-scroll" in page
     raw = api.client.get(f"/a/{artifact_id}/raw").text
-    embedded = pages._inject_before_body_end(raw, pages._SCROLL_REPORTER_JS)
+    embedded = pages._inject_before_body_end(raw, pages._SRCDOC_JS)
     assert html.escape(embedded, quote=True) in page
     # ...and it buys the frame no new capability.
     assert "allow-same-origin" not in page
@@ -7886,3 +7886,16 @@ def test_reader_menu_markdown_row_says_it_downloads():
     page = _frame_with_menu(reader_menu=True)
     assert "Download as Markdown" in page
     assert "downloads" in page
+
+
+def test_frame_page_makes_in_page_anchors_work_and_raw_stays_untouched(api):
+    """A srcdoc document cannot honour #fragments on its own; the shell injects
+    a shim that performs the jump and forwards the address-bar fragment."""
+    html_doc = '<html><body><nav><a href="#s2">go</a></nav><h2 id="s2">Two</h2></body></html>'
+    r = api.client.post("/api/artifacts", json={"html": html_doc}, headers=AUTH_HEADERS)
+    share = r.json()["share_id"]
+    page = api.client.get(f"/a/{share}").text
+    assert "ah-anchor-go" in page          # parent forwards the fragment down
+    assert "ah-anchor" in page             # shim mirrors the section up
+    assert 'a[href^=&quot;#&quot;]' in page or "a[href^=" in page   # shim lives inside the escaped srcdoc
+    assert api.client.get(f"/a/{share}/raw").text == html_doc
