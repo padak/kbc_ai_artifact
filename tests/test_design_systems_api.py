@@ -692,8 +692,9 @@ def test_gallery_json_lists_registered_systems_in_the_public_shape(api):
     row = rows[0]
     assert set(row) == {
         "id", "slug", "name", "description", "owner", "head_version",
-        "updated_at", "swatches", "urls",
+        "updated_at", "swatches", "urls", "forked_from",
     }
+    assert row["forked_from"] is None
     assert row["slug"] == "corp" and row["name"] == "Corp"
     assert row["head_version"] == 1 and row["updated_at"]
     # the public shape carries no project id and no stack host
@@ -1078,3 +1079,162 @@ def test_an_id_read_with_a_credential_is_private(api):
     assert r.status_code == 200
     assert r.headers["Cache-Control"] == "private, no-store"
     assert CORS_ORIGIN not in r.headers
+
+
+# --------------------------------------------------------------------------
+# 0.20.0: fork
+# --------------------------------------------------------------------------
+
+
+def _fork(client, ref="corp", headers=OTHER_AUTH_HEADERS, **body):
+    return client.post(
+        f"/api/design-systems/{ref}/fork",
+        json={"slug": "mine", **body},
+        headers=headers,
+    )
+
+
+def test_fork_copies_the_bundle_into_a_new_owned_system(api):
+    src = _register(api.client).json()
+    r = _fork(api.client)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["id"] != src["id"] and body["id"].startswith("ds_")
+    assert body["slug"] == "mine"
+    assert body["name"] == "Corp (fork)"
+    assert body["description"] == "Brand"
+    assert body["version"] == 1 and body["head_version"] == 1
+    assert body["mine"] is True
+    assert body["owner"]["project_id"] == 999
+    assert body["forked_from"] == {
+        "id": src["id"],
+        "slug": "corp",
+        "version": 1,
+    }
+    # the copy is byte-for-byte the source bundle, warnings included
+    copy_bundle = api.client.get(f"/ds/{body['id']}/bundle").json()
+    source_bundle = api.client.get(f"/ds/{src['id']}/bundle").json()
+    assert copy_bundle["bundle"] == source_bundle["bundle"]
+    assert api.client.get(f"/api/design-systems/{body['id']}").json()["versions"][0][
+        "warnings_count"
+    ] == 1
+
+    # the source is untouched: same owner, same head, no forked_from
+    after = api.client.get(f"/api/design-systems/{src['id']}").json()
+    assert after["owner"]["project_id"] == 123
+    assert after["head_version"] == 1 and after["versions_count"] == 1
+    assert after["forked_from"] is None
+
+
+def test_fork_takes_an_explicit_name_description_note_and_version(api):
+    src = _register(api.client).json()
+    second = good_bundle()
+    second["guidance"] = "# Corp v2"
+    assert api.client.post(
+        f"/api/design-systems/{src['id']}/versions",
+        json={"bundle": second, "note": "v2"},
+        headers=AUTH_HEADERS,
+    ).status_code == 201
+    r = _fork(
+        api.client,
+        name="Ours",
+        description="Our take",
+        note="forked at v1",
+        version=1,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["name"] == "Ours" and body["description"] == "Our take"
+    assert body["forked_from"]["version"] == 1
+    assert api.client.get(f"/ds/{body['id']}/guidance").text.startswith("# Corp\n")
+    # ...and forking the head picks v2
+    head = _fork(api.client, slug="mine2").json()
+    assert head["forked_from"]["version"] == 2
+    assert api.client.get(f"/ds/{head['id']}/guidance").text.startswith("# Corp v2")
+    assert _fork(api.client, slug="mine3", version=99).status_code == 404
+    assert _fork(api.client, slug="mine4", version=0).status_code == 422
+
+
+def test_fork_refuses_a_taken_slug_and_a_bad_one(api):
+    _register(api.client)
+    assert _fork(api.client, slug="corp").status_code == 409
+    assert _fork(api.client, slug="Nope").status_code == 422
+    assert _fork(api.client, slug="ds_x").status_code == 422
+    assert _fork(api.client, ref="nothing-here").status_code == 404
+    # a credential is required, unlike a read
+    assert _fork(api.client, headers={"X-Kbc-Stack": "us"}).status_code == 401
+
+
+def test_fork_counts_against_the_forkers_own_cap(api, monkeypatch):
+    from src import main
+
+    _register(api.client)
+    monkeypatch.setattr(
+        main, "settings", dataclasses.replace(main.settings, ds_max_per_project=1)
+    )
+    assert _fork(api.client, slug="one").status_code == 201
+    r = _fork(api.client, slug="two")
+    assert r.status_code == 429, r.text
+    # the source owner's own slot is untouched by the forker's cap
+    assert _register(api.client, slug="corp2").status_code == 429  # owner also at 1
+
+
+def test_forking_grants_no_authority_over_the_source(api):
+    src = _register(api.client).json()
+    forked = _fork(api.client).json()
+    assert api.client.put(
+        f"/api/design-systems/{src['id']}",
+        json={"name": "Hijacked"},
+        headers=OTHER_AUTH_HEADERS,
+    ).status_code == 403
+    assert api.client.post(
+        f"/api/design-systems/{src['id']}/versions",
+        json={"bundle": good_bundle()},
+        headers=OTHER_AUTH_HEADERS,
+    ).status_code == 403
+    assert api.client.delete(
+        f"/api/design-systems/{src['id']}", headers=OTHER_AUTH_HEADERS
+    ).status_code == 403
+    assert api.client.get(f"/api/design-systems/{src['id']}").json()["name"] == "Corp"
+    # but the forker owns the copy outright
+    assert api.client.put(
+        f"/api/design-systems/{forked['id']}",
+        json={"name": "Ours"},
+        headers=OTHER_AUTH_HEADERS,
+    ).status_code == 200
+
+
+def test_fork_provenance_survives_a_rebuild_and_reaches_the_gallery(api):
+    src = _register(api.client).json()
+    forked = _fork(api.client).json()
+    api.client.app.state.designs.hydrate()
+    again = api.client.get(f"/api/design-systems/{forked['id']}").json()
+    assert again["forked_from"] == {"id": src["id"], "slug": "corp", "version": 1}
+    rows = {
+        x["slug"]: x for x in api.client.get("/ds?format=json").json()["design_systems"]
+    }
+    assert rows["mine"]["forked_from"]["slug"] == "corp"
+    assert rows["corp"]["forked_from"] is None
+    assert "forked from" in api.client.get("/ds").text
+
+
+def test_a_bundle_that_no_longer_validates_is_still_forkable(api, monkeypatch):
+    """The source proves it validated; a limit lowered afterwards must not bite."""
+    from src import main
+
+    _register(api.client)
+    monkeypatch.setattr(
+        main, "settings", dataclasses.replace(main.settings, ds_max_tokens=1)
+    )
+    assert _fork(api.client).status_code == 201
+
+
+def test_context_documents_the_fork_route(api):
+    body = api.client.get("/context").json()
+    by_path = {
+        (e["method"], e["path"]): e for e in body["endpoints"]
+    }
+    entry = by_path[("POST", "/api/design-systems/{ref}/fork")]
+    assert "token" in entry["auth"]
+    assert "fork" in entry["purpose"].lower()
+    assert "fork" in body["design_systems"]

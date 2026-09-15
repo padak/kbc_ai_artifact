@@ -3661,6 +3661,13 @@ def design_systems_page(
         updated = str(row.get("updated_at") or "")[:10]
         if updated:
             meta_bits.append(f"updated {html.escape(updated)}")
+        # Credit where a fork came from. The slug is a snapshot taken when the
+        # fork was made, so it is shown as plain text, never as a link: the
+        # source may since have been re-slugged or deleted.
+        forked_from = row.get("forked_from") or {}
+        if forked_from.get("slug"):
+            origin = html.escape(str(forked_from["slug"]))
+            meta_bits.append(f"forked from <code>{origin}</code>")
         description = (
             f'<p class="gal-desc">{html.escape(str(row["description"]))}</p>'
             if row.get("description")

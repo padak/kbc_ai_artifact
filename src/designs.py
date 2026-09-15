@@ -369,6 +369,13 @@ class DesignSystemMeta:
     #: version file is deleted so that number is never handed out again.
     version_high_water: int = 0
     schema: int = SCHEMA_VERSION
+    #: ``{"id", "slug", "version"}`` of the design system this one was forked
+    #: from, or None. Declared **last** on purpose: every existing positional
+    #: construction keeps meaning what it meant, and every record written
+    #: before 0.20.0 simply has no such key (``from_json`` tolerates that).
+    #: A snapshot of the source as it was at fork time, never a live link --
+    #: the source can be renamed, re-slugged or deleted without touching it.
+    forked_from: dict | None = None
 
     @property
     def owner_key(self) -> str:
@@ -379,6 +386,7 @@ class DesignSystemMeta:
             "schema": self.schema, "id": self.id, "slug": self.slug, "name": self.name,
             "description": self.description, "owner": self.owner, "created_at": self.created_at,
             "updated_at": self.updated_at, "version_high_water": self.version_high_water,
+            "forked_from": self.forked_from,
         }, ensure_ascii=False).encode("utf-8")
 
     @classmethod
@@ -396,6 +404,13 @@ class DesignSystemMeta:
                 hw if isinstance(hw, int) and not isinstance(hw, bool) and hw > 0 else 0
             ),
             schema=int(d.get("schema", SCHEMA_VERSION)),
+            # Absent before 0.20.0, and anything but an object is no
+            # provenance at all rather than a reason to fail the whole record.
+            forked_from=(
+                dict(d["forked_from"])
+                if isinstance(d.get("forked_from"), dict)
+                else None
+            ),
         )
 
     def projection(self, *, head_version: int | None, versions_count: int, mine: bool,
@@ -413,7 +428,7 @@ class DesignSystemMeta:
                       "stack_host": _stack_host(str(self.owner.get("stack_url") or ""))},
             "head_version": head_version, "versions_count": versions_count,
             "created_at": self.created_at, "updated_at": self.updated_at,
-            "mine": mine, "urls": urls,
+            "mine": mine, "urls": urls, "forked_from": self.forked_from,
         }
 
 

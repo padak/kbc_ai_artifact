@@ -24,6 +24,7 @@ transient Storage outage cannot put the app into a crash loop.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import fcntl
 import functools
@@ -4846,6 +4847,15 @@ def context(request: Request) -> dict:
                 "purpose": "append a new, immutable version of the bundle",
             },
             {
+                "method": "POST",
+                "path": "/api/design-systems/{ref}/fork",
+                "auth": "any token",
+                "purpose": (
+                    "fork any design system: copy one version's bundle "
+                    "verbatim as v1 of a new one your project owns"
+                ),
+            },
+            {
                 "method": "DELETE",
                 "path": "/api/design-systems/{ref}/versions/{n}",
                 "auth": "owner + destructive policy",
@@ -5367,6 +5377,17 @@ def context(request: Request) -> dict:
                 "colors": "sRGB only in this release",
                 "modes": "dark only; base is light",
             },
+            "fork": (
+                "POST /api/design-systems/{ref}/fork with "
+                "{slug, name?, description?, note?, version?} and any "
+                "Keboola credential. Copies that version's bundle (default: "
+                "head) verbatim as v1 of a new design system your project "
+                "owns; name defaults to the source's plus ' (fork)', "
+                "description to the source's. The new record carries "
+                "forked_from {id, slug, version}. The source is untouched and "
+                "the fork grants no authority over it. Same 409/422/429 rules "
+                "as registering one."
+            ),
             "access": (
                 "Reading is public: GET /api/design-systems, GET "
                 "/api/design-systems/{ref} and every /ds/{ref} reader route "
@@ -10706,6 +10727,15 @@ class DesignSystemVersionBody(BaseModel):
     note: str | None = None
 
 
+class DesignSystemForkBody(BaseModel):
+    slug: str
+    name: str | None = None
+    description: str | None = None
+    note: str | None = None
+    #: Which version of the source to copy. Omitted means its head.
+    version: int | None = None
+
+
 #: Shared OpenAPI descriptions for the design-system path parameters.
 DS_REF_DESC = (
     "A design system's public id (ds_...) or its slug. A slug is readable "
@@ -10919,15 +10949,7 @@ def create_design_system(
     owner, _ = auth
     designs: DesignSystemStore = request.app.state.designs
     _ds_require_hydrated(designs)
-    slug = body.slug.strip()
-    if not SLUG_RE.match(slug) or DesignSystemStore.is_id_shaped(slug):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "slug must match ^[a-z0-9][a-z0-9-]{1,39}$ and may not look "
-                "like an id"
-            ),
-        )
+    slug = _ds_slug_or_422(body.slug)
     name = _validated_text(
         body.name, max_chars=settings.ds_max_name_chars, what="name", required=True
     )
@@ -11133,6 +11155,152 @@ def add_design_system_version(
     payload = {
         **_ds_projection(request, designs.get_meta(meta.id), owner),
         "version": version.version,
+        "warnings": warnings,
+    }
+    return _private(JSONResponse(payload, status_code=201))
+
+
+def _ds_slug_or_422(slug: str) -> str:
+    """The shared slug rule for registering and for forking."""
+    slug = slug.strip()
+    if not SLUG_RE.match(slug) or DesignSystemStore.is_id_shaped(slug):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "slug must match ^[a-z0-9][a-z0-9-]{1,39}$ and may not look "
+                "like an id"
+            ),
+        )
+    return slug
+
+
+@app.post(
+    "/api/design-systems/{ref}/fork", status_code=201, tags=["design systems"]
+)
+def fork_design_system(
+    body: DesignSystemForkBody,
+    request: Request,
+    ref: str = PathParam(..., description=DS_REF_DESC),
+    auth: tuple[Owner, str] = Depends(require_owner),
+) -> JSONResponse:
+    """Copy one version of any design system into a new one you own.
+
+    Reading is public, so anybody can already lift a bundle out by hand and
+    register it again; this makes that one call and, more importantly, records
+    where the copy came from. Nothing about the source changes — not its
+    owner, not its versions — and owning a fork grants no authority over it.
+
+    The copied bundle is stored **as-is**, never re-validated: it was
+    normalised when the source stored it, and the source is proof it passed.
+    Re-validating would let a limit lowered afterwards make a design system
+    that is still readable suddenly unforkable.
+    """
+    ensure_hydrated(request.app)
+    owner, _ = auth
+    designs: DesignSystemStore = request.app.state.designs
+    _ds_require_hydrated(designs)
+    source = _ds_resolve_for_management(request, ref)
+    if designs.head_version(source.id) is None:
+        # A meta-only record has nothing to copy and is not public either.
+        raise HTTPException(status_code=404, detail="no such design system")
+    if body.version is not None and body.version < 1:
+        raise HTTPException(status_code=422, detail="version must be a positive integer")
+    origin = designs.get_version(source.id, body.version)
+    if origin is None:
+        raise HTTPException(status_code=404, detail="no such version")
+    slug = _ds_slug_or_422(body.slug)
+    name = (
+        _validated_text(
+            body.name,
+            max_chars=settings.ds_max_name_chars,
+            what="name",
+            required=True,
+        )
+        if body.name is not None
+        else f"{source.name} (fork)"[: settings.ds_max_name_chars]
+    )
+    description = (
+        _validated_text(
+            body.description,
+            max_chars=settings.ds_max_description_chars,
+            what="description",
+        )
+        if body.description is not None
+        else source.description
+    )
+    note = _validated_text(
+        body.note, max_chars=settings.ds_max_note_chars, what="note"
+    )
+    # Deep copies: the store hands out the cached envelope's own objects, and
+    # the fork must never share mutable structure with the source.
+    bundle = copy.deepcopy(origin.bundle)
+    warnings = copy.deepcopy(origin.warnings)
+    forked_from = {
+        "id": source.id,
+        "slug": source.slug,
+        "version": origin.version,
+    }
+    now = _now()
+    ds_id = "ds_" + new_artifact_id()
+    # Same check-then-act pair as registration -- slug uniqueness and the
+    # caller's own count -- so the same lock, and the count is the *forker's*.
+    with _DS_CREATE_LOCK:
+        if designs.resolve_ref(slug) is not None:
+            raise HTTPException(status_code=409, detail="slug already registered")
+        if designs.count_owner(owner.key) >= settings.ds_max_per_project:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"this project already holds {settings.ds_max_per_project} "
+                    "design systems"
+                ),
+            )
+        if not _claim_ds_version_slot(request.app, owner.key):
+            raise HTTPException(
+                status_code=429,
+                detail="daily design-system version budget exhausted",
+            )
+        meta = DesignSystemMeta(
+            id=ds_id,
+            slug=slug,
+            name=name,
+            description=description,
+            owner=_identity(owner),
+            created_at=now,
+            updated_at=now,
+            forked_from=forked_from,
+        )
+        first = DesignSystemVersion(
+            id=ds_id,
+            version=1,
+            note=note,
+            author=_identity(owner),
+            created_at=now,
+            bundle=bundle,
+            warnings=warnings,
+        )
+        try:
+            designs.create(meta, first)
+        except SlugTaken as exc:
+            raise HTTPException(
+                status_code=409, detail="slug already registered"
+            ) from exc
+        except NotHydrated as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="design-system index is not available yet; retry shortly",
+            ) from exc
+    logger.info(
+        "Forked design system %s v%s as %s (%s) for project %s",
+        source.id,
+        origin.version,
+        ds_id,
+        slug,
+        owner.project_id,
+    )
+    payload = {
+        **_ds_projection(request, meta, owner),
+        "version": 1,
         "warnings": warnings,
     }
     return _private(JSONResponse(payload, status_code=201))
@@ -11427,6 +11595,7 @@ def _gallery_rows(request: Request) -> list[dict[str, Any]]:
                 "owner": {"project_name": meta.owner.get("project_name")},
                 "head_version": version.version,
                 "updated_at": meta.updated_at,
+                "forked_from": meta.forked_from,
                 "swatches": _ds_swatches(version),
                 "urls": {k: urls[k] for k in ("page", "bundle", "css", "starter")},
             }
