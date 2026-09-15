@@ -239,8 +239,8 @@ Public (no auth):
 | GET | `/a/{id}/export/vault` | ZIP of a ready-to-open Obsidian vault (versions, comments, reasoning timeline), streamed rather than held in memory; 413 above `HUB_EXPORT_MAX_BYTES`, 429 above `HUB_MAX_EXPORTS_PER_HOUR` |
 | GET | `/changelog` / `/changelog.md` | Rendered changelog (hub's own design) / raw source |
 | GET | `/health` | Liveness check + service version + index stats |
-| GET | `/ds` | Public gallery: every design system with at least one version, newest change first, with a resolved colour strip per system — no credential |
-| GET | `/ds?format=json` | The same list as JSON (`id`, `slug`, `name`, `description`, `owner.project_name`, `head_version`, `updated_at`, `swatches`, `urls`), readable cross-origin |
+| GET | `/ds` | Public gallery: the newest design systems with at least one version, with a resolved colour strip per system — no credential |
+| GET | `/ds?format=json` | The same list as JSON (`id`, `slug`, `name`, `description`, `owner.project_name`, `head_version`, `updated_at`, `swatches`, `urls`) plus `truncated`, readable cross-origin. At most `HUB_DS_GALLERY_MAX_ROWS` systems; any other `format` value is 422 |
 | GET | `/ds/{ref}` | A design system's style guide — palette, typography, live components, sample chart/diagram, guidance; the style guide renders inside a sandboxed iframe on a hub-chrome page |
 | GET | `/ds/{ref}/versions` | Design-system version history JSON |
 | GET | `/ds/{ref}/bundle?v=n` | The stored, normalised bundle for one version, plus `variables` (token path → CSS custom property, and `variables.roles`: role → `--ds-*` alias) and `warnings` |
@@ -252,6 +252,15 @@ Public (no auth):
 `{ref}` may also be the design system's slug, in which case a credential is
 required (a slug-shaped `ref` on a reader route answers 401 without one — the
 same answer whether or not the slug exists).
+
+A design system's token values are author-controlled text, and the gallery is
+the one place a resolved token value reaches an inline `style` attribute on the
+**hub's own origin**. Raw token values get there only after validation: a
+swatch is kept only if it matches a strict colour grammar
+(`designkit.is_safe_css_color` — hex, `rgb()`/`rgba()`, or a bare CSS keyword),
+server-side, so the JSON a browser consumes is clean as well. Anything else
+loses its chip silently rather than being escaped and hoped about; `src.tokens`
+separately refuses `;`, `}`, `<` and comment markers at submit time.
 
 The gallery at `GET /ds` deliberately makes every registered design system's
 name, slug, description, owner project name and head version public on this

@@ -1931,7 +1931,8 @@ async def artifact_headers(request: Request, call_next):
     # nothing this service does needs a Referer: its own fetches are
     # same-origin and authenticate with headers, not with where they came from.
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    if request.url.path.startswith("/a/") or request.url.path.startswith("/ds/"):
+    ds_path = request.url.path == "/ds" or request.url.path.startswith("/ds/")
+    if request.url.path.startswith("/a/") or ds_path:
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
         # Orientation for a machine that was handed a share link and reads
         # headers (curl -I, an agent's HEAD probe): where this service
@@ -5288,6 +5289,8 @@ def context(request: Request) -> dict:
             "ds_max_description_chars": settings.ds_max_description_chars,
             "ds_max_note_chars": settings.ds_max_note_chars,
             "ds_derived_cache_entries": settings.ds_derived_cache_entries,
+            "ds_gallery_swatches": settings.ds_gallery_swatches,
+            "ds_gallery_max_rows": settings.ds_gallery_max_rows,
         },
         "design_systems": {
             "what": (
@@ -11233,24 +11236,31 @@ def _ds_reader(
     return meta, version
 
 
-def _ds_response(request: Request, response: Response) -> Response:
+def _ds_response(request: Request, response: Response, *, cors: bool = True) -> Response:
     """Mark a design-system read according to how it was resolved.
 
     A slug-resolved read was credentialed, so no shared cache may keep it —
     and it is never readable cross-origin either, or a page on any origin
     could spend the reader's credential for its own content.
 
-    An id-resolved read is the opposite: the id *is* the capability, the
-    answer is already public, and a browser page on another origin
-    (the switcher demo above all) must be able to read it. Only a `GET` with
-    no custom headers reaches here, which is a CORS simple request — so no
-    preflight handling is needed, just the two response headers.
+    An id-resolved *machine* read is the opposite: the id **is** the
+    capability, the answer is already public, and a browser page on another
+    origin (the switcher demo above all) must be able to read it. Only a `GET`
+    with no custom headers reaches here, which is a CORS simple request — so
+    no preflight handling is needed, just the headers below.
+
+    ``cors=False`` is for the HTML style-guide page: nothing fetches it
+    cross-origin, and a header that grants an ability nobody uses is one more
+    thing to reason about.
     """
     if getattr(request.state, "ds_private", False):
         response.headers["Cache-Control"] = "private, no-store"
-    else:
+    elif cors:
         response.headers["Access-Control-Allow-Origin"] = "*"
+        # Exposed *and* sent: a reader that is told to look for this header
+        # must actually find one.
         response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
+        response.headers["X-Hub-Version"] = SERVICE_VERSION
     return response
 
 
@@ -11294,16 +11304,22 @@ def _ds_swatches(version: DesignSystemVersion) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for role in GALLERY_SWATCH_ROLES:
             value = values.get(role)
-            if isinstance(value, str) and value:
+            # A token's $value is author-controlled text that reaches an inline
+            # style attribute on the hub's own origin, so anything that is not
+            # plainly a colour loses its chip rather than being escaped and
+            # hoped about.
+            if designkit.is_safe_css_color(value):
                 out[role] = value
         palette = values.get("chart_palette")
-        if isinstance(palette, list) and palette:
-            out["chart"] = palette[: settings.ds_gallery_swatches]
+        if isinstance(palette, list):
+            chart = [c for c in palette if designkit.is_safe_css_color(c)]
+            if chart:
+                out["chart"] = chart[: settings.ds_gallery_swatches]
         return out
 
     try:
         return _ds_cached(("swatches", version.id, version.version), build)
-    except DerivedOutputError:
+    except (DerivedOutputError, ValueError, KeyError):
         return {}
 
 
@@ -11317,7 +11333,10 @@ def _gallery_rows(request: Request) -> list[dict[str, Any]]:
     designs: DesignSystemStore = request.app.state.designs
     base = base_url(request)
     rows: list[dict[str, Any]] = []
-    for meta in designs.list_all():
+    # Bounded on purpose: one anonymous request costs a version read and a
+    # token parse per row, and those renders share the derived LRU with every
+    # /css and /starter read. The newest N are listed and the answer says so.
+    for meta in designs.list_all()[: settings.ds_gallery_max_rows]:
         version = designs.get_version(meta.id, None)
         if version is None:
             continue
@@ -11336,6 +11355,12 @@ def _gallery_rows(request: Request) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def _gallery_truncated(request: Request) -> bool:
+    """Whether the gallery had more design systems than it listed."""
+    designs: DesignSystemStore = request.app.state.designs
+    return len(designs.list_all()) > settings.ds_gallery_max_rows
 
 
 # Declared before /ds/{ref} on purpose: FastAPI matches routes in declaration
@@ -11372,12 +11397,19 @@ def design_systems_gallery(
             status_code=503,
             detail="design-system index is not available yet; retry shortly",
         )
+    if fmt not in (None, "", "json"):
+        raise HTTPException(
+            status_code=422, detail="format must be 'json', or be omitted for the page"
+        )
     rows = _gallery_rows(request)
     response: Response
     if fmt == "json":
-        response = JSONResponse({"design_systems": rows})
+        response = JSONResponse(
+            {"design_systems": rows, "truncated": _gallery_truncated(request)}
+        )
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Expose-Headers"] = "X-Hub-Version"
+        response.headers["X-Hub-Version"] = SERVICE_VERSION
     else:
         response = HTMLResponse(
             pages.design_systems_gallery_page(
@@ -11420,7 +11452,7 @@ def design_system_style_guide(
             srcdoc,
             SERVICE_VERSION,
         )
-    return _ds_response(request, HTMLResponse(html_out))
+    return _ds_response(request, HTMLResponse(html_out), cors=False)
 
 
 @app.get("/ds/{ref}/versions", tags=["design systems"])

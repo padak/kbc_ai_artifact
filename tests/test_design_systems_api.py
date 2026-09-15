@@ -617,7 +617,7 @@ CORS_EXPOSE = "access-control-expose-headers"
 def test_id_resolved_reads_are_readable_cross_origin(api):
     """An id is a public capability, so a page on any origin may fetch it."""
     ds_id = _register(api.client).json()["id"]
-    for suffix in ("", "/versions", "/bundle", "/tokens", "/css", "/starter", "/guidance"):
+    for suffix in ("/versions", "/bundle", "/tokens", "/css", "/starter", "/guidance"):
         r = api.client.get(f"/ds/{ds_id}{suffix}")
         assert r.status_code == 200, suffix
         assert r.headers[CORS_ORIGIN] == "*", suffix
@@ -779,3 +779,106 @@ def test_llms_txt_names_the_public_gallery(api):
     text = api.client.get("/llms.txt").text
     assert "/ds)" in text or "/ds " in text
     assert "gallery" in text.lower()
+
+
+# --------------------------------------------------------------------------
+# Fix round 1: colour validation, X-Hub-Version, bounded gallery
+# --------------------------------------------------------------------------
+
+
+def _bundle_with_background(colour):
+    bundle = good_bundle()
+    bundle["tokens"]["color"] = dict(bundle["tokens"]["color"])
+    bundle["tokens"]["color"]["bg"] = {"$value": colour}
+    return bundle
+
+
+def test_gallery_drops_a_swatch_that_is_not_a_plain_colour(api):
+    """A token value is author-controlled text; the strip is on the hub origin.
+
+    html.escape stops attribute breakout, but ';' ':' '(' ')' survive it, so
+    an unvalidated value could add declarations of its own to the inline
+    style. The value is dropped server-side, so the JSON the demo consumes is
+    clean too -- and the card still renders, just without that chip.
+    """
+    # src.tokens already refuses ';', '}' and '<' at submit time, so the
+    # reachable value is one that needs none of them: a url() makes the hub's
+    # own gallery fetch a remote resource for every anonymous visitor.
+    injection = "url(https://attacker.example/pixel)"
+    registered = _register(api.client, bundle=_bundle_with_background(injection))
+    assert registered.status_code == 201, registered.text
+    ds_id = registered.json()["id"]
+    row = api.client.get("/ds?format=json").json()["design_systems"][0]
+    assert "background" not in row["swatches"]
+    # the other roles are untouched
+    assert row["swatches"]["accent"] == "#1442e0"
+    page = api.client.get("/ds").text
+    assert "attacker.example" not in page
+    assert f'href="https://testserver/ds/{ds_id}"' in page
+
+
+def test_gallery_keeps_a_functional_colour_notation(api):
+    _register(api.client, bundle=_bundle_with_background("rgb(18 52 86 / 0.5)"))
+    row = api.client.get("/ds?format=json").json()["design_systems"][0]
+    assert row["swatches"]["background"] == "rgb(18 52 86 / 0.5)"
+
+
+def test_public_reads_send_the_version_they_expose(api):
+    """Exposing X-Hub-Version is only useful if it is actually sent."""
+    from src import main
+
+    ds_id = _register(api.client).json()["id"]
+    for suffix in ("/versions", "/bundle", "/tokens", "/css", "/starter", "/guidance"):
+        r = api.client.get(f"/ds/{ds_id}{suffix}")
+        assert r.headers["X-Hub-Version"] == main.SERVICE_VERSION, suffix
+        assert r.headers[CORS_EXPOSE] == "X-Hub-Version", suffix
+    gallery = api.client.get("/ds?format=json")
+    assert gallery.headers["X-Hub-Version"] == main.SERVICE_VERSION
+
+
+def test_the_style_guide_page_is_not_a_cross_origin_read(api):
+    """CORS is for machine reads; the HTML page has no cross-origin consumer."""
+    ds_id = _register(api.client).json()["id"]
+    r = api.client.get(f"/ds/{ds_id}")
+    assert r.status_code == 200
+    assert CORS_ORIGIN not in r.headers and CORS_EXPOSE not in r.headers
+
+
+def test_gallery_is_bounded_and_says_when_it_truncated(api, monkeypatch):
+    from src import main
+
+    def cap(n):
+        monkeypatch.setattr(
+            main, "settings", dataclasses.replace(main.settings, ds_gallery_max_rows=n)
+        )
+
+    cap(2)
+    for slug in ("one", "two", "three"):
+        assert _register(api.client, slug=slug).status_code == 201
+    body = api.client.get("/ds?format=json").json()
+    assert len(body["design_systems"]) == 2
+    assert body["truncated"] is True
+
+    cap(50)
+    body = api.client.get("/ds?format=json").json()
+    assert len(body["design_systems"]) == 3
+    assert body["truncated"] is False
+
+
+def test_gallery_page_is_kept_out_of_search_indexes(api):
+    assert api.client.get("/ds").headers["X-Robots-Tag"] == "noindex, nofollow"
+
+
+def test_gallery_refuses_a_format_it_does_not_serve(api):
+    assert api.client.get("/ds?format=xml").status_code == 422
+    assert api.client.get("/ds?format=").status_code == 200
+    assert api.client.get("/ds").status_code == 200
+    assert api.client.get("/ds?format=json").status_code == 200
+
+
+def test_context_publishes_the_gallery_limits(api):
+    from src import main
+
+    limits = api.client.get("/context").json()["limits"]
+    assert limits["ds_gallery_swatches"] == main.settings.ds_gallery_swatches
+    assert limits["ds_gallery_max_rows"] == main.settings.ds_gallery_max_rows

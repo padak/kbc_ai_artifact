@@ -39,6 +39,8 @@ import html
 import json
 import re
 
+from src.designkit import is_safe_css_color
+
 #: Google Fonts, linked with ``display=swap``. Both families have full local
 #: fallback stacks in ``--font-*`` below, so a blocked CDN costs nothing but
 #: the exact letterforms.
@@ -3241,9 +3243,13 @@ def design_systems_gallery_page(
     """The public list of design systems registered on this hub.
 
     ``rows`` is exactly what ``GET /ds?format=json`` answers with: the server
-    has already resolved every swatch to a concrete colour, so nothing here
-    parses tokens. Every value is escaped -- a name, a slug, a description and
-    a colour all come from a design system's author.
+    has already resolved every swatch to a concrete colour and dropped any
+    value that is not plainly one, so nothing here parses tokens. The strip
+    keeps the order the server built (scalar roles first, then the palette)
+    rather than repeating that list. Every value is escaped -- a name, a slug,
+    a description and a colour all come from a design system's author -- and
+    a colour is additionally re-checked before it is interpolated into an
+    inline ``style``, because that one lands on the hub's own origin.
     """
     base = html.escape(base_url.rstrip("/"), quote=True)
     cards = []
@@ -3252,19 +3258,20 @@ def design_systems_gallery_page(
         owner = row.get("owner") or {}
         swatches = row.get("swatches") or {}
         chips = []
-        for role in ("background", "surface", "text", "accent"):
-            colour = swatches.get(role)
-            if isinstance(colour, str) and colour:
-                chips.append(
-                    f'<i title="{html.escape(role, quote=True)}" '
-                    f'style="background:{html.escape(colour, quote=True)}"></i>'
-                )
+
+        def chip(label: str, colour: object) -> None:
+            if not is_safe_css_color(colour):
+                return
+            chips.append(
+                f'<i title="{html.escape(label, quote=True)}" '
+                f'style="background:{html.escape(str(colour), quote=True)}"></i>'
+            )
+
+        for role, colour in swatches.items():
+            if role != "chart":
+                chip(role, colour)
         for index, colour in enumerate(swatches.get("chart") or [], start=1):
-            if isinstance(colour, str) and colour:
-                chips.append(
-                    f'<i title="chart {index}" '
-                    f'style="background:{html.escape(colour, quote=True)}"></i>'
-                )
+            chip(f"chart {index}", colour)
         meta_bits = [f"<code>{html.escape(str(row.get('slug') or ''))}</code>"]
         if row.get("head_version") is not None:
             meta_bits.append(_badge(f"v{row['head_version']}"))

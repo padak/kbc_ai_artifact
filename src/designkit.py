@@ -53,6 +53,34 @@ _ROLE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("muted",), ".ds-muted{{color:var({muted})}}"),
 )
 
+#: A colour the hub is willing to place in an inline ``style`` attribute on
+#: its *own* origin. A token's ``$value`` is author-controlled text that
+#: ``src.tokens._color`` passes through verbatim, and escaping only stops the
+#: attribute from being closed -- ``;``, ``:``, ``(`` and ``)`` all survive it,
+#: so an unvalidated value could append declarations of its own. Three
+#: notations are allowed and nothing else: hex (3, 6 or 8 digits), an
+#: ``rgb()``/``rgba()`` function in either the comma or the space/slash form
+#: ``src.tokens`` itself emits, and a bare CSS keyword.
+SAFE_CSS_COLOR_RE = re.compile(
+    r"^(?:"
+    r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?(?:[0-9a-fA-F]{2})?"
+    r"|rgba?\(\s*\d{1,3}(?:\s*,\s*|\s+)\d{1,3}(?:\s*,\s*|\s+)\d{1,3}"
+    r"(?:\s*(?:,|/)\s*(?:0|1|0?\.\d+))?\s*\)"
+    r"|[a-zA-Z]{3,20}"
+    r")$"
+)
+
+
+def is_safe_css_color(value: object) -> bool:
+    """Whether ``value`` may be interpolated into an inline ``style``.
+
+    Deliberately narrow: a value that is a real colour in some broader sense
+    but does not match is simply not shown, which costs a swatch. A value that
+    is not a colour at all must never reach the hub's own origin.
+    """
+    return isinstance(value, str) and bool(SAFE_CSS_COLOR_RE.match(value))
+
+
 #: The one role whose value is a list rather than a single alias, and whose
 #: variables are therefore numbered (``--ds-chart-1`` …) rather than named.
 PALETTE_ROLE = "chart_palette"

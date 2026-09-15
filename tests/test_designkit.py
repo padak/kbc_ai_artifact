@@ -6,7 +6,9 @@ import pytest
 from src.designkit import (
     BODY_SLOT,
     TITLE_SLOT,
+    SAFE_CSS_COLOR_RE,
     fill_starter,
+    is_safe_css_color,
     role_css_vars,
     role_values,
     role_variable_names,
@@ -288,3 +290,57 @@ def test_design_system_page_is_hub_chrome_around_a_sandboxed_iframe():
     assert 'href="https://hub/ds/ds_abc?v=1"' in out
     assert "https://hub/ds/ds_abc/bundle?v=2" in out and "https://hub/ds/ds_abc/starter?v=2" in out
     assert "hubSession" not in out
+
+
+# --- colour safety (fix round 1) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "#fff",
+        "#FFF",
+        "#ffffff",
+        "#11223344",
+        "rgb(1,2,3)",
+        "rgb( 12 , 34 , 56 )",
+        "rgb(18 52 86)",
+        "rgb(18 52 86 / 0.5)",
+        "rgba(1,2,3,0.25)",
+        "rgba(1, 2, 3, 1)",
+        "rebeccapurple",
+        "Red",
+    ],
+)
+def test_is_safe_css_color_accepts_real_colours(value):
+    assert is_safe_css_color(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "   ",
+        "#12",
+        "#1234567",
+        "#zzzzzz",
+        "red;position:fixed",
+        "position:fixed;top:0;left:0;width:100vw;background:url(https://attacker.example/x)",
+        "url(https://attacker.example/x)",
+        "var(--color-bg)",
+        "rgb(1,2,3);background:url(https://attacker.example/p)",
+        "expression(alert(1))",
+        "a" * 21,
+        "#fff /*",
+        "\\75 rl(x)",
+        None,
+        123,
+    ],
+)
+def test_is_safe_css_color_rejects_everything_else(value):
+    assert is_safe_css_color(value) is False
+
+
+def test_safe_css_color_re_is_exported_for_reuse():
+    assert SAFE_CSS_COLOR_RE.match("#abc")
+    assert not SAFE_CSS_COLOR_RE.match("#abc;x:y")
