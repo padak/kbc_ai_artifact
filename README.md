@@ -234,7 +234,7 @@ Public (no auth):
 | GET | `/a/{id}` | Head version rendered in a sandboxed iframe, or the password unlock form; both carry a visually hidden note plus `<link rel>` relations orienting an AI assistant, and every `/a/*` response carries a `Link` header to `/context`, `/llms.txt`, `/skill` and `/agent` |
 | POST | `/a/{id}/unlock` | Password form target; sets a signed unlock cookie |
 | GET | `/a/{id}/v/{n}` | One specific version (owner/author only when proposed) |
-| GET | `/a/{id}/versions` | Version history JSON (each row's `status` is that version's `live`/`proposed`), plus the document-level `document_status` / `contributions_frozen` / `accept_versions_mode`; proposed rows flagged `outdated`; `?format=html` renders a picker page |
+| GET | `/a/{id}/versions` | Version history JSON (each row's `status` is that version's `live`/`proposed`), plus the document-level `document_status` / `contributions_frozen` / `accept_versions_mode` / `reader_menu`; proposed rows flagged `outdated`; `?format=html` renders a picker page |
 | GET | `/a/{id}/diff/{a}..{b}` | Diff two versions; `?format=html\|unified\|json\|visual` |
 | GET | `/a/{id}/raw` | Raw built HTML, byte-exact, no iframe (password via `X-Artifact-Password` if protected) |
 | GET | `/a/{id}/source` | Original submitted source, never converted (the author's Markdown when the version has one, else the HTML) |
@@ -794,7 +794,7 @@ release tag explicitly — `--git-branch` defaults to
 kbagent data-app create \
   --project artifacts \
   --git-repo https://github.com/padak/kbc_ai_artifact \
-  --git-branch v0.20.1 \
+  --git-branch v0.20.2 \
   --git-public
 ```
 

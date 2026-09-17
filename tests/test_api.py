@@ -7801,6 +7801,22 @@ def test_reader_menu_survives_a_restart(api: Api) -> None:
     assert meta is not None and meta.reader_menu is False
 
 
+def test_reader_menu_reported_by_public_versions(api: Api) -> None:
+    """The admin panel reads the switch from /versions, so it must be there.
+
+    It was not: the panel treated a missing key as "on", so the switch showed
+    checked whatever the owner had saved and could never be turned off.
+    """
+    artifact_id = _publish_markdown(api, "# Hi")
+    assert api.client.get(f"/a/{artifact_id}/versions").json()["reader_menu"] is True
+    api.client.put(
+        f"/api/artifacts/{artifact_id}",
+        json={"reader_menu": False},
+        headers=AUTH_HEADERS,
+    )
+    assert api.client.get(f"/a/{artifact_id}/versions").json()["reader_menu"] is False
+
+
 def test_reader_menu_reported_by_meta_and_listing(api: Api) -> None:
     artifact_id = _publish_markdown(api, "# Hi")
     assert api.client.get(f"/a/{artifact_id}/meta").json()["reader_menu"] is True

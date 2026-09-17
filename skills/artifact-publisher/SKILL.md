@@ -1432,7 +1432,7 @@ either against a frozen document answers 409.
 |---|---|
 | `GET /a/{id}` | Head version as a human-readable page (or the password unlock form) |
 | `GET /a/{id}/v/{n}` | One specific version (owner/author only when proposed) |
-| `GET /a/{id}/versions` | Version history JSON — each row's `status` is that *version's* (`live`/`proposed`, proposed rows flagged `outdated` when applicable), alongside the document-level `document_status`, `contributions_frozen`, `accept_versions` and `accept_versions_mode` — or `?format=html` for a picker page |
+| `GET /a/{id}/versions` | Version history JSON — each row's `status` is that *version's* (`live`/`proposed`, proposed rows flagged `outdated` when applicable), alongside the document-level `document_status`, `contributions_frozen`, `accept_versions`, `accept_versions_mode` and `reader_menu` — or `?format=html` for a picker page |
 | `GET /a/{id}/diff/{a}..{b}` | Diff of two versions (`?format=html\|unified\|json\|visual`) |
 | `GET /a/{id}/raw` | Exact HTML that will be rendered — no chrome around it |
 | `GET /a/{id}/source` | Original source you submitted, never converted: your Markdown when the version has one (published as `markdown`, or as `html` with `markdown_source`), otherwise the HTML |
