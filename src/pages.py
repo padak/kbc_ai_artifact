@@ -1340,10 +1340,13 @@ _ADMIN_JS = """
 
       if (head !== null && head !== undefined && n !== head) {
         actions.appendChild(action("Diff vs head", "", async function () {
+          // The diff route insists on {older}..{newer}; head is usually the
+          // newest version, so order the operands rather than assume.
+          var lo = Math.min(head, n), hi = Math.max(head, n);
           var body = await requestHtml(
-            "/a/" + pubId + "/diff/" + head + ".." + n + "?format=html"
+            "/a/" + pubId + "/diff/" + lo + ".." + hi + "?format=html"
           );
-          openModal("diff v" + head + "..v" + n + " \\u2014 " + row.id, body);
+          openModal("diff v" + lo + "..v" + hi + " \\u2014 " + row.id, body);
         }));
       }
 
