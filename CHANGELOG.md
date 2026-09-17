@@ -4,7 +4,7 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
-## 0.20.2 — The reader-menu switch can be turned off (2026-09-17)
+## 0.20.3 — The reader-menu switch can be turned off (2026-09-17)
 
 - **"Show the reader menu" in the admin studio now reflects what is saved.**
   The panel read the switch from `GET /a/{id}/versions`, which never carried
