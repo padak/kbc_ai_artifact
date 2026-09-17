@@ -22,6 +22,7 @@ from src.builder import (
     BuildError,
     DEFAULT_GIT_USERNAME,
     DEFAULT_TITLE,
+    FRAME_RUNTIME_MARKER,
     HLJS_VERSION,
     MERMAID_VERSION,
     REDACTED,
@@ -35,6 +36,7 @@ from src.builder import (
     _repo_size_bytes,
     _resolve_entry,
     _scrub,
+    _unwrap_frame_runtime,
     _validate_git_ref,
     _validate_git_url,
     build_from_git,
@@ -107,6 +109,181 @@ class TestBuildFromHtml:
         html = "<body><p>no headings here</p></body>"
         result = build_from_html(html)
         assert result.title == DEFAULT_TITLE
+
+
+# --------------------------------------------------------------------------
+# Claude frame-runtime unwrapping: a page saved from claude.ai's artifact
+# viewer must be republished as the document its author wrote, not as the
+# viewer's wrapper around it.
+# --------------------------------------------------------------------------
+
+
+# A saved artifact in miniature: the injected head (bootstrap script and style
+# reset) followed by the authored document sitting in the body. The script
+# carries a title-shaped string on purpose — the real one is further down, so
+# anything reading titles before the rebuild picks the wrong one.
+_WRAPPED = (
+    "<!doctype html><html><head><!-- frame-runtime -->"
+    '<script>window.__FRAME_PREAMBLE={"v":1};'
+    'var frame_title="<title>claude.ai</title>";</script>'
+    "<!-- /frame-runtime --><meta charset=utf8>"
+    "<style>body{margin:0;font:14px system-ui;background:#faf9f5;color:#141413}"
+    "</style></head><body>\n"
+    "<title>Real Document</title>\n"
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=X">\n'
+    "<style>:root{--ink:#111}</style>\n"
+    "<main><h1>Heading</h1><p>Body copy.</p></main>\n"
+    "</body></html>"
+)
+
+
+class TestUnwrapFrameRuntime:
+    def test_wrapped_document_is_rebuilt_standalone(self):
+        out, rebuilt = _unwrap_frame_runtime(_WRAPPED)
+        assert rebuilt is True
+        assert "__FRAME_PREAMBLE" not in out
+        assert "frame-runtime" not in out
+        assert out.startswith("<!doctype html>")
+        assert out.rstrip().endswith("</html>")
+
+    def test_authored_head_elements_are_hoisted_into_head(self):
+        out, _ = _unwrap_frame_runtime(_WRAPPED)
+        head, body = out.split("</head>", 1)
+        assert "<title>Real Document</title>" in head
+        assert "fonts.googleapis.com" in head
+        assert "--ink:#111" in head
+        # The scan stops at the first non-head element: content stays content.
+        assert "<main>" not in head
+        assert "<main><h1>Heading</h1>" in body
+
+    def test_injected_reset_style_is_discarded(self):
+        """The reset forces a cream background and 14px system font."""
+        out, _ = _unwrap_frame_runtime(_WRAPPED)
+        assert "#faf9f5" not in out
+        assert "14px system-ui" not in out
+
+    def test_body_tag_with_attributes_is_handled(self):
+        out, rebuilt = _unwrap_frame_runtime(
+            _WRAPPED.replace("<body>", '<body class="x" data-y="1">')
+        )
+        assert rebuilt is True
+        assert "<title>Real Document</title>" in out
+        assert 'data-y="1"' not in out
+
+    def test_wrapper_without_authored_head_elements_still_works(self):
+        wrapped = (
+            "<!doctype html><html><head><!-- frame-runtime -->"
+            "<script>var a=1;</script></head><body><p>Just content.</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(wrapped)
+        assert rebuilt is True
+        assert "var a=1" not in out
+        assert "<p>Just content.</p>" in out.split("</head>", 1)[1]
+
+    @pytest.mark.parametrize("closing_marker", ["<!-- /frame-runtime -->", ""])
+    def test_a_tag_shaped_string_inside_the_bootstrap_is_not_markup(
+        self, closing_marker
+    ):
+        """The body is looked for past `</head>`, never inside the script.
+
+        The injected script is ~13 KB of opaque JavaScript. Splitting the
+        document at the first `<body` *substring* would cut the document in
+        half here and publish the tail of the script as content.
+        """
+        wrapped = (
+            "<!doctype html><html><head><!-- frame-runtime -->"
+            "<script>var t='<body onload=x>';</script>"
+            f"{closing_marker}</head><body>\n"
+            "<title>Real</title>\n<p>content</p>\n</body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(wrapped)
+        assert rebuilt is True
+        assert "<script>" not in out
+        assert "frame-runtime" not in out
+        assert "<title>Real</title>" in out.split("</head>", 1)[0]
+        assert "<p>content</p>" in out.split("</head>", 1)[1]
+
+    def test_plain_document_passes_through_unchanged(self):
+        plain = (
+            "<!doctype html><html><head><title>Mine</title></head>"
+            "<body><p>Hi</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(plain)
+        assert rebuilt is False
+        assert out == plain
+
+    def test_a_document_that_only_writes_about_the_marker_is_left_alone(self):
+        """The marker in the body is prose; the author's own head must survive."""
+        about = (
+            "<!doctype html><html><head><title>How the wrapper works</title>"
+            '<script src="mine.js"></script></head><body><p>Claude injects '
+            f"<code>{FRAME_RUNTIME_MARKER}</code> into the head.</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(about)
+        assert rebuilt is False
+        assert out == about
+
+    def test_a_page_with_an_implicit_head_that_mentions_the_marker_survives(self):
+        """Requiring an enclosing <head> also covers documents that have none.
+
+        Rejecting only a </head> *before* the marker left this shape exposed: a
+        page about HTML parsing, with no head tags of its own, carrying the
+        structural tags inside a script string. Rebuilding it dropped the
+        opening content and promoted an inert JS fragment to live body text.
+        """
+        about = (
+            "<!doctype html><html><body>"
+            "<h1>How saved pages are wrapped</h1>"
+            f"<p>The viewer injects <code>{FRAME_RUNTIME_MARKER}</code> first.</p>"
+            '<script>var sample = "</head><body>";</script>'
+            "<p>Keep reading.</p></body></html>"
+        )
+        out, rebuilt = _unwrap_frame_runtime(about)
+        assert rebuilt is False
+        assert out == about
+
+    @pytest.mark.parametrize(
+        "malformed",
+        [
+            pytest.param(
+                "<!doctype html><html><head><!-- frame-runtime -->"
+                "<script>x</script></head>",
+                id="head-closes-but-no-body",
+            ),
+            pytest.param(FRAME_RUNTIME_MARKER, id="marker-alone"),
+            pytest.param(
+                "<!doctype html><html><head><!-- frame-runtime --></head>"
+                "<body>   </body></html>",
+                id="empty-body",
+            ),
+        ],
+    )
+    def test_malformed_wrapper_returns_the_input_unchanged(self, malformed):
+        """Unknown shapes pass through: this runs over every HTML publish."""
+        out, rebuilt = _unwrap_frame_runtime(malformed)
+        assert rebuilt is False
+        assert out == malformed
+
+
+class TestBuildFromHtmlUnwrapsFrameRuntime:
+    def test_the_rebuilt_document_is_what_gets_published(self):
+        result = build_from_html(_WRAPPED)
+        assert result.source_type == "html"
+        assert result.html == _unwrap_frame_runtime(_WRAPPED)[0]
+        assert len(result.html) < len(_WRAPPED)
+
+    def test_the_authored_title_still_wins(self):
+        """Unwrapping runs first, so the bootstrap script cannot supply it."""
+        assert build_from_html(_WRAPPED).title == "Real Document"
+
+    def test_an_explicit_title_still_wins(self):
+        result = build_from_html(_WRAPPED, title="Explicit Title")
+        assert result.title == "Explicit Title"
+        assert "__FRAME_PREAMBLE" not in result.html
+
+    def test_an_unwrapped_document_is_published_byte_for_byte(self):
+        html = "<html><head><title>Mine</title></head><body><h1>Hi</h1></body></html>"
+        assert build_from_html(html).html == html
 
 
 # --------------------------------------------------------------------------

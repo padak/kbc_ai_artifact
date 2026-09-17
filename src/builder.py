@@ -5,7 +5,9 @@ final, self-contained HTML document.
 
 Three entry points mirror the three publish input shapes:
 
-* :func:`build_from_html` — pass-through, only the title is derived.
+* :func:`build_from_html` — near pass-through: a page saved from Claude's
+  artifact viewer is rebuilt as a standalone document, anything else is used
+  byte for byte, and only the title is derived.
 * :func:`build_from_markdown` — markdown-it-py rendering wrapped in
   :data:`PAGE_TEMPLATE` (tables, task lists, anchors, mermaid, highlight.js).
 * :func:`build_from_git` — shallow clone, entry-file selection, the same
@@ -28,11 +30,12 @@ as an extra literal to redact (defence in depth).
 
 Security note on rendered Markdown/HTML: the Markdown renderer intentionally
 keeps ``html: True`` so authors can embed rich raw HTML (and thus ``<script>``)
-in "markdown" artifacts, and HTML artifacts are served verbatim. This is *by
-design* for rich content; the security boundary that stops artifact script from
-touching the hub origin is the sandboxed iframe applied by the serving layer
-(``src/main.py`` / ``src/pages.py``), NOT sanitisation here. Do not rely on this
-module to neutralise artifact markup.
+in "markdown" artifacts, and an HTML artifact keeps whatever markup its author
+wrote. This is *by design* for rich content; the security boundary that stops
+artifact script from touching the hub origin is the sandboxed iframe applied by
+the serving layer (``src/main.py`` / ``src/pages.py``), NOT sanitisation here.
+Do not rely on this module to neutralise artifact markup — the frame-runtime
+rebuild below removes one specific *foreign* wrapper, it is not a filter.
 """
 
 from __future__ import annotations
@@ -88,6 +91,20 @@ DEFAULT_GIT_USERNAME = "x-access-token"
 
 #: What a redacted secret is replaced with in anything shown to a caller.
 REDACTED = "***"
+
+#: Comments Claude's artifact viewer wraps its injected bootstrap script in. A
+#: page saved from that viewer arrives with a ``<head>`` the author never wrote:
+#: the opening comment, ~13 KB of inline script that sets
+#: ``window.__FRAME_PREAMBLE``, the closing comment, and a style reset that
+#: forces a cream background and a 14px system font — with the whole authored
+#: document, its own ``<title>`` and ``<style>`` included, pushed down into
+#: ``<body>``. That runtime only functions inside claude.ai, so republishing the
+#: file as it stands hosts dead script *and* lets the reset fight the CSS the
+#: author wrote. :func:`_unwrap_frame_runtime` rebuilds the authored document
+#: instead. The opening comment identifies the wrapper; the closing one, when
+#: present, says where the script ends.
+FRAME_RUNTIME_MARKER = "<!-- frame-runtime -->"
+FRAME_RUNTIME_END_MARKER = "<!-- /frame-runtime -->"
 
 #: Schemes that are never inlined as data URIs.
 EXTERNAL_URL_PREFIXES: tuple[str, ...] = (
@@ -157,6 +174,29 @@ _IMG_SRC_RE = re.compile(
 )
 #: Strips ``user:password@`` from anything echoed back to the user.
 _CREDENTIALS_RE = re.compile(r"//[^/@\s]*@")
+
+#: Structural tags :func:`_unwrap_frame_runtime` locates. Matched as patterns
+#: rather than by lowercasing and searching for a substring: ``str.lower()`` can
+#: change a string's *length* (U+0130 lowercases to two characters), so offsets
+#: taken from a lowercased copy are not offsets into the original, and ``<body``
+#: as a substring also matches ``<bodyfoo``.
+_HEAD_OPEN_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+_HEAD_CLOSE_RE = re.compile(r"</head\s*>", re.IGNORECASE)
+_BODY_OPEN_RE = re.compile(r"<body\b[^>]*>", re.IGNORECASE)
+_BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
+
+#: Head-level elements the authored fragment may open with — a saved Claude
+#: artifact carries its ``<title>``, font ``<link>``s and ``<style>`` at the top
+#: of the body fragment. Applied with :meth:`re.Pattern.match` at the fragment's
+#: leading edge only, so no body content is ever hoisted into the head.
+_LEADING_HEAD_ELEMENT_RE = re.compile(
+    r"\s*(?:<title\b[^>]*>.*?</title>"
+    r"|<style\b[^>]*>.*?</style>"
+    r"|<link\b[^>]*/?>"
+    r"|<meta\b[^>]*/?>"
+    r"|<base\b[^>]*/?>)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class BuildError(Exception):
@@ -498,6 +538,94 @@ def _title_from_markdown(md_text: str) -> str | None:
 
 
 # --------------------------------------------------------------------------
+# Claude frame-runtime unwrapping
+# --------------------------------------------------------------------------
+
+#: The shell a rebuilt document is reassembled into: a real ``<head>`` carrying
+#: the charset and viewport the wrapper used to supply, then whatever head-level
+#: elements the authored fragment opened with, then the authored body. Kept as
+#: fixed parts to concatenate rather than a template with placeholders (cf.
+#: :data:`PAGE_TEMPLATE`), because what goes between them is author content and
+#: must never be able to name a slot of ours.
+_STANDALONE_OPEN = (
+    "<!doctype html>\n"
+    '<html lang="en">\n'
+    "<head>\n"
+    '<meta charset="utf-8">\n'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+)
+_STANDALONE_HEAD_CLOSE = "\n</head>\n<body>\n"
+_STANDALONE_CLOSE = "\n</body>\n</html>\n"
+
+
+def _unwrap_frame_runtime(html: str) -> tuple[str, bool]:
+    """Rebuild a page saved from Claude's artifact viewer as a standalone one.
+
+    Returns ``(html, rebuilt)``. Everything the wrapper injected — the
+    bootstrap script and the style reset that fights the author's own CSS — is
+    dropped, the head-level elements the authored fragment opens with are
+    hoisted back into a real ``<head>``, and the rest becomes the body. See
+    :data:`FRAME_RUNTIME_MARKER` for what the wrapper looks like.
+
+    Fails safe in both directions, because this runs over *every* HTML publish:
+    an input without the wrapper, one that only mentions the marker in its own
+    prose, and one whose wrapper is truncated or otherwise malformed are all
+    returned byte for byte, ``rebuilt`` False.
+    """
+    marker = html.find(FRAME_RUNTIME_MARKER)
+    if marker == -1:
+        return html, False
+
+    # The marker has to sit inside an explicit <head> ... </head>, which is
+    # where the wrapper puts it. A page that writes *about* the frame runtime
+    # mentions it in prose instead, and rebuilding that throws away content its
+    # author meant to keep. Anchoring to the enclosing head rather than merely
+    # rejecting a </head> before the marker also covers the implicit-head
+    # shape, where markup that was inert inside a script string would otherwise
+    # be promoted to live body text.
+    head_open = _HEAD_OPEN_RE.search(html)
+    if head_open is None or head_open.end() > marker:
+        return html, False
+    if _HEAD_CLOSE_RE.search(html, head_open.end(), marker) is not None:
+        return html, False
+
+    # Look for the end of the injected head past the bootstrap script whenever
+    # the closing comment says where the script ends: those ~13 KB are opaque
+    # JavaScript, and a tag-shaped string inside them is not markup. A wrapper
+    # without the closing comment falls back to scanning from the marker.
+    end_marker = html.find(FRAME_RUNTIME_END_MARKER, marker)
+    head_close = _HEAD_CLOSE_RE.search(html, end_marker if end_marker != -1 else marker)
+    if head_close is None:
+        return html, False
+    body_open = _BODY_OPEN_RE.search(html, head_close.end())
+    if body_open is None:
+        return html, False
+
+    fragment = html[body_open.end() :]
+    body_closes = list(_BODY_CLOSE_RE.finditer(fragment))
+    if body_closes:
+        # The last one is the document's; an earlier one is inside author
+        # content (a code sample, a script) and closes nothing.
+        fragment = fragment[: body_closes[-1].start()]
+    fragment = fragment.strip()
+    if not fragment:
+        return html, False
+
+    head_parts: list[str] = []
+    cursor = 0
+    while (match := _LEADING_HEAD_ELEMENT_RE.match(fragment, cursor)) is not None:
+        head_parts.append(match.group(0).strip())
+        cursor = match.end()
+
+    head = "\n".join(head_parts)
+    body = fragment[cursor:].strip()
+    return (
+        _STANDALONE_OPEN + head + _STANDALONE_HEAD_CLOSE + body + _STANDALONE_CLOSE,
+        True,
+    )
+
+
+# --------------------------------------------------------------------------
 # Public builders: html / markdown
 # --------------------------------------------------------------------------
 
@@ -505,12 +633,27 @@ def _title_from_markdown(md_text: str) -> str | None:
 def build_from_html(html: str, title: str | None = None) -> BuiltArtifact:
     """Serve raw HTML as-is, deriving a title when none was supplied.
 
+    "As-is" has one exception: a page saved from Claude's artifact viewer is
+    rebuilt as a standalone document first (:func:`_unwrap_frame_runtime`).
+    Every other input is published byte for byte.
+
     Title precedence: explicit argument, ``<title>``, first ``<h1>``, then
     :data:`DEFAULT_TITLE`.
     """
-    resolved = _clean(title) or _title_from_html(html) or DEFAULT_TITLE
-    logger.debug("Built html artifact (title=%r, %d bytes)", resolved, len(html))
-    return BuiltArtifact(html=html, title=resolved, source_type="html")
+    document, rebuilt = _unwrap_frame_runtime(html)
+    if rebuilt:
+        logger.info(
+            "Rebuilt a saved Claude artifact as a standalone document "
+            "(%d -> %d characters)",
+            len(html),
+            len(document),
+        )
+    # Deliberately after the rebuild, never before it: in a wrapped page the
+    # authored <title> sits in the body, behind ~13 KB of bootstrap script that
+    # any title-shaped string inside would win the search from.
+    resolved = _clean(title) or _title_from_html(document) or DEFAULT_TITLE
+    logger.debug("Built html artifact (title=%r, %d bytes)", resolved, len(document))
+    return BuiltArtifact(html=document, title=resolved, source_type="html")
 
 
 def build_from_markdown(md: str, title: str | None = None) -> BuiltArtifact:
