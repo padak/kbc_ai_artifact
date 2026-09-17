@@ -1732,6 +1732,18 @@ def test_admin_page_is_html_and_self_describing(api: Api) -> None:
     assert "Admin studio" in resp.text
 
 
+def test_admin_diff_button_orders_operands(api: Api) -> None:
+    """"Diff vs head" must send {older}..{newer}, whatever head is.
+
+    Head is normally the newest version, so a naive "head..n" produced 9..8
+    and the diff route (which refuses reversed specs) answered 400 from the
+    studio's own button. The page orders the pair before building the URL.
+    """
+    text = api.client.get("/admin").text
+    assert "Math.min(head, n)" in text
+    assert '"/diff/" + head + ".."' not in text
+
+
 def test_admin_page_keeps_credentials_in_the_tab_only(api: Api) -> None:
     """The studio must never ship a token, and must never reach for localStorage.
 
