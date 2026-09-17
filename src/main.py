@@ -7211,6 +7211,10 @@ def read_versions(
             "document_status": meta.status,
             "contributions_frozen": meta.is_frozen(),
             "protected": bool(meta.password),
+            # Same public fact /a/{id}/meta reports. The admin studio's panel
+            # binds its "show the reader menu" switch to this response, so
+            # without it the switch could only ever show the default.
+            "reader_menu": meta.reader_menu,
             "versions": [
                 {
                     **row,

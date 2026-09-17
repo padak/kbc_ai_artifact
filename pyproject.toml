@@ -1,6 +1,6 @@
 [project]
 name = "kbc-artifact-hub"
-version = "0.20.1"
+version = "0.20.2"
 description = "Keboola App that hosts HTML+JS artifacts under public URLs, backed by Keboola Storage Files"
 requires-python = ">=3.11"
 dependencies = [
