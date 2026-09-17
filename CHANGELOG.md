@@ -4,6 +4,14 @@ KBC Artifact Hub is one web address where you publish a document and
 collaborate on it with your team, secured by the Keboola account you already
 have.
 
+## 0.20.1 — "Diff vs head" works from every row (2026-09-17)
+
+- **The admin studio's "Diff vs head" button no longer fails on older
+  versions.** It built the diff as `head..n`; with head the newest version that
+  produced a reversed pair such as `9..8`, which `GET /a/{id}/diff/{spec}`
+  deliberately refuses. The studio now orders the two versions before asking.
+  The route itself is unchanged.
+
 ## 0.20.0 — Take any design system, keep your own copy (2026-09-16)
 
 - **Reading a design system no longer needs a credential.** `GET
